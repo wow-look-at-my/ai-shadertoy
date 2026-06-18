@@ -30,7 +30,7 @@ function tryJson(s: string): unknown {
 function parseInner(name: string, inner: string): unknown {
 	const trimmed = inner.trim();
 	switch (name) {
-		case TOOL_NAMES.writeShader:
+		case TOOL_NAMES.initShader:
 			return { source: stripFence(trimmed) };
 		case TOOL_NAMES.editShader:
 			return { old: innerTag(inner, "old"), new: innerTag(inner, "new"), replace_all: /<replace_all>\s*true/i.test(inner) };

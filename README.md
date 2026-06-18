@@ -15,14 +15,14 @@ also wire up input textures and expose live parameters as sliders.
 ## How it works
 
 1. You type a request in the chat (e.g. *"a swirling plasma in purples and gold"*).
-2. The AI calls the `write_shader` tool with GLSL ES 3.00 source (Shadertoy-style
+2. The AI calls the `init_shader` tool with GLSL ES 3.00 source (Shadertoy-style
    `void mainImage(out vec4 fragColor, in vec2 fragCoord)`).
 3. The app compiles it, renders it live on a WebGL2 canvas, and feeds a
    **screenshot + compile log** back to the model so it can self-correct.
 4. The model iterates until it both compiles and looks right. You can tweak the
    code, parameters, and textures by hand at any time.
 
-The AI's tools: `write_shader` (the first shader / a full rewrite), `edit_shader`
+The AI's tools: `init_shader` (the first shader / a full rewrite), `edit_shader`
 (targeted snippet replacements — the usual way it changes an existing shader, so
 it doesn't retype the whole thing), `set_uniforms` (live slider parameters),
 `set_channel` / `set_channel_asset` (bind textures to `iChannel0..3`),

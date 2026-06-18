@@ -13,10 +13,10 @@ import { ProviderError } from "../ai/providers.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
-// write_shader is offered only until the AI has authored the shader this
+// init_shader is offered only until the AI has authored the shader this
 // conversation (first turn / after a reset); after that, edits only.
 function authoredShader(messages: Message[]): boolean {
-	const isShaderTool = (n: string) => n === TOOL_NAMES.writeShader || n === TOOL_NAMES.editShader;
+	const isShaderTool = (n: string) => n === TOOL_NAMES.initShader || n === TOOL_NAMES.editShader;
 	return messages.some((m) => m.role === "assistant" && ((m.textTools?.some(isShaderTool) ?? false) || m.blocks.some((b) => b.type === "tool_use" && isShaderTool(b.name))));
 }
 
@@ -107,7 +107,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				store.settings,
 				() => buildSystemPrompt({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
 				store.project.messages,
-				() => toolDefs({ imageGen: store.settings.imageGen.enabled, allowWriteShader: !authoredShader(store.project.messages) }),
+				() => toolDefs({ imageGen: store.settings.imageGen.enabled, allowInitShader: !authoredShader(store.project.messages) }),
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,

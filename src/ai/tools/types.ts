@@ -34,7 +34,7 @@ export interface ToolContext {
 /** Gates which tools are offered to the model on a given turn. */
 export interface ToolAvailability {
 	imageGen: boolean;
-	allowWriteShader: boolean;
+	allowInitShader: boolean;
 }
 
 export interface Tool {

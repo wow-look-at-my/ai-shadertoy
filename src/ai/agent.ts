@@ -9,7 +9,7 @@
 //   reject when no tools were sent).
 //
 // In both modes the offered tool set is recomputed each iteration, so
-// write_shader drops out once the shader has been authored.
+// init_shader drops out once the shader has been authored.
 
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef } from "./types.ts";

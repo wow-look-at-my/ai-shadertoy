@@ -2,7 +2,7 @@
 // the text-tools prompt/parser, and the UI.
 
 export const TOOL_NAMES = {
-	writeShader: "write_shader",
+	initShader: "init_shader",
 	editShader: "edit_shader",
 	getShader: "get_shader",
 	setUniforms: "set_uniforms",

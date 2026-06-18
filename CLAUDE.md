@@ -47,8 +47,8 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ai/tools/` — **one tool per file**, each colocating its JSON-schema `def`
   and `execute`, self-registering into `registry.ts`. The store builds a
   `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
-  `toolDefs({ imageGen, allowWriteShader })` gates the offered set. Tools:
-  `write_shader` (first turn / full rewrite only), `edit_shader` (forgiving
+  `toolDefs({ imageGen, allowInitShader })` gates the offered set. Tools:
+  `init_shader` (first turn / full rewrite only), `edit_shader` (forgiving
   exact-snippet replace — the primary edit path), `get_shader`, `set_uniforms`,
   `set_channel`, `set_channel_asset`, `list_assets`, `capture_screenshot`,
   `generate_texture` (gated on image-gen).
@@ -56,7 +56,7 @@ npm run build         # ts0 build -> dist/index.html
   API; `text` (for models/endpoints without it) describes the catalogue as
   forgiving XML tags (`textToolInstructions`, keyed by `TOOL_NAMES`), parses them
   out of the reply (`texttools.ts`), and feeds results back as a plain user
-  message. `write_shader` is recomputed each iteration so it drops out once the
+  message. `init_shader` is recomputed each iteration so it drops out once the
   shader is authored.
 - `src/state/` — `types.ts` (provider-neutral content-block conversation model),
   `store.ts` (single owner of state + persistence + `applyTool`), `persist.ts`

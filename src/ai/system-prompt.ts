@@ -75,10 +75,10 @@ Available image assets: ${ctx.assetNames.length ? ctx.assetNames.join(", ") : "(
 // ---- text-tools mode -------------------------------------------------------
 
 // How each tool is invoked as an XML tag. Only the tools actually offered this
-// turn (after gating) are listed, so e.g. write_shader disappears once a shader
+// turn (after gating) are listed, so e.g. init_shader disappears once a shader
 // exists. Keyed by the TOOL_NAMES constants.
 const XML_USAGE: Record<string, string> = {
-	[TOOL_NAMES.writeShader]: "<write_shader>\n...complete GLSL source (mainImage + helpers)...\n</write_shader>",
+	[TOOL_NAMES.initShader]: "<init_shader>\n...complete GLSL source (mainImage + helpers)...\n</init_shader>",
 	[TOOL_NAMES.editShader]: "<edit_shader><old>exact snippet from the current shader</old><new>replacement</new></edit_shader>   (add <replace_all>true</replace_all> to replace every occurrence)",
 	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
 	[TOOL_NAMES.setChannel]: '<set_channel>{"index":0,"kind":"builtin","builtin":"rgbaNoise"}</set_channel>',
@@ -92,7 +92,7 @@ const XML_USAGE: Record<string, string> = {
 export function textToolInstructions(tools: ToolDef[]): string {
 	const lines = tools.map((t) => `${XML_USAGE[t.name] ?? `<${t.name}></${t.name}>`}\n    ${t.description}`).join("\n\n");
 	return `# Tools (this model has no native tool API -- use these XML tags)
-To take an action, put an XML tag in your reply. The tag's content is the argument (raw GLSL for write_shader, <old>/<new> for edit_shader, JSON for the rest). You may use several tags in one reply; they run top to bottom, and afterwards you receive the results (and a screenshot) as the next message. Keep any prose OUTSIDE the tags, and make sure every tag is closed.
+To take an action, put an XML tag in your reply. The tag's content is the argument (raw GLSL for init_shader, <old>/<new> for edit_shader, JSON for the rest). You may use several tags in one reply; they run top to bottom, and afterwards you receive the results (and a screenshot) as the next message. Keep any prose OUTSIDE the tags, and make sure every tag is closed.
 
 Available tags:
 
