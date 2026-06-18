@@ -5,6 +5,7 @@ import "./init_shader.ts";
 import "./edit_shader.ts";
 import "./get_shader.ts";
 import "./set_uniforms.ts";
+import "./rename_shader.ts";
 import "./set_channel.ts";
 import "./set_channel_asset.ts";
 import "./list_assets.ts";

@@ -14,7 +14,7 @@
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef } from "./types.ts";
 import type { ToolResult } from "./tools/index.ts";
-import { text, TOOL_NAMES } from "./tools/index.ts";
+import { getTool, text, TOOL_NAMES } from "./tools/index.ts";
 import { streamChat } from "./providers.ts";
 import { parseTextToolCalls } from "./texttools.ts";
 import { textToolInstructions } from "./system-prompt.ts";
@@ -26,11 +26,21 @@ export type { ToolResult } from "./tools/index.ts";
 // shown a forced render when it tries to stop, so it always verifies its work.
 const RENDER_TOOLS = new Set<string>([TOOL_NAMES.initShader, TOOL_NAMES.editShader, TOOL_NAMES.setUniforms, TOOL_NAMES.setChannel, TOOL_NAMES.setChannelAsset, TOOL_NAMES.generateTexture]);
 
+/** A pending tool call awaiting the user's approval (see requiresPermission). */
+export interface PermissionRequest {
+	name: string;
+	prompt: string;
+	input: Record<string, unknown>;
+}
+
 export interface AgentCallbacks {
 	onTurnStart(): void;
 	onAssistantDelta(text: string): void;
 	onToolActivity(name: string, phase: "start" | "done", detail?: string): void;
 	onMessage(msg: Message): void; // a finalized message; caller persists + renders
+	/** Ask the user to approve a permission-gated tool call. Resolves true to run
+	 * it, false to deny (the denial is fed back to the model). */
+	requestPermission(req: PermissionRequest): Promise<boolean>;
 	signal?: AbortSignal;
 }
 
@@ -97,6 +107,19 @@ export async function runAgent(
 		// Execute every call.
 		const results: Array<{ id: string; result: ToolResult }> = [];
 		for (const tc of calls) {
+			// Permission-gated tools: ask the user before they take effect. A
+			// denial is fed back to the model instead of running the tool.
+			const tool = getTool(tc.name);
+			if (tool?.requiresPermission) {
+				const input = (tc.input ?? {}) as Record<string, unknown>;
+				const prompt = tool.permissionPrompt ? tool.permissionPrompt(input) : `Allow ${tc.name} to run?`;
+				const granted = await cb.requestPermission({ name: tc.name, prompt, input });
+				if (!granted) {
+					cb.onToolActivity(tc.name, "done", "denied");
+					results.push({ id: tc.id, result: { content: [text(`The user DECLINED permission to run ${tc.name}; it did not run and nothing changed. Do not retry it unless the user asks -- continue or ask what they'd prefer.`)], isError: true } });
+					continue;
+				}
+			}
 			cb.onToolActivity(tc.name, "start");
 			let result: ToolResult;
 			try {

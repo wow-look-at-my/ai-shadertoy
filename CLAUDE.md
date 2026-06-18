@@ -50,8 +50,15 @@ npm run build         # ts0 build -> dist/index.html
   `toolDefs({ imageGen, allowInitShader })` gates the offered set. Tools:
   `init_shader` (first turn / full rewrite only), `edit_shader` (forgiving
   exact-snippet replace — the primary edit path), `get_shader`, `set_uniforms`,
-  `set_channel`, `set_channel_asset`, `list_assets`, `capture_screenshot`,
-  `generate_texture` (gated on image-gen).
+  `rename_shader` (permission-gated), `set_channel`, `set_channel_asset`,
+  `list_assets`, `capture_screenshot`, `generate_texture` (gated on image-gen).
+- **Permission-gated tools**: a tool can set `requiresPermission: true` (+ an
+  optional `permissionPrompt(input)` for the prompt text) in its registration.
+  Before running such a call the agent loop awaits `cb.requestPermission(...)`;
+  the chat UI renders an Approve/Deny card (Stop counts as deny) and a denial is
+  fed back to the model as a tool result instead of executing. `rename_shader` is
+  the first user of this; it renames via `ctx.renameProject`. Works in both tool
+  modes (the gate lives in the shared execute loop).
 - **Tool modes** (`chat.toolMode`): `native` uses the provider's function-calling
   API; `text` (for models/endpoints without it) describes the catalogue as
   forgiving XML tags (`textToolInstructions`, keyed by `TOOL_NAMES`), parses them

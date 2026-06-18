@@ -282,6 +282,7 @@ export class Store {
 			setShaderSource: (s, c) => this.setShaderSource(s, c),
 			setUniforms: (u) => this.setUniforms(u),
 			setChannel: (i, p) => this.setChannel(i, p),
+			renameProject: (n) => this.renameProject(n),
 			addAsset: (a) => this.addAsset(a),
 			screenshotBlock: () => this.screenshotBlock(),
 			shaderResult: (p, w) => this.shaderResult(p, w),

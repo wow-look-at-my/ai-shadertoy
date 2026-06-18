@@ -5,7 +5,7 @@
 import { append, clear, el } from "../util/dom.ts";
 import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
-import { runAgent } from "../ai/agent.ts";
+import { runAgent, type PermissionRequest } from "../ai/agent.ts";
 import { buildSystemPrompt } from "../ai/system-prompt.ts";
 import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
@@ -75,6 +75,44 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		requestAnimationFrame(() => (list.scrollTop = list.scrollHeight));
 	}
 
+	// Surface an approve/deny card for a permission-gated tool call and resolve
+	// with the user's choice. Stop (abort) resolves it as denied.
+	function requestPermission(req: PermissionRequest): Promise<boolean> {
+		return new Promise((resolve) => {
+			const signal = abort?.signal;
+			const approve = el("button", { class: "btn primary" }, "Approve");
+			const deny = el("button", { class: "btn" }, "Deny");
+			const actions = el("div", { class: "perm-actions" }, approve, deny);
+			const card = el(
+				"div",
+				{ class: "perm-card" },
+				el("div", { class: "perm-head" }, "🔒 Permission required"),
+				el("div", { class: "perm-prompt" }, req.prompt),
+				actions,
+			);
+			list.appendChild(card);
+			scroll();
+
+			let settled = false;
+			const finish = (granted: boolean, label: string, cls: string): void => {
+				if (settled) return;
+				settled = true;
+				signal?.removeEventListener("abort", onAbort);
+				card.classList.add(cls);
+				clear(actions);
+				actions.appendChild(el("span", { class: "perm-status" }, label));
+				resolve(granted);
+			};
+			const onAbort = (): void => finish(false, "Cancelled", "denied");
+
+			approve.addEventListener("click", () => finish(true, "✓ Approved", "approved"));
+			deny.addEventListener("click", () => finish(false, "✕ Denied", "denied"));
+
+			if (signal?.aborted) onAbort();
+			else signal?.addEventListener("abort", onAbort);
+		});
+	}
+
 	async function send(): Promise<void> {
 		const value = input.value.trim();
 		if (!value) return;
@@ -111,6 +149,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,
+					requestPermission,
 					onTurnStart: () => {
 						streamingText = el("div", { class: "md streaming" });
 						list.appendChild(el("div", { class: "msg assistant" }, streamingText));
