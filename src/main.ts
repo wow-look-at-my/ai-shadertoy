@@ -8,7 +8,10 @@ import { createApp } from "./ui/app.ts";
 import { el } from "./util/dom.ts";
 
 async function loadText(relPath: string): Promise<string> {
-	const res = await fetch(new URL(relPath, import.meta.url));
+	// Pass a string (.href), not a URL object: ts0's fetch interceptor only
+	// matches string / Request inputs, so a bare URL object would bypass the
+	// embedded-asset map and hit the (nonexistent) network path.
+	const res = await fetch(new URL(relPath, import.meta.url).href);
 	if (!res.ok) throw new Error(`failed to load ${relPath}: ${res.status}`);
 	return res.text();
 }
