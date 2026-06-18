@@ -25,8 +25,9 @@ export interface ToolContext {
 	setChannel(index: number, patch: Partial<Channel>): void;
 	addAsset(asset: ImageAsset): void;
 	screenshotBlock(): ShotBlock;
-	/** Build the standard "compiled OK + screenshot" / "compile failed + log" result. */
-	shaderResult(okPrefix: string): ToolResult;
+	/** Build the standard compile result. `withImage` attaches the rendered frame
+	 * (the model can request it per-call); a compile failure always returns the log. */
+	shaderResult(okPrefix: string, withImage: boolean): ToolResult;
 	/** Current compile error log, or null when the shader compiles. */
 	compileError(): string | null;
 }

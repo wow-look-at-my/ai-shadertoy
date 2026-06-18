@@ -28,6 +28,7 @@ registerTool({
 				old: { type: "string", description: "Exact snippet from the current shader to replace." },
 				new: { type: "string", description: "Replacement text." },
 				replace_all: { type: "boolean", description: "Replace every occurrence (default false = the single match)." },
+				screenshot: { type: "boolean", description: "Attach the rendered frame to the result so you can verify it (default false; you are always shown the render when you finish)." },
 			},
 			required: ["old", "new"],
 		},
@@ -58,6 +59,6 @@ registerTool({
 
 		const updated = replaceAll ? src.split(target).join(newStr) : src.replace(target, newStr);
 		ctx.setShaderSource(updated, true);
-		return ctx.shaderResult(`Edited shader (${replaceAll ? `${count} replacements` : "1 replacement"}).`);
+		return ctx.shaderResult(`Edited shader (${replaceAll ? `${count} replacements` : "1 replacement"}).`, input["screenshot"] === true);
 	},
 });

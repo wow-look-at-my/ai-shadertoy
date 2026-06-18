@@ -3,8 +3,9 @@
 // tool use. The app's neutral Message[] model (state/types.ts) mirrors
 // Anthropic's content blocks; the OpenAI path down-converts.
 
-import type { Block, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
+import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef } from "./types.ts";
+import { withScheme } from "../util/misc.ts";
 
 export class ProviderError extends Error {
 	readonly status?: number;
@@ -20,7 +21,7 @@ export class ProviderError extends Error {
 /** Wrap a target URL with the CORS proxy when enabled (prefix style). */
 function endpoint(url: string, settings: Settings, useProxy: boolean): string {
 	if (!useProxy) return url;
-	const base = settings.proxyUrl.replace(/\/+$/, "");
+	const base = withScheme(settings.proxyUrl).replace(/\/+$/, "");
 	return `${base}/${url}`;
 }
 
@@ -91,7 +92,7 @@ function anthropicAcceptsTemperature(model: string): boolean {
 
 async function streamAnthropic(settings: Settings, system: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
-	const base = (cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
+	const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
 	const url = endpoint(`${base}/v1/messages`, settings, cfg.useProxy);
 	const body: Record<string, unknown> = {
 		model: cfg.model,
@@ -117,7 +118,7 @@ async function streamAnthropic(settings: Settings, system: string, messages: Mes
 			signal: opts.signal ?? null,
 		});
 	} catch (e) {
-		throw corsHint(e, cfg.useProxy);
+		throw corsHint(e, cfg);
 	}
 	if (!res.ok) throw await httpError(res);
 
@@ -217,7 +218,7 @@ function toOpenAIMessages(system: string, messages: Message[]): unknown[] {
 
 async function streamOpenAI(settings: Settings, system: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
-	const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+	const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 	const url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
 	const body: Record<string, unknown> = {
 		model: cfg.model,
@@ -239,7 +240,7 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 			signal: opts.signal ?? null,
 		});
 	} catch (e) {
-		throw corsHint(e, cfg.useProxy);
+		throw corsHint(e, cfg);
 	}
 	if (!res.ok) throw await httpError(res);
 
@@ -314,11 +315,11 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {
-		const base = (cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
+		const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
 		url = endpoint(`${base}/v1/messages`, settings, cfg.useProxy);
 		headers = { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
 	} else {
-		const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+		const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 		url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
 		headers = { "content-type": "application/json" };
 		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
@@ -329,7 +330,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	try {
 		res = await fetch(url, { method: "POST", headers, body });
 	} catch (e) {
-		const pe = corsHint(e, cfg.useProxy);
+		const pe = corsHint(e, cfg);
 		return { ok: false, message: `${pe.message}${pe.hint ? ` ${pe.hint}` : ""}${keyNote}` };
 	}
 	if (!res.ok) {
@@ -361,13 +362,13 @@ export async function listModels(settings: Settings): Promise<string[]> {
 	let url: string;
 	const headers: Record<string, string> = {};
 	if (cfg.provider === "anthropic") {
-		const base = (cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
+		const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
 		url = endpoint(`${base}/v1/models?limit=1000`, settings, cfg.useProxy);
 		headers["x-api-key"] = cfg.apiKey;
 		headers["anthropic-version"] = "2023-06-01";
 		headers["anthropic-dangerous-direct-browser-access"] = "true";
 	} else {
-		const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+		const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 		url = endpoint(`${base}/models`, settings, cfg.useProxy);
 		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	}
@@ -376,7 +377,7 @@ export async function listModels(settings: Settings): Promise<string[]> {
 	try {
 		res = await fetch(url, { headers });
 	} catch (e) {
-		throw corsHint(e, cfg.useProxy);
+		throw corsHint(e, cfg);
 	}
 	if (!res.ok) throw await httpError(res);
 	const json = (await res.json()) as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
@@ -416,9 +417,19 @@ async function httpError(res: Response): Promise<ProviderError> {
 	return new ProviderError(`HTTP ${res.status}: ${detail || res.statusText}`, res.status, hint);
 }
 
-function corsHint(e: unknown, useProxy: boolean): ProviderError {
+function corsHint(e: unknown, cfg: ChatConfig): ProviderError {
 	const msg = e instanceof Error ? e.message : String(e);
 	if (e instanceof DOMException && e.name === "AbortError") return new ProviderError("Request cancelled.");
-	const hint = useProxy ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.";
+	const ollama = ollamaCorsHint(cfg);
+	const hint = ollama ?? (cfg.useProxy ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
 	return new ProviderError(`Network error: ${msg}`, undefined, hint);
+}
+
+// Ollama (and similar local OpenAI-compatible servers) reject browser requests
+// until the origin is allowlisted. Detect it by the default port / name.
+function ollamaCorsHint(cfg: ChatConfig): string | undefined {
+	if (cfg.provider !== "openai") return undefined;
+	const url = (cfg.baseUrl || "").toLowerCase();
+	if (!/:11434(\b|\/|$)/.test(url) && !url.includes("ollama")) return undefined;
+	return "Ollama blocks browser requests unless you allow this origin. Restart Ollama with OLLAMA_ORIGINS set: run `OLLAMA_ORIGINS='*' ollama serve`; or (macOS app) `launchctl setenv OLLAMA_ORIGINS '*'` then restart Ollama; or (Linux systemd) `systemctl edit ollama`, add `Environment=\"OLLAMA_ORIGINS=*\"`, then `systemctl restart ollama`. Then try again.";
 }

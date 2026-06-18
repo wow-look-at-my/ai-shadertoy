@@ -16,9 +16,12 @@ export interface SettingsModal {
 export function createSettings(store: Store): SettingsModal {
 	const provider = el("select", {}, el("option", { value: "anthropic" }, "Anthropic (Claude)"), el("option", { value: "openai" }, "OpenAI-compatible"));
 	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
-	const model = el("input", { type: "text", attrs: { list: "model-presets", placeholder: "model id" } });
+	// autocomplete:off keeps Firefox's password manager from hijacking the model
+	// field (it is the nearest text input before the password field) and masking
+	// the datalist combobox.
+	const model = el("input", { type: "text", attrs: { list: "model-presets", placeholder: "model id", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const modelList = el("datalist", { id: "model-presets" });
-	const apiKey = el("input", { type: "password", placeholder: "sk-... / your API key" });
+	const apiKey = el("input", { type: "password", placeholder: "sk-... / your API key", attrs: { autocomplete: "off" } });
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -29,7 +32,7 @@ export function createSettings(store: Store): SettingsModal {
 
 	const igEnabled = el("input", { type: "checkbox" });
 	const igBaseUrl = el("input", { type: "text", placeholder: "https://api.openai.com/v1" });
-	const igKey = el("input", { type: "password", placeholder: "(blank = reuse chat key)" });
+	const igKey = el("input", { type: "password", placeholder: "(blank = reuse chat key)", attrs: { autocomplete: "off" } });
 	const igModel = el("input", { type: "text", placeholder: "gpt-image-1" });
 	const igSize = el("input", { type: "text", placeholder: "512x512" });
 	const igProxy = el("input", { type: "checkbox" });
@@ -68,7 +71,7 @@ export function createSettings(store: Store): SettingsModal {
 		try {
 			fetchedModels = await listModels(currentProbe());
 			applyModelOptions();
-			modelStatus.textContent = fetchedModels.length ? `${fetchedModels.length} models available — type or pick one` : "Provider returned no models";
+			modelStatus.textContent = fetchedModels.length ? `${fetchedModels.length} models loaded — start typing to filter` : "Provider returned no models";
 		} catch (e) {
 			modelStatus.textContent = `Couldn't list models: ${e instanceof Error ? e.message : String(e)}`;
 		} finally {
@@ -132,7 +135,7 @@ export function createSettings(store: Store): SettingsModal {
 		checkField("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
 		field("CORS proxy URL", proxyUrl, "Request becomes proxyURL + targetURL."),
 		el("h3", {}, "Vision feedback"),
-		checkField("Auto-send a screenshot after each shader change", autoScreenshot),
+		checkField("Attach a render to every shader change", autoScreenshot, "Off by default: the AI requests a render when it wants one (screenshot:true) and is always shown the final result before it finishes."),
 		field("Screenshot max edge (px)", shotDim),
 		el("h3", {}, "Image generation (optional)"),
 		checkField("Enable generate_texture tool", igEnabled),

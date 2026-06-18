@@ -17,6 +17,7 @@ registerTool({
 			properties: {
 				source: { type: "string", description: "Full GLSL source containing at least mainImage()." },
 				note: { type: "string", description: "Optional one-line summary of the change." },
+				screenshot: { type: "boolean", description: "Attach the rendered frame to the result so you can verify it (default false; you are always shown the render when you finish)." },
 			},
 			required: ["source"],
 		},
@@ -26,6 +27,6 @@ registerTool({
 		if (!source.trim()) return { content: [text("init_shader requires non-empty source.")], isError: true };
 		ctx.setShaderSource(source, true);
 		const note = input["note"] ? ` (${String(input["note"])})` : "";
-		return ctx.shaderResult(`Initialized shader${note}.`);
+		return ctx.shaderResult(`Initialized shader${note}.`, input["screenshot"] === true);
 	},
 });

@@ -2,7 +2,7 @@
 // library, and the renderer, and is the single place that mutates state +
 // persists it. Also implements tool execution for the agent (applyTool).
 
-import type { Channel, ImageAsset, ImageBlock, Project, Settings, TextBlock, Uniform } from "./types.ts";
+import type { Channel, ImageAsset, Project, Settings, Uniform } from "./types.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
@@ -257,21 +257,18 @@ export class Store {
 		return { type: "image", mediaType: shot.mediaType, data, _avg: avg };
 	}
 
-	/** Standard "compiled OK + screenshot" / "compile failed + log" tool result. */
-	private shaderResult(okPrefix: string): ToolResult {
+	/** Standard compile result. Attaches the render only when the caller asked
+	 * for it (per-tool screenshot flag) or the user enabled always-attach. */
+	private shaderResult(okPrefix: string, withImage: boolean): ToolResult {
 		if (this.lastCompile && !this.lastCompile.ok) {
 			return { content: [text(`Compile FAILED. Read the log and fix it with edit_shader, then it re-renders.\n\nGLSL log (line numbers relative to your source):\n${this.lastCompile.log}`)], isError: true };
 		}
 		const stats = this.renderer.stats();
-		const blocks: Array<TextBlock | ImageBlock> = [];
-		if (this.settings.autoScreenshot) {
+		if (withImage || this.settings.autoScreenshot) {
 			const shot = this.screenshotBlock();
-			blocks.push(text(`${okPrefix} Rendered ${stats.width}x${stats.height}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`));
-			blocks.push({ type: "image", mediaType: shot.mediaType, data: shot.data });
-		} else {
-			blocks.push(text(`${okPrefix} (auto-screenshot off; call capture_screenshot to see it.)`));
+			return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
 		}
-		return { content: blocks };
+		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}. (No preview attached — set screenshot:true to see it now, otherwise you'll be shown the final render when you finish.)`)] };
 	}
 
 	// ---- tool execution: dispatch to the registry via a ToolContext ----------
@@ -287,7 +284,7 @@ export class Store {
 			setChannel: (i, p) => this.setChannel(i, p),
 			addAsset: (a) => this.addAsset(a),
 			screenshotBlock: () => this.screenshotBlock(),
-			shaderResult: (p) => this.shaderResult(p),
+			shaderResult: (p, w) => this.shaderResult(p, w),
 			compileError: () => (this.lastCompile && !this.lastCompile.ok ? this.lastCompile.log : null),
 		};
 	}

@@ -5,6 +5,7 @@
 
 import type { Settings } from "../state/types.ts";
 import { ProviderError } from "./providers.ts";
+import { withScheme } from "../util/misc.ts";
 
 export interface GeneratedImage {
 	dataUrl: string;
@@ -23,9 +24,9 @@ export async function generateImage(settings: Settings, prompt: string): Promise
 	const cfg = settings.imageGen;
 	const key = cfg.apiKey || settings.chat.apiKey;
 	if (!key) throw new ProviderError("No API key configured for image generation.");
-	const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+	const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 	let url = `${base}/images/generations`;
-	if (cfg.useProxy) url = `${settings.proxyUrl.replace(/\/+$/, "")}/${url}`;
+	if (cfg.useProxy) url = `${withScheme(settings.proxyUrl).replace(/\/+$/, "")}/${url}`;
 	const { w, h } = parseSize(cfg.size);
 
 	let res: Response;

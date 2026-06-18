@@ -14,13 +14,17 @@
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef } from "./types.ts";
 import type { ToolResult } from "./tools/index.ts";
-import { text } from "./tools/index.ts";
+import { text, TOOL_NAMES } from "./tools/index.ts";
 import { streamChat } from "./providers.ts";
 import { parseTextToolCalls } from "./texttools.ts";
 import { textToolInstructions } from "./system-prompt.ts";
 import { uid } from "../util/misc.ts";
 
 export type { ToolResult } from "./tools/index.ts";
+
+// Tools that change what's on screen. After any of these run, the model is
+// shown a forced render when it tries to stop, so it always verifies its work.
+const RENDER_TOOLS = new Set<string>([TOOL_NAMES.initShader, TOOL_NAMES.editShader, TOOL_NAMES.setUniforms, TOOL_NAMES.setChannel, TOOL_NAMES.setChannelAsset, TOOL_NAMES.generateTexture]);
 
 export interface AgentCallbacks {
 	onTurnStart(): void;
@@ -41,6 +45,7 @@ export async function runAgent(
 	cb: AgentCallbacks,
 ): Promise<void> {
 	const textMode = settings.chat.toolMode === "text";
+	let dirty = false; // shader/visual changed since the model last saw a render
 
 	for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
 		cb.onTurnStart();
@@ -68,7 +73,26 @@ export async function runAgent(
 		messages.push(assistantMsg);
 		cb.onMessage(assistantMsg);
 
-		if (calls.length === 0) return;
+		if (calls.length === 0) {
+			// The model wants to stop. If it changed the render since it last saw
+			// one, force a final screenshot and give it one more turn to verify.
+			if (dirty) {
+				dirty = false;
+				const shot = await applyTool(TOOL_NAMES.screenshot, {});
+				const imgs = shot.content.filter((b): b is ImageBlock => b.type === "image");
+				const verifyMsg: Message = {
+					id: uid("m_"),
+					role: "user",
+					ts: Date.now(),
+					toolOutput: true,
+					blocks: [text("Here is the current render. Verify it matches the request -- if the colours/scale/composition look off or it's black, keep editing with edit_shader. If it looks right, briefly confirm and you're done."), ...imgs],
+				};
+				messages.push(verifyMsg);
+				cb.onMessage(verifyMsg);
+				continue;
+			}
+			return;
+		}
 
 		// Execute every call.
 		const results: Array<{ id: string; result: ToolResult }> = [];
@@ -83,6 +107,7 @@ export async function runAgent(
 			cb.onToolActivity(tc.name, "done", result.isError ? "error" : undefined);
 			results.push({ id: tc.id, result });
 		}
+		if (calls.some((c) => RENDER_TOOLS.has(c.name))) dirty = true;
 
 		let resultMsg: Message;
 		if (textMode) {

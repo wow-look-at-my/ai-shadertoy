@@ -16,6 +16,17 @@ export function clamp(x: number, lo: number, hi: number): number {
 	return x < lo ? lo : x > hi ? hi : x;
 }
 
+/** Ensure a URL has a scheme. Users routinely type "gateway.example.com"; add
+ * http:// for local hosts (no TLS) and https:// otherwise. Empty stays empty. */
+export function withScheme(url: string): string {
+	const u = url.trim();
+	if (!u) return u;
+	if (/^https?:\/\//i.test(u)) return u;
+	if (u.startsWith("//")) return `https:${u}`;
+	if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)(:|\/|$)/i.test(u)) return `http://${u}`;
+	return `https://${u}`;
+}
+
 export function escapeHtml(s: string): string {
 	return s
 		.replace(/&/g, "&amp;")
