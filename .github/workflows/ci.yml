@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      # The lockfile pins the public ts0 dev dependency as a git+ssh URL (npm
+      # canonicalizes GitHub URLs to ssh). Runners have no SSH key, so rewrite
+      # ssh -> anonymous https for the public repo before installing.
+      - name: Use HTTPS for git dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - run: npm ci
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Build single-file bundle
+        run: npx ts0 build
+      - name: Enforce <1MB single file
+        uses: wow-look-at-my/actions@typescript#latest
+        with:
+          script: |
+            const bytes = fs.statSync("dist/index.html").size;
+            core.info(`dist/index.html = ${(bytes / 1024).toFixed(1)} KB`);
+            if (bytes > 1024 * 1024) core.setFailed(`Bundle is ${bytes} bytes, over the 1 MB budget`);
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: dist
+      - name: Publish public site to buildhost
+        uses: wow-look-at-my/actions@typescript#latest
+        with:
+          script: |
+            const server = "https://pazer.build";
+            const su = new URL(server);
+            const sitesBase = `${su.protocol}//sites.${su.host}`;
+            const project = github.repository.split("/").pop()!;
+            // The sites serve route gives {branch} a single path segment, so a
+            // '/' in the branch (claude/foo) must be slugified to keep it one segment.
+            const branch = github.ref_name.replace(/\//g, "-");
+
+            const idUrl = env.ACTIONS_ID_TOKEN_REQUEST_URL;
+            const idBearer = env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+            if (!idUrl || !idBearer) { core.setFailed("OIDC unavailable; need id-token: write"); return; }
+            const idResp = await fetch(`${idUrl}&audience=${server}`, { headers: { Authorization: `Bearer ${idBearer}` } });
+            const token: string = ((await idResp.json()) as { value: string }).value || "";
+            if (!token) { core.setFailed("failed to obtain OIDC token"); return; }
+
+            const tarPath = path.join(os.tmpdir(), "site.tar.gz");
+            await exec.exec("tar", ["-czf", tarPath, "-C", "dist", "."]);
+            const body = fs.readFileSync(tarPath);
+            core.info(`Uploading ${body.length} bytes to ${sitesBase}/${project}/branch/${branch}`);
+
+            const resp = await fetch(`${sitesBase}/${project}/branch/${branch}`, {
+              method: "PUT",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/gzip",
+                "X-Git-Commit": github.sha,
+                "X-Public-Site": "true",
+              },
+              body,
+            });
+            const text = await resp.text();
+            if (!resp.ok) { core.setFailed(`publish failed HTTP ${resp.status}: ${text}`); return; }
+            const siteURL = `${sitesBase}/${project}/branch/${branch}/`;
+            core.info(`Published public site: ${siteURL}`);
+            core.summary.addRaw(`### Deployed\n\n${siteURL}\n`).write();
