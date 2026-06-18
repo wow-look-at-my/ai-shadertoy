@@ -605,6 +605,27 @@ textarea.code {
 	width: 16px;
 	height: 16px;
 }
+.check-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 10px 0;
+}
+.check-row {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	cursor: pointer;
+}
+.check-row input[type="checkbox"] {
+	width: 16px;
+	height: 16px;
+	flex: none;
+	margin: 0;
+}
+.check-row .field-label {
+	color: var(--fg);
+}
 .modal-foot {
 	display: flex;
 	justify-content: flex-end;

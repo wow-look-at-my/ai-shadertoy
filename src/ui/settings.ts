@@ -40,6 +40,9 @@ export function createSettings(store: Store): SettingsModal {
 	provider.addEventListener("change", refreshModelList);
 
 	const field = (label: string, control: HTMLElement, hint?: string) => el("label", { class: "field" }, el("span", { class: "field-label" }, label), control, hint ? el("span", { class: "hint" }, hint) : "");
+	// Checkbox + label on one line, hint underneath.
+	const checkField = (label: string, control: HTMLElement, hint?: string) =>
+		el("div", { class: "field check-field" }, el("label", { class: "check-row" }, control, el("span", { class: "field-label" }, label)), hint ? el("span", { class: "hint" }, hint) : "");
 
 	const body = el(
 		"div",
@@ -52,17 +55,17 @@ export function createSettings(store: Store): SettingsModal {
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),
 		tempHint,
 		el("h3", {}, "Networking"),
-		field("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
+		checkField("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
 		field("CORS proxy URL", proxyUrl, "Request becomes proxyURL + targetURL."),
 		el("h3", {}, "Vision feedback"),
-		field("Auto-send a screenshot after each shader change", autoScreenshot),
+		checkField("Auto-send a screenshot after each shader change", autoScreenshot),
 		field("Screenshot max edge (px)", shotDim),
 		el("h3", {}, "Image generation (optional)"),
-		field("Enable generate_texture tool", igEnabled),
+		checkField("Enable generate_texture tool", igEnabled),
 		field("Images base URL", igBaseUrl),
 		field("Images API key", igKey),
 		el("div", { class: "row2" }, field("Image model", igModel), field("Image size", igSize)),
-		field("Route image gen through proxy", igProxy),
+		checkField("Route image gen through proxy", igProxy),
 	);
 
 	const overlay = el(
