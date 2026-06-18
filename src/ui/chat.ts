@@ -70,7 +70,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	async function send(): Promise<void> {
 		const value = input.value.trim();
 		if (!value) return;
-		if (!store.settings.chat.apiKey) {
+		// Anthropic always needs a key; OpenAI-compatible endpoints may be keyless
+		// (e.g. a local Ollama server), so don't block those.
+		if (store.settings.chat.provider === "anthropic" && !store.settings.chat.apiKey) {
 			alert("Add your API key in Settings first.");
 			deps.openSettings();
 			return;

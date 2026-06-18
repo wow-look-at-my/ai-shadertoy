@@ -228,11 +228,13 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 		tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
 	};
 
+	const headers: Record<string, string> = { "content-type": "application/json" };
+	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	let res: Response;
 	try {
 		res = await fetch(url, {
 			method: "POST",
-			headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` },
+			headers,
 			body: JSON.stringify(body),
 			signal: opts.signal ?? null,
 		});
@@ -302,11 +304,13 @@ export interface TestResult {
  * (CORS) connectivity, and surface the model's actual reply. */
 export async function testConnection(settings: Settings): Promise<TestResult> {
 	const cfg = settings.chat;
-	if (!cfg.apiKey.trim()) return { ok: false, message: "No API key set." };
 	if (!cfg.model.trim()) return { ok: false, message: "No model set." };
 
 	const prompt = 'Respond with one word: "Hi"';
 	const isAnthropic = cfg.provider === "anthropic";
+	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a
+	// likely cause when the request actually fails.
+	const keyNote = cfg.apiKey.trim() ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {
@@ -316,7 +320,8 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	} else {
 		const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 		url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
-		headers = { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` };
+		headers = { "content-type": "application/json" };
+		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	}
 	const body = JSON.stringify({ model: cfg.model, max_tokens: 64, messages: [{ role: "user", content: prompt }] });
 
@@ -325,11 +330,11 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 		res = await fetch(url, { method: "POST", headers, body });
 	} catch (e) {
 		const pe = corsHint(e, cfg.useProxy);
-		return { ok: false, message: `${pe.message}${pe.hint ? ` ${pe.hint}` : ""}` };
+		return { ok: false, message: `${pe.message}${pe.hint ? ` ${pe.hint}` : ""}${keyNote}` };
 	}
 	if (!res.ok) {
 		const err = await httpError(res);
-		return { ok: false, message: `${err.message}${err.hint ? ` ${err.hint}` : ""}` };
+		return { ok: false, message: `${err.message}${err.hint ? ` ${err.hint}` : ""}${keyNote}` };
 	}
 
 	let reply = "";
@@ -347,6 +352,37 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	}
 	const shown = reply.length > 60 ? `${reply.slice(0, 60)}…` : reply;
 	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
+}
+
+/** List available model ids from the provider (Anthropic /v1/models or an
+ * OpenAI-compatible /models). Throws a ProviderError on failure. */
+export async function listModels(settings: Settings): Promise<string[]> {
+	const cfg = settings.chat;
+	let url: string;
+	const headers: Record<string, string> = {};
+	if (cfg.provider === "anthropic") {
+		const base = (cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
+		url = endpoint(`${base}/v1/models?limit=1000`, settings, cfg.useProxy);
+		headers["x-api-key"] = cfg.apiKey;
+		headers["anthropic-version"] = "2023-06-01";
+		headers["anthropic-dangerous-direct-browser-access"] = "true";
+	} else {
+		const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+		url = endpoint(`${base}/models`, settings, cfg.useProxy);
+		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
+	}
+
+	let res: Response;
+	try {
+		res = await fetch(url, { headers });
+	} catch (e) {
+		throw corsHint(e, cfg.useProxy);
+	}
+	if (!res.ok) throw await httpError(res);
+	const json = (await res.json()) as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
+	const items = json.data ?? json.models ?? [];
+	const ids = items.map((m) => m.id ?? m.name ?? "").filter((s) => s.length > 0);
+	return [...new Set(ids)].sort();
 }
 
 function emit(opts: StreamOptions, ev: StreamEvent): void {

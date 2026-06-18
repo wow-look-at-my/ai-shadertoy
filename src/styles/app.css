@@ -601,6 +601,14 @@ textarea.code {
 	grid-template-columns: 1fr 1fr;
 	gap: 12px;
 }
+.model-row {
+	display: flex;
+	gap: 6px;
+}
+.model-row input {
+	flex: 1;
+	min-width: 0;
+}
 .test-row {
 	display: flex;
 	align-items: center;

@@ -2,8 +2,9 @@
 // API keys never leave the browser except in calls the user's own key authorizes.
 
 import { el } from "../util/dom.ts";
+import { debounce } from "../util/misc.ts";
 import { MODEL_PRESETS } from "../state/defaults.ts";
-import { testConnection } from "../ai/providers.ts";
+import { listModels, testConnection } from "../ai/providers.ts";
 import type { ProviderId, Settings } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -33,12 +34,62 @@ export function createSettings(store: Store): SettingsModal {
 	const igProxy = el("input", { type: "checkbox" });
 
 	const tempHint = el("span", { class: "hint" });
+
+	// One Settings snapshot from the current (unsaved) form, shared by the Test
+	// button and the model fetch.
+	const currentProbe = (): Settings => ({
+		...store.settings,
+		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked },
+		proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
+	});
+
+	// Model combobox. The <datalist> is the native combobox: it suggests
+	// completions as you type while still accepting any free-text value. We seed
+	// it with static presets and merge in whatever the provider's /models lists.
+	let fetchedModels: string[] = [];
+	const modelRefreshBtn = el("button", { class: "btn icon", type: "button", title: "Fetch available models from the provider" }, "↻");
+	const modelStatus = el("span", { class: "hint" });
+
+	const applyModelOptions = () => {
+		const p = provider.value as ProviderId;
+		const merged = [...new Set([...fetchedModels, ...MODEL_PRESETS[p]])];
+		modelList.replaceChildren(...merged.map((m) => el("option", { value: m })));
+	};
+	const canFetchModels = () => apiKey.value.trim().length > 0 || (provider.value === "openai" && baseUrl.value.trim().length > 0);
+	const refreshModels = async () => {
+		if (!canFetchModels()) {
+			modelStatus.textContent = "";
+			return;
+		}
+		modelRefreshBtn.disabled = true;
+		modelStatus.className = "hint";
+		modelStatus.textContent = "Loading models…";
+		try {
+			fetchedModels = await listModels(currentProbe());
+			applyModelOptions();
+			modelStatus.textContent = fetchedModels.length ? `${fetchedModels.length} models available — type or pick one` : "Provider returned no models";
+		} catch (e) {
+			modelStatus.textContent = `Couldn't list models: ${e instanceof Error ? e.message : String(e)}`;
+		} finally {
+			modelRefreshBtn.disabled = false;
+		}
+	};
+	const refreshModelsDebounced = debounce(() => void refreshModels(), 700);
+	modelRefreshBtn.addEventListener("click", () => void refreshModels());
+	apiKey.addEventListener("input", refreshModelsDebounced);
+	baseUrl.addEventListener("input", refreshModelsDebounced);
+
 	const refreshModelList = () => {
 		const p = provider.value as ProviderId;
-		modelList.replaceChildren(...MODEL_PRESETS[p].map((m) => el("option", { value: m })));
+		fetchedModels = []; // provider changed; the previous list no longer applies
+		applyModelOptions();
 		tempHint.textContent = p === "anthropic" ? "Ignored for Opus 4.8/4.7 (those reject temperature)." : "";
+		modelStatus.textContent = "";
 	};
-	provider.addEventListener("change", refreshModelList);
+	provider.addEventListener("change", () => {
+		refreshModelList();
+		void refreshModels();
+	});
 
 	const testBtn = el("button", { class: "btn", type: "button" }, "Test connection");
 	const testResult = el("span", { class: "test-result" });
@@ -46,13 +97,8 @@ export function createSettings(store: Store): SettingsModal {
 		testBtn.disabled = true;
 		testResult.className = "test-result busy";
 		testResult.textContent = "Testing…";
-		const probe: Settings = {
-			...store.settings,
-			chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked },
-			proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
-		};
 		try {
-			const r = await testConnection(probe);
+			const r = await testConnection(currentProbe());
 			testResult.className = `test-result ${r.ok ? "ok" : "err"}`;
 			testResult.textContent = `${r.ok ? "✓" : "✕"} ${r.message}`;
 		} catch (e) {
@@ -67,13 +113,14 @@ export function createSettings(store: Store): SettingsModal {
 	// Checkbox + label on one line, hint underneath.
 	const checkField = (label: string, control: HTMLElement, hint?: string) =>
 		el("div", { class: "field check-field" }, el("label", { class: "check-row" }, control, el("span", { class: "field-label" }, label)), hint ? el("span", { class: "hint" }, hint) : "");
+	const modelField = el("div", { class: "field" }, el("span", { class: "field-label" }, "Model"), el("div", { class: "model-row" }, model, modelRefreshBtn), modelStatus);
 
 	const body = el(
 		"div",
 		{ class: "modal-body" },
 		el("h3", {}, "Chat model"),
 		field("Provider", provider),
-		field("Model", model),
+		modelField,
 		field("API key", apiKey, "Stored only in your browser (localStorage)."),
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),
@@ -136,7 +183,9 @@ export function createSettings(store: Store): SettingsModal {
 		testResult.textContent = "";
 		testResult.className = "test-result";
 		testBtn.disabled = false;
+		modelStatus.textContent = "";
 		overlay.hidden = false;
+		void refreshModels(); // auto-populate the combobox when there's enough config
 	}
 	function close(): void {
 		overlay.hidden = true;
