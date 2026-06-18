@@ -95,6 +95,9 @@ textarea {
 }
 .btn.icon {
 	padding: 6px 9px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 }
 .btn.tiny {
 	padding: 2px 6px;
@@ -103,6 +106,13 @@ textarea {
 .btn.on {
 	border-color: var(--accent);
 	color: var(--accent);
+}
+/* Inline Material Design Icons: take the current text colour, sit on the text
+   baseline's middle when placed alongside a label. */
+.icon-svg {
+	display: inline-block;
+	vertical-align: middle;
+	flex: none;
 }
 input[type="text"],
 input[type="password"],
@@ -272,6 +282,8 @@ textarea:focus {
 .tr-status {
 	color: var(--ok);
 	font-weight: 700;
+	display: inline-flex;
+	align-items: center;
 }
 .tool-result.err .tr-status {
 	color: var(--danger);
