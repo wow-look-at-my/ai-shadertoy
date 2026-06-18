@@ -3,7 +3,8 @@
 
 import { el } from "../util/dom.ts";
 import { MODEL_PRESETS } from "../state/defaults.ts";
-import type { ProviderId } from "../state/types.ts";
+import { testConnection } from "../ai/providers.ts";
+import type { ProviderId, Settings } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
 export interface SettingsModal {
@@ -39,6 +40,29 @@ export function createSettings(store: Store): SettingsModal {
 	};
 	provider.addEventListener("change", refreshModelList);
 
+	const testBtn = el("button", { class: "btn", type: "button" }, "Test connection");
+	const testResult = el("span", { class: "test-result" });
+	testBtn.addEventListener("click", async () => {
+		testBtn.disabled = true;
+		testResult.className = "test-result busy";
+		testResult.textContent = "Testing…";
+		const probe: Settings = {
+			...store.settings,
+			chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked },
+			proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
+		};
+		try {
+			const r = await testConnection(probe);
+			testResult.className = `test-result ${r.ok ? "ok" : "err"}`;
+			testResult.textContent = `${r.ok ? "✓" : "✕"} ${r.message}`;
+		} catch (e) {
+			testResult.className = "test-result err";
+			testResult.textContent = `✕ ${e instanceof Error ? e.message : String(e)}`;
+		} finally {
+			testBtn.disabled = false;
+		}
+	});
+
 	const field = (label: string, control: HTMLElement, hint?: string) => el("label", { class: "field" }, el("span", { class: "field-label" }, label), control, hint ? el("span", { class: "hint" }, hint) : "");
 	// Checkbox + label on one line, hint underneath.
 	const checkField = (label: string, control: HTMLElement, hint?: string) =>
@@ -54,6 +78,7 @@ export function createSettings(store: Store): SettingsModal {
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),
 		tempHint,
+		el("div", { class: "test-row" }, testBtn, testResult),
 		el("h3", {}, "Networking"),
 		checkField("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
 		field("CORS proxy URL", proxyUrl, "Request becomes proxyURL + targetURL."),
@@ -108,6 +133,9 @@ export function createSettings(store: Store): SettingsModal {
 		igModel.value = s.imageGen.model;
 		igSize.value = s.imageGen.size;
 		igProxy.checked = s.imageGen.useProxy;
+		testResult.textContent = "";
+		testResult.className = "test-result";
+		testBtn.disabled = false;
 		overlay.hidden = false;
 	}
 	function close(): void {

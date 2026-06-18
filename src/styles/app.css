@@ -601,6 +601,26 @@ textarea.code {
 	grid-template-columns: 1fr 1fr;
 	gap: 12px;
 }
+.test-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 10px 0 2px;
+}
+.test-result {
+	font-size: 13px;
+	flex: 1;
+	overflow-wrap: anywhere;
+}
+.test-result.ok {
+	color: var(--ok);
+}
+.test-result.err {
+	color: var(--danger);
+}
+.test-result.busy {
+	color: var(--fg-dim);
+}
 .field input[type="checkbox"] {
 	width: 16px;
 	height: 16px;
