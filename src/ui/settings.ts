@@ -17,12 +17,18 @@ export interface SettingsModal {
 export function createSettings(store: Store): SettingsModal {
 	const provider = el("select", {}, el("option", { value: "anthropic" }, "Anthropic (Claude)"), el("option", { value: "openai" }, "OpenAI-compatible"));
 	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
-	// autocomplete:off keeps Firefox's password manager from hijacking the model
-	// field (it is the nearest text input before the password field) and masking
-	// the datalist combobox.
+	// The password manager classifies the nearest text input before a
+	// type=password field as the login "username" and staples its (here empty)
+	// credential dropdown onto it — which is our model combobox. autocomplete:off
+	// on this text field does NOT stop that: Chromium deliberately ignores
+	// autocomplete:off on fields it reads as part of a login form (Firefox too).
+	// The lever is the password field below — see autocomplete:new-password there.
 	const model = el("input", { type: "text", attrs: { list: "model-presets", placeholder: "model id", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const modelList = el("datalist", { id: "model-presets" });
-	const apiKey = el("input", { type: "password", placeholder: "sk-... / your API key", attrs: { autocomplete: "off" } });
+	// new-password (not off) is what actually suppresses the manager: it marks the
+	// key as a non-saved secret, so the browser stops treating the model field as
+	// this form's username and stops popping the credential dropdown on it.
+	const apiKey = el("input", { type: "password", placeholder: "sk-... / your API key", attrs: { autocomplete: "new-password" } });
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -33,7 +39,7 @@ export function createSettings(store: Store): SettingsModal {
 
 	const igEnabled = el("input", { type: "checkbox" });
 	const igBaseUrl = el("input", { type: "text", placeholder: "https://api.openai.com/v1" });
-	const igKey = el("input", { type: "password", placeholder: "(blank = reuse chat key)", attrs: { autocomplete: "off" } });
+	const igKey = el("input", { type: "password", placeholder: "(blank = reuse chat key)", attrs: { autocomplete: "new-password" } });
 	const igModel = el("input", { type: "text", placeholder: "gpt-image-1" });
 	const igSize = el("input", { type: "text", placeholder: "512x512" });
 	const igProxy = el("input", { type: "checkbox" });
