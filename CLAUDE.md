@@ -95,3 +95,12 @@ npm run build         # ts0 build -> dist/index.html
 OIDC (`X-Public-Site: true`) to `sites.pazer.build/ai-shadertoy/branch/<branch>/`.
 Models the buildhost repo's `buildhost-publish-site` action, inlined through
 `wow-look-at-my/actions@typescript#latest`.
+
+`.github/workflows/preview.yml`: per-PR previews. On `pull_request`
+(opened/reopened/synchronize) it builds the bundle, uploads it as the `site`
+artifact, and calls the `wow-look-at-my/actions/.github/workflows/buildhost-preview.yml@master`
+reusable workflow with `artifact-name: site` + `public: true`. That deploys to
+`sites.pazer.build/ai-shadertoy/branch/pr-<number>/` and posts a sticky PR
+comment. Push-based per-branch deploys stay in `ci.yml` (CI workflows are
+`on: push:` only); the PR flavour is a separate file because the trigger
+differs. No `closed`-event cleanup — the reusable workflow only deploys.
