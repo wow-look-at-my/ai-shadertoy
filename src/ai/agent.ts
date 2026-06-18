@@ -1,18 +1,26 @@
-// Orchestrates a full agent turn: stream the assistant response, execute any
-// tool calls, feed the results (including rendered screenshots) back, and loop
-// until the model stops calling tools. Tool execution itself lives in the store
-// (it owns the renderer, project, and assets); this module only drives the
-// conversation.
+// Orchestrates an agent turn. Two modes:
+//
+// - native: tool/function calling via the provider API. The model emits
+//   tool_use blocks; we execute them and feed tool_result blocks back.
+// - text: for models/endpoints without tool calling. The tool catalogue is
+//   described in the system prompt as forgiving XML tags; we parse the model's
+//   reply text for those tags, execute them, and feed the results back as a
+//   plain user message. No tool_use/tool_result blocks (which the API would
+//   reject when no tools were sent).
+//
+// In both modes the offered tool set is recomputed each iteration, so
+// write_shader drops out once the shader has been authored.
 
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef } from "./types.ts";
+import type { ToolResult } from "./tools/index.ts";
+import { text } from "./tools/index.ts";
 import { streamChat } from "./providers.ts";
+import { parseTextToolCalls } from "./texttools.ts";
+import { textToolInstructions } from "./system-prompt.ts";
 import { uid } from "../util/misc.ts";
 
-export interface ToolResult {
-	content: Array<TextBlock | ImageBlock>;
-	isError?: boolean;
-}
+export type { ToolResult } from "./tools/index.ts";
 
 export interface AgentCallbacks {
 	onTurnStart(): void;
@@ -26,15 +34,19 @@ const MAX_ITERATIONS = 12;
 
 export async function runAgent(
 	settings: Settings,
-	systemPrompt: () => string,
+	baseSystem: () => string,
 	messages: Message[],
-	tools: ToolDef[],
+	toolsFor: () => ToolDef[],
 	applyTool: (name: string, input: unknown) => Promise<ToolResult>,
 	cb: AgentCallbacks,
 ): Promise<void> {
+	const textMode = settings.chat.toolMode === "text";
+
 	for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
 		cb.onTurnStart();
-		const turn = await streamChat(settings, systemPrompt(), messages, tools, {
+		const tools = toolsFor();
+		const system = textMode ? `${baseSystem()}\n\n${textToolInstructions(tools)}` : baseSystem();
+		const turn = await streamChat(settings, system, messages, textMode ? [] : tools, {
 			signal: cb.signal,
 			onEvent: (ev) => {
 				if (ev.type === "text") cb.onAssistantDelta(ev.delta);
@@ -42,35 +54,54 @@ export async function runAgent(
 			},
 		});
 
+		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : turn.toolCalls;
+
 		const assistantMsg: Message = {
 			id: uid("m_"),
 			role: "assistant",
 			ts: Date.now(),
-			blocks: [
-				...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []),
-				...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input })),
-			],
+			blocks: textMode
+				? [{ type: "text", text: turn.text } as TextBlock]
+				: [...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []), ...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
+			...(textMode ? { textTools: calls.map((c) => c.name) } : {}),
 		};
 		messages.push(assistantMsg);
 		cb.onMessage(assistantMsg);
 
-		if (turn.toolCalls.length === 0) return;
+		if (calls.length === 0) return;
 
-		const resultBlocks: Message["blocks"] = [];
-		for (const tc of turn.toolCalls) {
+		// Execute every call.
+		const results: Array<{ id: string; result: ToolResult }> = [];
+		for (const tc of calls) {
+			cb.onToolActivity(tc.name, "start");
 			let result: ToolResult;
 			try {
 				result = await applyTool(tc.name, tc.input);
 			} catch (e) {
-				result = { content: [{ type: "text", text: `Tool error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+				result = { content: [text(`Tool error: ${e instanceof Error ? e.message : String(e)}`)], isError: true };
 			}
 			cb.onToolActivity(tc.name, "done", result.isError ? "error" : undefined);
-			resultBlocks.push({ type: "tool_result", toolUseId: tc.id, content: result.content, isError: result.isError ?? false });
+			results.push({ id: tc.id, result });
 		}
 
-		const toolMsg: Message = { id: uid("m_"), role: "tool", ts: Date.now(), blocks: resultBlocks };
-		messages.push(toolMsg);
-		cb.onMessage(toolMsg);
+		let resultMsg: Message;
+		if (textMode) {
+			// Results as a plain user message (text + images), no tool_result blocks.
+			const blocks: Array<TextBlock | ImageBlock> = [];
+			for (const { result } of results) {
+				blocks.push(...result.content);
+			}
+			resultMsg = { id: uid("m_"), role: "user", ts: Date.now(), blocks, toolOutput: true };
+		} else {
+			resultMsg = {
+				id: uid("m_"),
+				role: "tool",
+				ts: Date.now(),
+				blocks: results.map(({ id, result }) => ({ type: "tool_result" as const, toolUseId: id, content: result.content, isError: result.isError ?? false })),
+			};
+		}
+		messages.push(resultMsg);
+		cb.onMessage(resultMsg);
 
 		if (cb.signal?.aborted) return;
 	}

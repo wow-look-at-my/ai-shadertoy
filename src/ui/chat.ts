@@ -7,10 +7,18 @@ import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { runAgent } from "../ai/agent.ts";
 import { buildSystemPrompt } from "../ai/system-prompt.ts";
-import { toolDefs } from "../ai/tools.ts";
+import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
+import { stripTextToolTags } from "../ai/texttools.ts";
 import { ProviderError } from "../ai/providers.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
+
+// write_shader is offered only until the AI has authored the shader this
+// conversation (first turn / after a reset); after that, edits only.
+function authoredShader(messages: Message[]): boolean {
+	const isShaderTool = (n: string) => n === TOOL_NAMES.writeShader || n === TOOL_NAMES.editShader;
+	return messages.some((m) => m.role === "assistant" && ((m.textTools?.some(isShaderTool) ?? false) || m.blocks.some((b) => b.type === "tool_use" && isShaderTool(b.name))));
+}
 
 export interface ChatDeps {
 	store: Store;
@@ -99,7 +107,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				store.settings,
 				() => buildSystemPrompt({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
 				store.project.messages,
-				toolDefs({ imageGen: store.settings.imageGen.enabled }),
+				() => toolDefs({ imageGen: store.settings.imageGen.enabled, allowWriteShader: !authoredShader(store.project.messages) }),
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,
@@ -170,7 +178,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 function messageEl(m: Message): HTMLElement {
 	if (m.role === "user") {
-		return el("div", { class: "msg user" }, ...m.blocks.map(blockEl));
+		// text-tools mode feeds tool results back as a user message -- render it
+		// as a results row, not a user bubble.
+		return m.toolOutput ? toolOutputEl(m) : el("div", { class: "msg user" }, ...m.blocks.map(blockEl));
 	}
 	if (m.role === "assistant") {
 		return el("div", { class: "msg assistant" }, ...assistantContent(m));
@@ -180,12 +190,28 @@ function messageEl(m: Message): HTMLElement {
 
 function assistantContent(m: Message): HTMLElement[] {
 	const out: HTMLElement[] = [];
+	if (m.textTools !== undefined) {
+		// text-tools mode: strip the XML tool tags, show the prose + tool chips.
+		const textBlock = m.blocks.find((b): b is TextBlock => b.type === "text");
+		const prose = stripTextToolTags(textBlock?.text ?? "");
+		if (prose) out.push(renderMarkdown(prose));
+		for (const name of m.textTools) out.push(el("div", { class: "tool-chip" }, el("span", { class: "tool-name" }, `🔧 ${name}`)));
+		if (!out.length) out.push(el("div", { class: "muted small" }, "(no text)"));
+		return out;
+	}
 	for (const b of m.blocks) {
 		if (b.type === "text" && b.text.trim()) out.push(renderMarkdown(b.text));
 		else if (b.type === "tool_use") out.push(toolUseEl(b));
 	}
 	if (!out.length) out.push(el("div", { class: "muted small" }, "(no text)"));
 	return out;
+}
+
+function toolOutputEl(m: Message): HTMLElement {
+	const textParts = m.blocks.filter((b): b is TextBlock => b.type === "text").map((b) => b.text);
+	const imgs = m.blocks.filter((b): b is ImageBlock => b.type === "image");
+	const summary = textParts.join(" ").split("\n")[0].slice(0, 120);
+	return el("div", { class: "msg tool" }, el("div", { class: "tool-result" }, el("span", { class: "tr-status" }, "✓"), el("span", { class: "tr-text" }, summary), ...imgs.map(imgThumb)));
 }
 
 function blockEl(b: Block): HTMLElement {

@@ -5,7 +5,7 @@ import { el } from "../util/dom.ts";
 import { debounce } from "../util/misc.ts";
 import { MODEL_PRESETS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
-import type { ProviderId, Settings } from "../state/types.ts";
+import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
 export interface SettingsModal {
@@ -15,6 +15,7 @@ export interface SettingsModal {
 
 export function createSettings(store: Store): SettingsModal {
 	const provider = el("select", {}, el("option", { value: "anthropic" }, "Anthropic (Claude)"), el("option", { value: "openai" }, "OpenAI-compatible"));
+	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
 	const model = el("input", { type: "text", attrs: { list: "model-presets", placeholder: "model id" } });
 	const modelList = el("datalist", { id: "model-presets" });
 	const apiKey = el("input", { type: "password", placeholder: "sk-... / your API key" });
@@ -39,7 +40,7 @@ export function createSettings(store: Store): SettingsModal {
 	// button and the model fetch.
 	const currentProbe = (): Settings => ({
 		...store.settings,
-		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked },
+		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked, toolMode: toolMode.value as ToolMode },
 		proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
 	});
 
@@ -123,6 +124,7 @@ export function createSettings(store: Store): SettingsModal {
 		modelField,
 		field("API key", apiKey, "Stored only in your browser (localStorage)."),
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
+		field("Tool calling", toolMode, "Text tags = forgiving XML in the reply, for models/endpoints without function calling."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),
 		tempHint,
 		el("div", { class: "test-row" }, testBtn, testResult),
@@ -164,6 +166,7 @@ export function createSettings(store: Store): SettingsModal {
 	function open(): void {
 		const s = store.settings;
 		provider.value = s.chat.provider;
+		toolMode.value = s.chat.toolMode;
 		refreshModelList();
 		model.value = s.chat.model;
 		apiKey.value = s.chat.apiKey;
@@ -200,6 +203,7 @@ export function createSettings(store: Store): SettingsModal {
 				maxTokens: clampNum(maxTokens.value, 256, 128000, 16384),
 				temperature: clampNum(temperature.value, 0, 2, 0.7),
 				useProxy: useProxy.checked,
+				toolMode: toolMode.value as ToolMode,
 			},
 			proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
 			autoScreenshot: autoScreenshot.checked,

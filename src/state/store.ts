@@ -2,18 +2,14 @@
 // library, and the renderer, and is the single place that mutates state +
 // persists it. Also implements tool execution for the agent (applyTool).
 
-import type { BuiltinTexture, Channel, ImageAsset, Project, Settings, TexFilter, TexWrap, Uniform } from "./types.ts";
-import type { ToolResult } from "../ai/agent.ts";
-import type { ImageBlock, TextBlock } from "./types.ts";
+import type { Channel, ImageAsset, ImageBlock, Project, Settings, TextBlock, Uniform } from "./types.ts";
+import { getTool, text } from "../ai/tools/index.ts";
+import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
 import type { CompileResult } from "../gl/renderer.ts";
-import { BUILTIN_LABELS } from "../gl/textures.ts";
-import { isValidUniformName } from "../gl/wrapper.ts";
-import { TOOL_NAMES } from "../ai/tools.ts";
-import { generateImage } from "../ai/imagegen.ts";
 import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersistence, saveSettings, setCurrentProjectId } from "./persist.ts";
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
-import { debounce, uid } from "../util/misc.ts";
+import { debounce } from "../util/misc.ts";
 
 type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity";
 
@@ -254,171 +250,54 @@ export class Store {
 
 	// ---- screenshot ---------------------------------------------------------
 
-	private screenshotBlock(): ImageBlock & { _avg: string } {
+	private screenshotBlock(): ShotBlock {
 		const shot = this.renderer.screenshot(this.settings.screenshotMaxDim);
 		const data = shot.dataUrl.slice(shot.dataUrl.indexOf(",") + 1);
 		const avg = `avg rgb(${shot.avgColor.join(", ")})${shot.nonBlack ? "" : " — looks black/empty"}`;
 		return { type: "image", mediaType: shot.mediaType, data, _avg: avg };
 	}
 
-	// ---- tool execution -----------------------------------------------------
-
-	async applyTool(name: string, input: unknown): Promise<ToolResult> {
-		const args = (input ?? {}) as Record<string, unknown>;
-		this.emit("toolActivity", { name });
-		switch (name) {
-			case TOOL_NAMES.writeShader:
-				return this.toolWriteShader(String(args["source"] ?? ""), args["note"] ? String(args["note"]) : undefined);
-			case TOOL_NAMES.getShader:
-				return this.toolGetShader();
-			case TOOL_NAMES.setUniforms:
-				return this.toolSetUniforms(args["uniforms"]);
-			case TOOL_NAMES.setChannel:
-				return this.toolSetChannel(args);
-			case TOOL_NAMES.setChannelAsset:
-				return await this.toolSetChannelAsset(args);
-			case TOOL_NAMES.listAssets:
-				return this.toolListAssets();
-			case TOOL_NAMES.screenshot:
-				return this.toolScreenshot();
-			case TOOL_NAMES.generateTexture:
-				return await this.toolGenerateTexture(args);
-			default:
-				return { content: [text(`Unknown tool: ${name}`)], isError: true };
-		}
-	}
-
-	private toolWriteShader(source: string, note?: string): ToolResult {
-		if (!source.trim()) return { content: [text("write_shader requires non-empty source.")], isError: true };
-		const result = this.setShaderSource(source, true);
-		if (!result.ok) {
-			return { content: [text(`Compile FAILED. Fix and call write_shader again.\n\nGLSL log (line numbers are relative to your source):\n${result.log}`)], isError: true };
+	/** Standard "compiled OK + screenshot" / "compile failed + log" tool result. */
+	private shaderResult(okPrefix: string): ToolResult {
+		if (this.lastCompile && !this.lastCompile.ok) {
+			return { content: [text(`Compile FAILED. Read the log and fix it with edit_shader, then it re-renders.\n\nGLSL log (line numbers relative to your source):\n${this.lastCompile.log}`)], isError: true };
 		}
 		const stats = this.renderer.stats();
 		const blocks: Array<TextBlock | ImageBlock> = [];
 		if (this.settings.autoScreenshot) {
 			const shot = this.screenshotBlock();
-			blocks.push(text(`Compiled OK${note ? ` (${note})` : ""}. Rendered ${stats.width}x${stats.height}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`));
+			blocks.push(text(`${okPrefix} Rendered ${stats.width}x${stats.height}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`));
 			blocks.push({ type: "image", mediaType: shot.mediaType, data: shot.data });
 		} else {
-			blocks.push(text(`Compiled OK${note ? ` (${note})` : ""}. Rendered ${stats.width}x${stats.height}. (auto-screenshot disabled; call capture_screenshot to see it.)`));
+			blocks.push(text(`${okPrefix} (auto-screenshot off; call capture_screenshot to see it.)`));
 		}
 		return { content: blocks };
 	}
 
-	private toolGetShader(): ToolResult {
-		const p = this.project;
-		const uniforms = p.uniforms.length ? p.uniforms.map((u) => `${u.type} ${u.name} = [${u.value.join(", ")}]`).join("\n") : "(none)";
-		const channels = p.channels.map((c, i) => `iChannel${i}: ${describeChannel(c, this.assets)}`).join("\n");
-		const err = this.lastCompile && !this.lastCompile.ok ? `\n\nLast compile error:\n${this.lastCompile.log}` : "";
-		return { content: [text(`Current shader source:\n\`\`\`glsl\n${p.shaderSource}\n\`\`\`\n\nCustom uniforms:\n${uniforms}\n\nChannels:\n${channels}${err}`)] };
-	}
+	// ---- tool execution: dispatch to the registry via a ToolContext ----------
 
-	private toolSetUniforms(raw: unknown): ToolResult {
-		if (!Array.isArray(raw)) return { content: [text("uniforms must be an array.")], isError: true };
-		const uniforms: Uniform[] = [];
-		const errors: string[] = [];
-		for (const item of raw as Array<Record<string, unknown>>) {
-			const name = String(item["name"] ?? "");
-			const type = String(item["type"] ?? "float") as Uniform["type"];
-			if (!isValidUniformName(name)) {
-				errors.push(`invalid/duplicate uniform name: ${name}`);
-				continue;
-			}
-			const need = type === "float" ? 1 : type === "vec2" ? 2 : type === "vec4" ? 4 : 3;
-			let value = Array.isArray(item["value"]) ? (item["value"] as unknown[]).map(Number) : [];
-			if (value.length < need) value = value.concat(new Array(need - value.length).fill(0));
-			value = value.slice(0, need);
-			uniforms.push({
-				name,
-				type,
-				value,
-				min: typeof item["min"] === "number" ? (item["min"] as number) : 0,
-				max: typeof item["max"] === "number" ? (item["max"] as number) : 1,
-				step: typeof item["step"] === "number" ? (item["step"] as number) : 0.01,
-				label: item["label"] ? String(item["label"]) : undefined,
-			});
-		}
-		const result = this.setUniforms(uniforms);
-		const decl = uniforms.map((u) => `uniform ${u.type === "color" ? "vec3" : u.type} ${u.name};`).join("\n");
-		const head = result.ok ? "Uniforms set." : `Uniforms set, but the shader no longer compiles:\n${result.log}`;
-		return { content: [text(`${head}\nDeclared:\n${decl}${errors.length ? `\nSkipped: ${errors.join("; ")}` : ""}`)], isError: !result.ok };
-	}
-
-	private toolSetChannel(args: Record<string, unknown>): ToolResult {
-		const index = Number(args["index"]);
-		if (!(index >= 0 && index <= 3)) return { content: [text("index must be 0-3.")], isError: true };
-		const kind = String(args["kind"] ?? "none");
-		const filter = (args["filter"] as TexFilter) ?? "linear";
-		const wrap = (args["wrap"] as TexWrap) ?? "repeat";
-		if (kind === "none") {
-			this.setChannel(index, { kind: "none", assetId: undefined, builtin: undefined });
-			return { content: [text(`iChannel${index} cleared.`)] };
-		}
-		const builtin = String(args["builtin"] ?? "") as BuiltinTexture;
-		if (!(builtin in BUILTIN_LABELS)) return { content: [text(`builtin must be one of: ${Object.keys(BUILTIN_LABELS).join(", ")}`)], isError: true };
-		this.setChannel(index, { kind: "builtin", builtin, filter, wrap, assetId: undefined });
-		return { content: [text(`iChannel${index} = builtin ${builtin} (${BUILTIN_LABELS[builtin]}).`)] };
-	}
-
-	private async toolSetChannelAsset(args: Record<string, unknown>): Promise<ToolResult> {
-		const index = Number(args["index"]);
-		if (!(index >= 0 && index <= 3)) return { content: [text("index must be 0-3.")], isError: true };
-		const assetName = String(args["asset"] ?? "");
-		const asset = this.assets.find((a) => a.name === assetName) ?? this.assets.find((a) => a.id === assetName);
-		if (!asset) return { content: [text(`No asset named "${assetName}". Use list_assets.`)], isError: true };
-		this.setChannel(index, { kind: "image", assetId: asset.id, builtin: undefined, filter: (args["filter"] as TexFilter) ?? "linear", wrap: (args["wrap"] as TexWrap) ?? "repeat" });
-		return { content: [text(`iChannel${index} = image "${asset.name}" (${asset.width}x${asset.height}).`)] };
-	}
-
-	private toolListAssets(): ToolResult {
-		if (!this.assets.length) return { content: [text("No image assets. The user can upload one, or use generate_texture if image generation is enabled.")] };
-		const list = this.assets.map((a) => `- ${a.name} (${a.width}x${a.height}, ${a.source})`).join("\n");
-		return { content: [text(`Available image assets:\n${list}`)] };
-	}
-
-	private toolScreenshot(): ToolResult {
-		const shot = this.screenshotBlock();
-		const stats = this.renderer.stats();
-		return { content: [text(`Frame at t=${stats.time.toFixed(2)}s, ${stats.width}x${stats.height}. ${shot._avg}.`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
-	}
-
-	private async toolGenerateTexture(args: Record<string, unknown>): Promise<ToolResult> {
-		if (!this.settings.imageGen.enabled) return { content: [text("Image generation is not enabled. Ask the user to configure it in Settings.")], isError: true };
-		const prompt = String(args["prompt"] ?? "");
-		if (!prompt.trim()) return { content: [text("generate_texture requires a prompt.")], isError: true };
-		const gen = await generateImage(this.settings, prompt);
-		const asset: ImageAsset = {
-			id: uid("a_"),
-			name: args["name"] ? String(args["name"]) : `gen-${this.assets.length + 1}`,
-			mediaType: gen.mediaType,
-			dataUrl: gen.dataUrl,
-			width: gen.width,
-			height: gen.height,
-			source: "generated",
-			prompt,
+	private toolContext(): ToolContext {
+		return {
+			settings: this.settings,
+			project: this.project,
+			assets: this.assets,
+			renderer: this.renderer,
+			setShaderSource: (s, c) => this.setShaderSource(s, c),
+			setUniforms: (u) => this.setUniforms(u),
+			setChannel: (i, p) => this.setChannel(i, p),
+			addAsset: (a) => this.addAsset(a),
+			screenshotBlock: () => this.screenshotBlock(),
+			shaderResult: (p) => this.shaderResult(p),
+			compileError: () => (this.lastCompile && !this.lastCompile.ok ? this.lastCompile.log : null),
 		};
-		this.addAsset(asset);
-		const blocks: Array<TextBlock | ImageBlock> = [text(`Generated texture "${asset.name}" (${asset.width}x${asset.height}).`)];
-		const idx = Number(args["index"]);
-		if (idx >= 0 && idx <= 3) {
-			this.setChannel(idx, { kind: "image", assetId: asset.id, builtin: undefined, filter: "linear", wrap: "repeat" });
-			blocks[0] = text(`Generated texture "${asset.name}" and bound it to iChannel${idx}.`);
-		}
-		blocks.push({ type: "image", mediaType: gen.mediaType, data: gen.dataUrl.slice(gen.dataUrl.indexOf(",") + 1) });
-		return { content: blocks };
 	}
-}
 
-function text(t: string): TextBlock {
-	return { type: "text", text: t };
-}
-
-function describeChannel(c: Channel, assets: ImageAsset[]): string {
-	if (c.kind === "none") return "empty";
-	if (c.kind === "builtin") return `builtin:${c.builtin}`;
-	const a = assets.find((x) => x.id === c.assetId);
-	return `image:${a?.name ?? c.assetId}`;
+	async applyTool(name: string, input: unknown): Promise<ToolResult> {
+		this.emit("toolActivity", { name });
+		const tool = getTool(name);
+		if (!tool) return { content: [text(`Unknown tool: ${name}`)], isError: true };
+		return tool.execute(this.toolContext(), (input ?? {}) as Record<string, unknown>);
+	}
 }
 
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {

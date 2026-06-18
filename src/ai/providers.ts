@@ -7,13 +7,13 @@ import type { Block, ImageBlock, Message, Settings, TextBlock } from "../state/t
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef } from "./types.ts";
 
 export class ProviderError extends Error {
-	constructor(
-		message: string,
-		readonly status?: number,
-		readonly hint?: string,
-	) {
+	readonly status?: number;
+	readonly hint?: string;
+	constructor(message: string, status?: number, hint?: string) {
 		super(message);
 		this.name = "ProviderError";
+		this.status = status;
+		this.hint = hint;
 	}
 }
 
@@ -99,8 +99,8 @@ async function streamAnthropic(settings: Settings, system: string, messages: Mes
 		system,
 		stream: true,
 		messages: toAnthropicMessages(messages),
-		tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
 	};
+	if (tools.length) body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
 	if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
 
 	let res: Response;
@@ -219,14 +219,14 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 	const cfg = settings.chat;
 	const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 	const url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
-	const body = {
+	const body: Record<string, unknown> = {
 		model: cfg.model,
 		max_tokens: cfg.maxTokens,
 		temperature: cfg.temperature,
 		stream: true,
 		messages: toOpenAIMessages(system, messages),
-		tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
 	};
+	if (tools.length) body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 
 	const headers: Record<string, string> = { "content-type": "application/json" };
 	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;

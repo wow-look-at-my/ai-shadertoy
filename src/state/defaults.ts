@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
 		maxTokens: 16384,
 		temperature: 0.7,
 		useProxy: false,
+		toolMode: "native",
 	},
 	imageGen: {
 		enabled: false,

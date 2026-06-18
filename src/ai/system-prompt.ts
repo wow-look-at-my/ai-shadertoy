@@ -1,10 +1,13 @@
-// Builds the system prompt. It teaches the model the sandbox conventions
-// (Shadertoy-style mainImage, GLSL ES 3.00, built-in uniforms), how to use the
-// tools, and the current project state so it has context without an extra
-// round-trip.
+// Builds the system prompt. For native tool-calling models the tool *schemas*
+// are sent in the request's `tools` field, so they are NOT duplicated here --
+// the prompt only covers the environment, conventions, and current state. For
+// text-tools mode (models without native tool calling) `textToolInstructions`
+// describes the same catalogue as forgiving XML tags.
 
 import type { Channel, Project } from "../state/types.ts";
+import type { ToolDef } from "./types.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
+import { TOOL_NAMES } from "./tools/names.ts";
 
 export interface PromptContext {
 	project: Project;
@@ -32,7 +35,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 	return `You are a shader programming agent inside a live WebGL2 sandbox. You collaborate with a user to design 2D fragment shaders, the way Shadertoy works. You can SEE what you render: after you change the shader you receive a screenshot and the GLSL compile log, so use that feedback to iterate toward what the user asks for.
 
 # How rendering works
-- The user writes nothing; YOU author the shader by calling the write_shader tool.
+- The user writes nothing; YOU author the shader using your tools.
 - You write GLSL ES 3.00 and MUST define:
       void mainImage(out vec4 fragColor, in vec2 fragCoord) { ... }
   fragCoord is in pixels (origin bottom-left). Write the final colour to fragColor (RGBA, 0..1).
@@ -50,25 +53,48 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   sampler2D iChannel0..3 // input textures
   vec3  iChannelResolution[4]
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
-
-# Tools
-- write_shader: replace the whole shader. This is your primary action. After it runs you get a screenshot + compile log. If compilation fails, READ the log (line numbers are relative to your source) and call write_shader again with a fix. Keep iterating until it both compiles and looks right.
-- set_uniforms: declare custom uniforms that become live UI sliders for the user (e.g. u_speed, u_color). Replaces the whole set. Reference them in your shader. Keep names prefixed (u_...).
-- set_channel / set_channel_asset: bind textures to iChannel0..3. Built-ins available: ${builtins}.
-- list_assets: see user images you can bind. ${ctx.imageGen ? "generate_texture: synthesize a new texture image from a prompt and bind it." : "(Image generation is not configured; ask the user to enable it in Settings if a generated texture is needed.)"}
-- capture_screenshot: re-capture the current frame whenever you want another look.
+Built-in procedural textures you can bind to channels: ${builtins}.
 
 # Working style
-- Prefer doing over describing: when the user asks for a look, call write_shader rather than pasting code into chat. Keep chat replies short -- a sentence or two about what you did or what you need.
+- Prefer doing over describing: use your tools to change the shader rather than pasting code into chat. Keep chat replies short -- a sentence or two about what you did or what you need.
+- IMPORTANT: to change an existing shader, make targeted EDITS (replace just the snippet that changes). Do not retype the whole shader -- it is slower and error-prone. Writing the whole shader from scratch is only for the very first shader or a deliberate full rewrite.
+- Expose the key parameters as uniforms so the user can tweak them live; keep motion subtle by default.
 - Use the screenshot feedback to self-correct colours, scale, and composition. If the render is black, check your ranges and that you write a non-zero fragColor.alpha.
-- Make motion subtle by default and expose key parameters as uniforms so the user can tweak them.
+- If compilation fails, READ the log (line numbers are relative to your source) and fix it with another edit. Keep iterating until it both compiles and looks right.
 - Only ask a clarifying question when the request is genuinely ambiguous; otherwise make a reasonable choice and show a result.
 
 # Current project state
-Shader (${p.shaderSource.split("\n").length} lines) is already loaded in the editor.
+Shader (${p.shaderSource.split("\n").length} lines) is already loaded.
 Custom uniforms:
 ${uniforms}
 Channels:
 ${channels}
-Available image assets: ${ctx.assetNames.length ? ctx.assetNames.join(", ") : "(none)"}${ctx.lastError ? `\nMost recent compile error:\n${ctx.lastError}` : ""}`;
+Available image assets: ${ctx.assetNames.length ? ctx.assetNames.join(", ") : "(none)"}${ctx.imageGen ? "\nImage generation is enabled (generate_texture available)." : ""}${ctx.lastError ? `\nMost recent compile error:\n${ctx.lastError}` : ""}`;
+}
+
+// ---- text-tools mode -------------------------------------------------------
+
+// How each tool is invoked as an XML tag. Only the tools actually offered this
+// turn (after gating) are listed, so e.g. write_shader disappears once a shader
+// exists. Keyed by the TOOL_NAMES constants.
+const XML_USAGE: Record<string, string> = {
+	[TOOL_NAMES.writeShader]: "<write_shader>\n...complete GLSL source (mainImage + helpers)...\n</write_shader>",
+	[TOOL_NAMES.editShader]: "<edit_shader><old>exact snippet from the current shader</old><new>replacement</new></edit_shader>   (add <replace_all>true</replace_all> to replace every occurrence)",
+	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
+	[TOOL_NAMES.setChannel]: '<set_channel>{"index":0,"kind":"builtin","builtin":"rgbaNoise"}</set_channel>',
+	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>',
+	[TOOL_NAMES.listAssets]: "<list_assets></list_assets>",
+	[TOOL_NAMES.getShader]: "<get_shader></get_shader>",
+	[TOOL_NAMES.screenshot]: "<capture_screenshot></capture_screenshot>",
+	[TOOL_NAMES.generateTexture]: '<generate_texture>{"prompt":"seamless rock surface","index":0}</generate_texture>',
+};
+
+export function textToolInstructions(tools: ToolDef[]): string {
+	const lines = tools.map((t) => `${XML_USAGE[t.name] ?? `<${t.name}></${t.name}>`}\n    ${t.description}`).join("\n\n");
+	return `# Tools (this model has no native tool API -- use these XML tags)
+To take an action, put an XML tag in your reply. The tag's content is the argument (raw GLSL for write_shader, <old>/<new> for edit_shader, JSON for the rest). You may use several tags in one reply; they run top to bottom, and afterwards you receive the results (and a screenshot) as the next message. Keep any prose OUTSIDE the tags, and make sure every tag is closed.
+
+Available tags:
+
+${lines}`;
 }

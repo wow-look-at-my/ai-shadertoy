@@ -35,6 +35,10 @@ export interface Message {
 	/** transient UI hints, not sent to the model */
 	pending?: boolean;
 	error?: string;
+	/** text-tools mode: names of tools this assistant turn invoked via XML tags */
+	textTools?: string[];
+	/** text-tools mode: this user message carries tool results (render as a results row) */
+	toolOutput?: boolean;
 }
 
 export type UniformType = "float" | "vec2" | "vec3" | "vec4" | "color";
@@ -86,6 +90,8 @@ export interface Project {
 
 export type ProviderId = "anthropic" | "openai";
 
+export type ToolMode = "native" | "text";
+
 export interface ChatConfig {
 	provider: ProviderId;
 	baseUrl: string; // override endpoint (OpenAI-compatible) or anthropic base
@@ -94,6 +100,9 @@ export interface ChatConfig {
 	maxTokens: number;
 	temperature: number;
 	useProxy: boolean;
+	/** "native" = function/tool calling via the API; "text" = forgiving XML tags
+	 * in the response text, for models/endpoints without tool-calling support. */
+	toolMode: ToolMode;
 }
 
 export interface ImageGenConfig {
