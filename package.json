@@ -1,0 +1,20 @@
+{
+	"name": "ai-shadertoy",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Client-side AI sandbox for building WebGL2 fragment shaders. Single-file, no backend.",
+	"type": "module",
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"build": "ts0 build",
+		"check": "npm run typecheck && npm run build"
+	},
+	"devDependencies": {
+		"ts0": "git+https://github.com/wow-look-at-my/ts0.git",
+		"typescript": "^5.7.0"
+	},
+	"engines": {
+		"node": ">=22.0.0"
+	},
+	"license": "MIT"
+}

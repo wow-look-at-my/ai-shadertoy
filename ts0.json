@@ -1,0 +1,7 @@
+{
+	"entry": "index.html",
+	"outdir": "dist",
+	"target": "browser",
+	"format": "esm",
+	"strict": true
+}
