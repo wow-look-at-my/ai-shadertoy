@@ -21,6 +21,17 @@ npm run build         # ts0 build -> dist/index.html
 - The bundle must stay **< 1 MB** (CI enforces it) and have **no external
   requests** — it ships as a single file.
 
+### `ts0.json` vs `tsconfig.json` (they are not redundant)
+
+- `ts0.json` configures the **bundler** (entry, outdir, target, format). ts0 is
+  the only thing that reads it.
+- `tsconfig.json` configures the **type-checker**. ts0's HTML-entry build path
+  does NOT run `tsc` (it bundles with esbuild, which strips types without
+  checking), so `npm run typecheck` (which CI runs) is our only type safety, and
+  it — plus the editor/IDE — needs `tsconfig.json`. Don't delete it.
+- Keep the code `node --experimental-strip-types`-clean (no TS parameter
+  properties etc.) so the modules can be exercised by plain Node test scripts.
+
 ## Architecture
 
 - `src/gl/` — `Renderer` (WebGL2, animation clock, uniforms, screenshot with
@@ -29,8 +40,24 @@ npm run build         # ts0 build -> dist/index.html
   line numbers), `textures.ts` (procedural built-ins).
 - `src/ai/` — `providers.ts` translates the neutral conversation model to/from
   **Anthropic Messages** and **OpenAI Chat Completions** (both streamed, vision +
-  tool use). `agent.ts` runs the tool loop. `tools.ts` are the tool schemas.
-  `system-prompt.ts` builds the system prompt from live project state.
+  tool use; `testConnection` + `listModels` power the Settings test button and
+  model combobox). `agent.ts` runs the tool loop. `system-prompt.ts` builds the
+  base prompt (it does NOT list tool schemas — those go in the request's `tools`
+  field for native models) plus `textToolInstructions` for text mode.
+- `src/ai/tools/` — **one tool per file**, each colocating its JSON-schema `def`
+  and `execute`, self-registering into `registry.ts`. The store builds a
+  `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
+  `toolDefs({ imageGen, allowWriteShader })` gates the offered set. Tools:
+  `write_shader` (first turn / full rewrite only), `edit_shader` (forgiving
+  exact-snippet replace — the primary edit path), `get_shader`, `set_uniforms`,
+  `set_channel`, `set_channel_asset`, `list_assets`, `capture_screenshot`,
+  `generate_texture` (gated on image-gen).
+- **Tool modes** (`chat.toolMode`): `native` uses the provider's function-calling
+  API; `text` (for models/endpoints without it) describes the catalogue as
+  forgiving XML tags (`textToolInstructions`, keyed by `TOOL_NAMES`), parses them
+  out of the reply (`texttools.ts`), and feeds results back as a plain user
+  message. `write_shader` is recomputed each iteration so it drops out once the
+  shader is authored.
 - `src/state/` — `types.ts` (provider-neutral content-block conversation model),
   `store.ts` (single owner of state + persistence + `applyTool`), `persist.ts`
   (IndexedDB for projects/assets, localStorage for settings, export/import).
