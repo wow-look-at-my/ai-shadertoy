@@ -1,13 +1,14 @@
 // Live preview: the WebGL canvas, playback toolbar, and a stats readout.
 
-import { el } from "../util/dom.ts";
+import { el, render } from "../util/dom.ts";
+import { icon } from "../util/icons.ts";
 import { downloadFile } from "../util/misc.ts";
 import type { Store } from "../state/store.ts";
 import type { RenderStats } from "../gl/renderer.ts";
 
 export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElement {
-	const playBtn = el("button", { class: "btn icon", title: "Play / Pause (space)" }, "⏸");
-	const updatePlay = () => (playBtn.textContent = store.renderer.isPaused() ? "▶" : "⏸");
+	const playBtn = el("button", { class: "btn icon", title: "Play / Pause (space)" });
+	const updatePlay = () => render(playBtn, icon(store.renderer.isPaused() ? "play" : "pause"));
 	playBtn.addEventListener("click", () => {
 		store.renderer.togglePlay();
 		updatePlay();
@@ -43,7 +44,7 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 		"div",
 		{ class: "toolbar" },
 		playBtn,
-		el("button", { class: "btn icon", title: "Restart time", on: { click: () => store.renderer.reset() } }, "↺"),
+		el("button", { class: "btn icon", title: "Restart time", on: { click: () => store.renderer.reset() } }, icon("restart")),
 		el("button", {
 			class: "btn icon",
 			title: "Download a PNG screenshot",
@@ -53,7 +54,7 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 					downloadFile(`${store.project.name.replace(/\s+/g, "_")}.png`, dataUrlToBlob(shot.dataUrl));
 				},
 			},
-		}, "⤓"),
+		}, icon("download")),
 		errBadge,
 		el("span", { class: "spacer" }),
 		scaleSel,

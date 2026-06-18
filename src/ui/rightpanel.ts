@@ -2,6 +2,7 @@
 // controls, and the iChannel texture bindings. All edits flow through the store.
 
 import { el, render } from "../util/dom.ts";
+import { icon } from "../util/icons.ts";
 import { debounce, pickFile, uid } from "../util/misc.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import type { BuiltinTexture, ImageAsset, Uniform, UniformType } from "../state/types.ts";
@@ -107,7 +108,7 @@ function renderUniforms(store: Store, container: HTMLElement): void {
 		return el(
 			"div",
 			{ class: "u-row" },
-			el("div", { class: "u-head" }, nameInput, typeSel, el("button", { class: "btn icon tiny", title: "Remove", on: { click: () => { store.project.uniforms.splice(idx, 1); commit(); } } }, "✕")),
+			el("div", { class: "u-head" }, nameInput, typeSel, el("button", { class: "btn icon tiny", title: "Remove", on: { click: () => { store.project.uniforms.splice(idx, 1); commit(); } } }, icon("close", { size: 15 }))),
 			controls,
 			u.type === "color" ? el("span", {}) : el("div", { class: "u-range" }, el("label", {}, "min", minInput), el("label", {}, "max", maxInput)),
 		);
