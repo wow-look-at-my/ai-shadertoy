@@ -1,7 +1,8 @@
 // Settings modal. Everything here lives in localStorage on the user's machine;
 // API keys never leave the browser except in calls the user's own key authorizes.
 
-import { el } from "../util/dom.ts";
+import { el, render } from "../util/dom.ts";
+import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
 import { MODEL_PRESETS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
@@ -51,7 +52,7 @@ export function createSettings(store: Store): SettingsModal {
 	// completions as you type while still accepting any free-text value. We seed
 	// it with static presets and merge in whatever the provider's /models lists.
 	let fetchedModels: string[] = [];
-	const modelRefreshBtn = el("button", { class: "btn icon", type: "button", title: "Fetch available models from the provider" }, "↻");
+	const modelRefreshBtn = el("button", { class: "btn icon", type: "button", title: "Fetch available models from the provider" }, icon("refresh"));
 	const modelStatus = el("span", { class: "hint" });
 
 	const applyModelOptions = () => {
@@ -104,10 +105,10 @@ export function createSettings(store: Store): SettingsModal {
 		try {
 			const r = await testConnection(currentProbe());
 			testResult.className = `test-result ${r.ok ? "ok" : "err"}`;
-			testResult.textContent = `${r.ok ? "✓" : "✕"} ${r.message}`;
+			render(testResult, icon(r.ok ? "check" : "close", { size: 14 }), " " + r.message);
 		} catch (e) {
 			testResult.className = "test-result err";
-			testResult.textContent = `✕ ${e instanceof Error ? e.message : String(e)}`;
+			render(testResult, icon("close", { size: 14 }), " " + (e instanceof Error ? e.message : String(e)));
 		} finally {
 			testBtn.disabled = false;
 		}
@@ -151,7 +152,7 @@ export function createSettings(store: Store): SettingsModal {
 		el(
 			"div",
 			{ class: "modal" },
-			el("div", { class: "modal-head" }, el("h2", {}, "Settings"), el("button", { class: "btn icon", on: { click: close } }, "✕")),
+			el("div", { class: "modal-head" }, el("h2", {}, "Settings"), el("button", { class: "btn icon", on: { click: close } }, icon("close"))),
 			body,
 			el(
 				"div",

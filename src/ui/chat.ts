@@ -3,6 +3,7 @@
 // (including screenshots) are rendered here as they arrive.
 
 import { append, clear, el } from "../util/dom.ts";
+import { icon } from "../util/icons.ts";
 import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { runAgent } from "../ai/agent.ts";
@@ -31,7 +32,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: "Describe the shader you want… (Enter to send, Shift+Enter for newline)" } });
 
 	let attach = false;
-	const attachBtn = el("button", { class: "btn icon", title: "Attach the current frame to your next message" }, "📷");
+	const attachBtn = el("button", { class: "btn icon", title: "Attach the current frame to your next message" }, icon("camera"));
 	attachBtn.addEventListener("click", () => {
 		attach = !attach;
 		attachBtn.classList.toggle("on", attach);
@@ -195,7 +196,7 @@ function assistantContent(m: Message): HTMLElement[] {
 		const textBlock = m.blocks.find((b): b is TextBlock => b.type === "text");
 		const prose = stripTextToolTags(textBlock?.text ?? "");
 		if (prose) out.push(renderMarkdown(prose));
-		for (const name of m.textTools) out.push(el("div", { class: "tool-chip" }, el("span", { class: "tool-name" }, `🔧 ${name}`)));
+		for (const name of m.textTools) out.push(el("div", { class: "tool-chip" }, el("span", { class: "tool-name" }, icon("wrench", { size: 13 }), " ", name)));
 		if (!out.length) out.push(el("div", { class: "muted small" }, "(no text)"));
 		return out;
 	}
@@ -211,7 +212,7 @@ function toolOutputEl(m: Message): HTMLElement {
 	const textParts = m.blocks.filter((b): b is TextBlock => b.type === "text").map((b) => b.text);
 	const imgs = m.blocks.filter((b): b is ImageBlock => b.type === "image");
 	const summary = textParts.join(" ").split("\n")[0].slice(0, 120);
-	return el("div", { class: "msg tool" }, el("div", { class: "tool-result" }, el("span", { class: "tr-status" }, "✓"), el("span", { class: "tr-text" }, summary), ...imgs.map(imgThumb)));
+	return el("div", { class: "msg tool" }, el("div", { class: "tool-result" }, el("span", { class: "tr-status" }, icon("check", { size: 15 })), el("span", { class: "tr-text" }, summary), ...imgs.map(imgThumb)));
 }
 
 function blockEl(b: Block): HTMLElement {
@@ -224,7 +225,7 @@ function blockEl(b: Block): HTMLElement {
 function toolUseEl(b: ToolUseBlock): HTMLElement {
 	const inp = b.input as Record<string, unknown> | undefined;
 	const note = inp && typeof inp["note"] === "string" ? `: ${inp["note"]}` : "";
-	return el("div", { class: "tool-chip" }, el("span", { class: "tool-name" }, `🔧 ${b.name}`), note);
+	return el("div", { class: "tool-chip" }, el("span", { class: "tool-name" }, icon("wrench", { size: 13 }), " ", b.name), note);
 }
 
 function toolResultEl(b: ToolResultBlock): HTMLElement {
@@ -234,7 +235,7 @@ function toolResultEl(b: ToolResultBlock): HTMLElement {
 	return el(
 		"div",
 		{ class: `tool-result${b.isError ? " err" : ""}` },
-		el("span", { class: "tr-status" }, b.isError ? "✕" : "✓"),
+		el("span", { class: "tr-status" }, icon(b.isError ? "close" : "check", { size: 15 })),
 		el("span", { class: "tr-text" }, summary),
 		...imgs.map(imgThumb),
 	);

@@ -62,6 +62,9 @@ npm run build         # ts0 build -> dist/index.html
   `store.ts` (single owner of state + persistence + `applyTool`), `persist.ts`
   (IndexedDB for projects/assets, localStorage for settings, export/import).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
+  UI glyphs come from `src/util/icons.ts` — `icon(name)` builds an inline
+  `<svg>` (Material Design Icons path data, `fill: currentColor`); no emoji, no
+  icon font, no network request. Add a new glyph by inlining its `@mdi/js` path.
 - `src/shaders/*.glsl` — kept as real `.glsl` files (per the file-type rule),
   embedded into the single-file bundle by ts0's fetch interceptor and loaded at
   runtime via `fetch(new URL(...))`.
