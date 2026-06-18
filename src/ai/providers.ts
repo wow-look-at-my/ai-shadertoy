@@ -298,27 +298,27 @@ export interface TestResult {
 	message: string;
 }
 
-/** Fire a tiny non-streaming request to validate the API key, model, base URL,
- * and (CORS) connectivity for the current chat settings. */
+/** Run a tiny real inference to validate the API key, model, base URL, and
+ * (CORS) connectivity, and surface the model's actual reply. */
 export async function testConnection(settings: Settings): Promise<TestResult> {
 	const cfg = settings.chat;
 	if (!cfg.apiKey.trim()) return { ok: false, message: "No API key set." };
 	if (!cfg.model.trim()) return { ok: false, message: "No model set." };
 
+	const prompt = 'Respond with one word: "Hi"';
+	const isAnthropic = cfg.provider === "anthropic";
 	let url: string;
 	let headers: Record<string, string>;
-	let body: string;
-	if (cfg.provider === "anthropic") {
+	if (isAnthropic) {
 		const base = (cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
 		url = endpoint(`${base}/v1/messages`, settings, cfg.useProxy);
 		headers = { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
-		body = JSON.stringify({ model: cfg.model, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] });
 	} else {
 		const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 		url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
 		headers = { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey}` };
-		body = JSON.stringify({ model: cfg.model, max_tokens: 1, messages: [{ role: "user", content: "Hi" }] });
 	}
+	const body = JSON.stringify({ model: cfg.model, max_tokens: 64, messages: [{ role: "user", content: prompt }] });
 
 	let res: Response;
 	try {
@@ -327,12 +327,26 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 		const pe = corsHint(e, cfg.useProxy);
 		return { ok: false, message: `${pe.message}${pe.hint ? ` ${pe.hint}` : ""}` };
 	}
-	if (res.ok) {
-		res.body?.cancel().catch(() => {});
-		return { ok: true, message: `Connected — ${cfg.model} responded.` };
+	if (!res.ok) {
+		const err = await httpError(res);
+		return { ok: false, message: `${err.message}${err.hint ? ` ${err.hint}` : ""}` };
 	}
-	const err = await httpError(res);
-	return { ok: false, message: `${err.message}${err.hint ? ` ${err.hint}` : ""}` };
+
+	let reply = "";
+	try {
+		const json = (await res.json()) as Record<string, unknown>;
+		if (isAnthropic) {
+			const blocks = (json["content"] as Array<{ type: string; text?: string }> | undefined) ?? [];
+			reply = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
+		} else {
+			const choices = json["choices"] as Array<{ message?: { content?: string } }> | undefined;
+			reply = (choices?.[0]?.message?.content ?? "").trim();
+		}
+	} catch {
+		/* fall through to the generic success below */
+	}
+	const shown = reply.length > 60 ? `${reply.slice(0, 60)}…` : reply;
+	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
 }
 
 function emit(opts: StreamOptions, ev: StreamEvent): void {

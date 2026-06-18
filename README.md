@@ -40,8 +40,9 @@ Open the app, click **Settings**, and add:
 - **Model** — defaults to `claude-opus-4-8`. Presets are provided; any model id is allowed.
 - **API key** — stored only in your browser's `localStorage`.
 
-Use **Test connection** to fire a tiny request and confirm the key, model, base
-URL, and (CORS) connectivity all work before you start chatting.
+Use **Test connection** to run a tiny real inference (it prompts the model for a
+one-word reply and shows it), confirming the key, model, base URL, and (CORS)
+connectivity all work before you start chatting.
 
 If direct browser calls are blocked by CORS, tick **Route chat through CORS
 proxy** (default `https://proxy.pazer.ai/`, prefix-style: the request becomes
