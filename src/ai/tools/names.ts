@@ -6,6 +6,7 @@ export const TOOL_NAMES = {
 	editShader: "edit_shader",
 	getShader: "get_shader",
 	setUniforms: "set_uniforms",
+	renameShader: "rename_shader",
 	setChannel: "set_channel",
 	setChannelAsset: "set_channel_asset",
 	listAssets: "list_assets",

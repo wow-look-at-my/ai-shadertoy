@@ -23,6 +23,8 @@ export interface ToolContext {
 	setShaderSource(src: string, compile?: boolean): CompileResult;
 	setUniforms(uniforms: Uniform[]): CompileResult;
 	setChannel(index: number, patch: Partial<Channel>): void;
+	/** Rename the current shader (the project name shown in the top bar). */
+	renameProject(name: string): void;
 	addAsset(asset: ImageAsset): void;
 	screenshotBlock(): ShotBlock;
 	/** Build the standard compile result. `withImage` attaches the rendered frame
@@ -43,6 +45,12 @@ export interface Tool {
 	def: ToolDef;
 	/** Whether the tool is offered this turn (default: always). */
 	available?(opts: ToolAvailability): boolean;
+	/** When true, the agent asks the user to approve the call before it runs;
+	 * a denial is fed back to the model instead of executing. */
+	requiresPermission?: boolean;
+	/** Human-readable description of the pending action for the approval prompt
+	 * (e.g. `Rename the shader to "Foo"?`). Falls back to a generic message. */
+	permissionPrompt?(input: Record<string, unknown>): string;
 	execute(ctx: ToolContext, input: Record<string, unknown>): ToolResult | Promise<ToolResult>;
 }
 

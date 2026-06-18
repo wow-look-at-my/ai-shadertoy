@@ -302,6 +302,48 @@ textarea:focus {
 	border: 1px solid var(--line);
 }
 
+/* ---- tool permission prompt ---- */
+.perm-card {
+	align-self: stretch;
+	max-width: 100%;
+	background: var(--bg-1);
+	border: 1px solid var(--warn);
+	border-radius: 8px;
+	padding: 9px 11px;
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+}
+.perm-card.approved {
+	border-color: var(--ok);
+}
+.perm-card.denied {
+	border-color: var(--danger);
+}
+.perm-head {
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--warn);
+}
+.perm-prompt {
+	line-height: 1.4;
+}
+.perm-actions {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+.perm-status {
+	font-size: 13px;
+	color: var(--fg-dim);
+}
+.perm-card.approved .perm-status {
+	color: var(--ok);
+}
+.perm-card.denied .perm-status {
+	color: var(--danger);
+}
+
 .chat-bar {
 	display: flex;
 	gap: 8px;

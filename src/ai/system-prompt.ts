@@ -81,6 +81,7 @@ const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.initShader]: "<init_shader>\n...complete GLSL source (mainImage + helpers)...\n</init_shader>",
 	[TOOL_NAMES.editShader]: "<edit_shader><old>exact snippet from the current shader</old><new>replacement</new></edit_shader>   (add <replace_all>true</replace_all> to replace every occurrence)",
 	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
+	[TOOL_NAMES.renameShader]: '<rename_shader>{"name":"Plasma Storm"}</rename_shader>   (asks the user to approve before it takes effect)',
 	[TOOL_NAMES.setChannel]: '<set_channel>{"index":0,"kind":"builtin","builtin":"rgbaNoise"}</set_channel>',
 	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>',
 	[TOOL_NAMES.listAssets]: "<list_assets></list_assets>",

@@ -25,8 +25,13 @@ also wire up input textures and expose live parameters as sliders.
 The AI's tools: `init_shader` (the first shader / a full rewrite), `edit_shader`
 (targeted snippet replacements — the usual way it changes an existing shader, so
 it doesn't retype the whole thing), `set_uniforms` (live slider parameters),
-`set_channel` / `set_channel_asset` (bind textures to `iChannel0..3`),
-`list_assets`, `capture_screenshot`, and (optional) `generate_texture`.
+`rename_shader` (rename the current shader), `set_channel` / `set_channel_asset`
+(bind textures to `iChannel0..3`), `list_assets`, `capture_screenshot`, and
+(optional) `generate_texture`.
+
+Some tools require your approval before they take effect. When the AI calls one
+(currently `rename_shader`), the chat shows an **Approve / Deny** prompt and the
+action only runs if you approve; a denial is reported back to the model.
 
 Models without native function calling still work: switch **Settings → Tool
 calling** to **Text tags** and the model drives the same tools via forgiving XML
