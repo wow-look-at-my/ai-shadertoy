@@ -105,3 +105,11 @@ publishes the single file as a **public** per-branch site to
 [buildhost](https://github.com/wow-look-at-my/buildhost) using GitHub Actions
 OIDC (no static token). The live URL is
 `https://sites.pazer.build/ai-shadertoy/branch/<branch>/`.
+
+`.github/workflows/preview.yml` adds per-PR previews: on every pull request it
+builds the bundle and deploys it to a `pr-<number>` site via the
+`wow-look-at-my/actions/.github/workflows/buildhost-preview.yml` reusable
+workflow, then posts a sticky comment with the preview URL
+(`https://sites.pazer.build/ai-shadertoy/branch/pr-<number>/`). Previews are
+served publicly to match the per-branch deploys. Fork PRs are skipped (no OIDC
+token).
