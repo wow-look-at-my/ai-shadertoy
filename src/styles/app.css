@@ -20,6 +20,11 @@
 * {
 	box-sizing: border-box;
 }
+/* author display rules (e.g. .modal-overlay{display:flex}) otherwise beat the
+   UA [hidden] rule; keep hidden meaning hidden. */
+[hidden] {
+	display: none !important;
+}
 html,
 body {
 	margin: 0;
