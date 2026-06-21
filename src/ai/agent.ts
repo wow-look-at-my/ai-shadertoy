@@ -12,7 +12,7 @@
 // init_shader drops out once the shader has been authored.
 
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
-import type { ToolDef } from "./types.ts";
+import type { ToolDef, Usage } from "./types.ts";
 import type { ToolResult } from "./tools/index.ts";
 import { getTool, text, TOOL_NAMES } from "./tools/index.ts";
 import { streamChat } from "./providers.ts";
@@ -42,6 +42,8 @@ export interface AgentCallbacks {
 	/** Ask the user to approve a permission-gated tool call. Resolves true to run
 	 * it, false to deny (the denial is fed back to the model). */
 	requestPermission(req: PermissionRequest): Promise<boolean>;
+	/** Token usage + generation time for one model response (cost/context meter). */
+	onUsage?(usage: Usage, durationMs: number): void;
 	signal?: AbortSignal;
 }
 
@@ -50,6 +52,7 @@ const MAX_ITERATIONS = 12;
 export async function runAgent(
 	settings: Settings,
 	baseSystem: () => string,
+	projectState: () => string,
 	messages: Message[],
 	toolsFor: () => ToolDef[],
 	applyTool: (name: string, input: unknown) => Promise<ToolResult>,
@@ -62,7 +65,7 @@ export async function runAgent(
 		cb.onTurnStart();
 		const tools = toolsFor();
 		const system = textMode ? `${baseSystem()}\n\n${textToolInstructions(tools)}` : baseSystem();
-		const turn = await streamChat(settings, system, messages, textMode ? [] : tools, {
+		const turn = await streamChat(settings, system, projectState(), messages, textMode ? [] : tools, {
 			signal: cb.signal,
 			onEvent: (ev) => {
 				if (ev.type === "text") cb.onAssistantDelta(ev.delta);
@@ -70,6 +73,7 @@ export async function runAgent(
 				else if (ev.type === "tool_start") cb.onToolActivity(ev.name, "start");
 			},
 		});
+		cb.onUsage?.(turn.usage, turn.durationMs);
 
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : turn.toolCalls;
 

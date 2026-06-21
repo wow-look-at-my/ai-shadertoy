@@ -8,9 +8,11 @@ also wire up input textures and expose live parameters as sliders.
 - **No backend.** Everything runs in your browser. Your API key is stored locally
   and used only for calls you authorize.
 - **Single file.** The whole app builds to one self-contained `index.html`
-  (~370 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
+  (~500 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
 - **Bring your own model.** Works with Anthropic (Claude) or any
   OpenAI-compatible chat API, with vision + tool use.
+- **Cheap to run.** Prompt caching is on by default, and a small live indicator
+  shows tokens/sec, context use, and cost per turn + per session.
 
 ## How it works
 
@@ -61,6 +63,20 @@ proxy** (default `https://proxy.pazer.ai/`, prefix-style: the request becomes
 
 Anthropic browser calls send `anthropic-dangerous-direct-browser-access: true`.
 Note that Opus 4.8 / 4.7 reject `temperature`, so it is omitted for those models.
+
+## Cost & usage
+
+The chat panel shows a small live indicator: output **tokens/sec**, **context
+window used**, and — for models with known pricing — **cost this turn** and
+**cost this session**.
+
+Requests use **prompt caching** to cut cost and latency: the stable system prompt
+and the growing conversation history are cached, while the fast-changing project
+state (shader size, uniforms, channels, last compile error) is sent as a separate
+trailing message so it never invalidates the cache. For Anthropic this uses
+`cache_control` breakpoints; OpenAI-compatible endpoints cache the matching prefix
+automatically. Cost figures are estimates from a built-in price table — accurate
+for Claude models, and tokens-only (no dollar figure) for unrecognized endpoints.
 
 ## Persistence & sharing
 

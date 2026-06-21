@@ -41,9 +41,14 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ai/` — `providers.ts` translates the neutral conversation model to/from
   **Anthropic Messages** and **OpenAI Chat Completions** (both streamed, vision +
   tool use; `testConnection` + `listModels` power the Settings test button and
-  model combobox). `agent.ts` runs the tool loop. `system-prompt.ts` builds the
-  base prompt (it does NOT list tool schemas — those go in the request's `tools`
-  field for native models) plus `textToolInstructions` for text mode.
+  model combobox). It sets prompt-cache breakpoints and returns per-response token
+  `Usage` + generation time. `agent.ts` runs the tool loop (and forwards `Usage`
+  via the `onUsage` callback). `system-prompt.ts` exposes `buildSystemPrompt()`
+  (the stable, cacheable base — it does NOT list tool schemas, those go in the
+  request's `tools` field for native models) and `buildProjectState()` (the
+  volatile per-edit project state, kept OUT of the cached prefix and sent as a
+  trailing message) plus `textToolInstructions` for text mode. `pricing.ts` maps a
+  model id to its rates + context window for the chat cost / context indicator.
 - `src/ai/tools/` — **one tool per file**, each colocating its JSON-schema `def`
   and `execute`, self-registering into `registry.ts`. The store builds a
   `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
@@ -95,9 +100,20 @@ npm run build         # ts0 build -> dist/index.html
 - `output_config.effort` is set to `medium` (`anthropicEffort`, same model gate as
   thinking — it 400s on Sonnet 4.5 / Haiku 4.5 and older; the server default is
   `high`).
-- Anthropic SSE events handled: `content_block_start/delta/stop` (text, thinking,
-  signature, tool input deltas), `message_delta`, `error`. OpenAI:
-  `choices[].delta.content` / `.tool_calls[]`, `finish_reason`.
+- Anthropic SSE events handled: `message_start` (usage), `content_block_start/delta/stop`
+  (text, thinking, signature, tool input deltas), `message_delta` (stop_reason +
+  output tokens), `error`. OpenAI: `choices[].delta.content` / `.tool_calls[]`,
+  `finish_reason`, and the final `usage` chunk (we send `stream_options.include_usage`).
+- **Prompt caching**: Anthropic requests carry `cache_control: {type:"ephemeral"}`
+  on the `system` block (covers tools + system, both stable) and on the last
+  conversation block (caches the growing history). The per-request **project state
+  must stay out of that cached prefix** — it rides as a trailing user message
+  (`buildProjectState`) so editing the shader doesn't invalidate the cache every
+  turn. OpenAI caches automatically server-side; the same trailing-state layout
+  keeps its prefix stable. 2 breakpoints/request (max is 4); ephemeral 5-min TTL.
+- The chat panel shows a usage indicator (tokens/sec, context %, cost this turn +
+  session). `Usage` is captured per response; cost/context come from `pricing.ts`
+  (tokens-only when the model's pricing is unknown).
 
 ## Conventions
 

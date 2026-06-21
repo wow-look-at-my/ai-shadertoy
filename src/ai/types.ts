@@ -30,6 +30,13 @@ export interface ToolCall {
 	input: unknown;
 }
 
+export interface Usage {
+	inputTokens: number; // input tokens billed at the full rate (uncached)
+	outputTokens: number;
+	cacheReadTokens: number; // served from the prompt cache (Anthropic; OpenAI cached prompt tokens)
+	cacheWriteTokens: number; // written to the prompt cache this request (Anthropic only)
+}
+
 export interface AssistantTurn {
 	text: string;
 	toolCalls: ToolCall[];
@@ -37,6 +44,8 @@ export interface AssistantTurn {
 	/** Captured thinking blocks (Anthropic extended thinking), in order. Must be
 	 * replayed unchanged on the next turn or tool-use continuations 400. */
 	thinking: Array<{ thinking: string; signature: string }>;
+	usage: Usage;
+	durationMs: number; // generation wall-clock (first token -> done), for tokens/sec
 }
 
 export interface StreamOptions {
