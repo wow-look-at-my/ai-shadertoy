@@ -302,13 +302,17 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 		messages: toOpenAIMessages(system, messages, state),
 	};
 	if (tools.length) body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
-	// OpenAI prompt caching is automatic (server-side) for prefixes >= 1024 tokens
-	// -- there is no per-message marker like Anthropic's `cache_control`. The only
-	// knob is `prompt_cache_key`: a stable string, combined with the prefix hash at
-	// lookup, that improves cache-hit *routing* for requests sharing a prefix. We
-	// pass the per-conversation key so a project's turns route together. (Unknown
-	// keys are ignored by OpenAI-compatible servers that don't implement it.)
+	// Hosted OpenAI caches automatically (>= 1024-token prefixes); its one knob is
+	// `prompt_cache_key`, a stable string combined with the prefix hash to improve
+	// cache-hit *routing*. Pass the per-conversation key so a project's turns route
+	// together (ignored by servers that don't implement it).
 	if (opts.cacheKey) body["prompt_cache_key"] = opts.cacheKey;
+	// Self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) opt
+	// into KV-cache prefix reuse with `cache_prompt`: re-use the cache from a prior
+	// request so only the differing suffix is reprocessed. Send it only to
+	// non-hosted endpoints -- hosted OpenAI/Azure 400 on unknown fields, while
+	// lenient local servers that don't use it just ignore it.
+	if (!isHostedOpenAI(cfg)) body["cache_prompt"] = true;
 
 	const headers: Record<string, string> = { "content-type": "application/json" };
 	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
@@ -447,12 +451,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 		/* fall through to the generic success below */
 	}
 	const shown = reply.length > 60 ? `${reply.slice(0, 60)}…` : reply;
-	const base = reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).`;
-	// Ollama has no cache parameter on its OpenAI endpoint -- caching is automatic
-	// by prompt prefix, but only while the model stays resident. Surface the one
-	// real lever (keep_alive) at setup time, since there is no marker to send.
-	const tip = isOllamaEndpoint(cfg) ? " Note: Ollama caches the prompt prefix automatically (there is no cache flag to send); set OLLAMA_KEEP_ALIVE=-1 to keep the model and its cache loaded between turns." : "";
-	return { ok: true, message: `${base}${tip}` };
+	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
 }
 
 /** List available model ids from the provider (Anthropic /v1/models or an
@@ -529,12 +528,21 @@ function corsHint(e: unknown, cfg: ChatConfig): ProviderError {
 	return new ProviderError(`Network error: ${msg}`, undefined, hint);
 }
 
-// Detect a local Ollama endpoint by its default port / name. Used for both the
-// CORS-allowlist hint and the keep-alive caching tip (both Ollama-specific).
+// Detect a local Ollama endpoint by its default port / name (for the CORS hint).
 function isOllamaEndpoint(cfg: ChatConfig): boolean {
 	if (cfg.provider !== "openai") return false;
 	const url = (cfg.baseUrl || "").toLowerCase();
 	return /:11434(\b|\/|$)/.test(url) || url.includes("ollama");
+}
+
+// The hosted OpenAI / Azure OpenAI APIs reject unknown body fields with a 400, so
+// caching extensions like `cache_prompt` must not be sent to them. An empty or
+// api.openai.com base URL is hosted; any other (custom) base URL is treated as a
+// self-hosted / OpenAI-compatible server where those fields are appropriate.
+function isHostedOpenAI(cfg: ChatConfig): boolean {
+	const url = (cfg.baseUrl || "").trim().toLowerCase();
+	if (!url) return true; // default is api.openai.com
+	return /(^|\/\/|\.)api\.openai\.com(\/|:|$)/.test(url) || url.includes(".openai.azure.com");
 }
 
 // Ollama (and similar local OpenAI-compatible servers) reject browser requests

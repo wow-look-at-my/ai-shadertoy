@@ -170,10 +170,13 @@ npm run build         # ts0 build -> dist/index.html
   conversation block (caches the growing history). The per-request **project state
   must stay out of that cached prefix** — it rides as a trailing user message
   (`buildProjectState`) so editing the shader doesn't invalidate the cache every
-  turn. OpenAI has no per-message marker — caching is automatic server-side for
-  prefixes >= 1024 tokens; the same trailing-state layout keeps its prefix stable,
+  turn. Hosted OpenAI has no per-message marker — caching is automatic server-side
+  for prefixes >= 1024 tokens; the trailing-state layout keeps the prefix stable,
   and we send a stable per-conversation `prompt_cache_key` (`shadertoy-<projectId>`,
-  threaded via `StreamOptions.cacheKey`) to improve cache-hit routing. 2 Anthropic
+  threaded via `StreamOptions.cacheKey`) for cache-hit routing. Self-hosted /
+  compatible endpoints (any non-hosted base URL — `isHostedOpenAI`) additionally
+  get `cache_prompt: true` to opt into KV-cache prefix reuse (llama.cpp et al.);
+  never sent to hosted OpenAI/Azure, which 400 on unknown fields. 2 Anthropic
   breakpoints/request (max is 4); ephemeral 5-min TTL.
 - The chat panel shows a usage indicator (tokens/sec, context %, cost this turn +
   session). `Usage` is captured per response; cost/context come from `pricing.ts`

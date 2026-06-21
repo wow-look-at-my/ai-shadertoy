@@ -134,14 +134,13 @@ Requests use **prompt caching** to cut cost and latency: the stable system promp
 and the growing conversation history are cached, while the fast-changing project
 state (shader size, uniforms, channels, last compile error) is sent as a separate
 trailing message so it never invalidates the cache. For Anthropic this uses
-`cache_control` breakpoints; for OpenAI we also send a stable `prompt_cache_key`
-routing hint, and the server caches the matching prefix automatically. Local
-OpenAI-compatible servers like **Ollama** expose *no* cache parameter — caching is
-automatic by prompt prefix, but only while the model is loaded, so set
-`OLLAMA_KEEP_ALIVE=-1` (or a long duration) to keep the model and its KV cache
-resident past Ollama's 5-minute idle default. Cost figures are estimates from a
-built-in price table — accurate for Claude models, and tokens-only (no dollar
-figure) for unrecognized endpoints.
+`cache_control` breakpoints; for hosted OpenAI we send a stable `prompt_cache_key`
+and the server caches the matching prefix automatically. For self-hosted
+OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send
+`cache_prompt: true` to opt into KV-cache prefix reuse — these extra fields are
+sent only to non-hosted endpoints, since hosted OpenAI/Azure reject unknown body
+fields. Cost figures are estimates from a built-in price table — accurate for
+Claude models, and tokens-only (no dollar figure) for unrecognized endpoints.
 
 ## Persistence & sharing
 
