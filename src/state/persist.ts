@@ -4,6 +4,7 @@
 // Everything is exportable/importable as a single JSON bundle.
 
 import type { ExportBundle, ImageAsset, Project, Settings } from "./types.ts";
+import { normalizeProject } from "./defaults.ts";
 
 const DB_NAME = "ai-shadertoy";
 const DB_VERSION = 1;
@@ -47,7 +48,9 @@ function getAll<T>(store: string): Promise<T[]> {
 
 export const db = {
 	saveProject: (p: Project) => tx(STORE_PROJECTS, "readwrite", (s) => s.put(p)),
-	loadProjects: () => getAll<Project>(STORE_PROJECTS),
+	// Normalize on read so legacy single-pass records (and any partial/imported
+	// shapes) become current-shape Projects before the app touches them.
+	loadProjects: () => getAll<unknown>(STORE_PROJECTS).then((rows) => rows.map(normalizeProject)),
 	deleteProject: (id: string) => tx(STORE_PROJECTS, "readwrite", (s) => s.delete(id)),
 	saveAsset: (a: ImageAsset) => tx(STORE_ASSETS, "readwrite", (s) => s.put(a)),
 	loadAssets: () => getAll<ImageAsset>(STORE_ASSETS),
@@ -138,7 +141,7 @@ export async function importBundle(bundle: ExportBundle, mode: "merge" | "replac
 		const ea = await db.loadAssets();
 		for (const a of ea) await db.deleteAsset(a.id);
 	}
-	for (const p of bundle.projects) await db.saveProject(p);
+	for (const p of bundle.projects) await db.saveProject(normalizeProject(p));
 	for (const a of bundle.assets) await db.saveAsset(a);
 	return { projects: bundle.projects.length, assets: bundle.assets.length };
 }

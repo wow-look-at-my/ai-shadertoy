@@ -27,11 +27,12 @@ async function boot(): Promise<void> {
 		// Bundle should always embed it; this only trips in an unbundled dev open.
 		defaultShader = "void mainImage(out vec4 fragColor, in vec2 fragCoord){\n\tvec2 uv = fragCoord/iResolution.xy;\n\tfragColor = vec4(uv, 0.5+0.5*sin(iTime), 1.0);\n}\n";
 	}
+	const [vertSource, presentSource] = await Promise.all([loadText("./src/shaders/fullscreen.vert.glsl"), loadText("./src/shaders/present.frag.glsl")]);
 
 	const canvas = el("canvas", { class: "gl" });
 	let renderer: Renderer;
 	try {
-		renderer = new Renderer(canvas);
+		renderer = new Renderer(canvas, vertSource, presentSource);
 	} catch (e) {
 		mount.appendChild(el("div", { class: "fatal" }, el("h1", {}, "WebGL2 unavailable"), el("p", {}, e instanceof Error ? e.message : String(e)), el("p", {}, "This sandbox needs a browser with WebGL2 enabled.")));
 		return;
@@ -39,6 +40,9 @@ async function boot(): Promise<void> {
 
 	const store = new Store();
 	await store.init(renderer, defaultShader);
+
+	// TEMP DEBUG HOOK (remove): expose internals for live inspection.
+	(window as unknown as Record<string, unknown>).__shadertoy = { store, renderer };
 
 	mount.appendChild(createApp(store, canvas, () => defaultShader));
 }

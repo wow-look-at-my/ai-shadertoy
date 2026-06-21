@@ -17,7 +17,8 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 	const stats = el("span", { class: "stats" }, "—");
 	store.on("stats", (s) => {
 		const st = s as RenderStats;
-		stats.textContent = `${st.width}x${st.height} · ${st.fps} fps · frame ${st.frame} · t=${st.time.toFixed(1)}s${st.paused ? " · paused" : ""}`;
+		const passes = st.passes > 1 ? ` · ${st.passes} passes` : "";
+		stats.textContent = `${st.width}x${st.height} · ${st.fps} fps · frame ${st.frame} · t=${st.time.toFixed(1)}s${passes}${st.paused ? " · paused" : ""}`;
 	});
 
 	const scaleSel = el(
