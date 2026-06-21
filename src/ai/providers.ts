@@ -302,6 +302,13 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 		messages: toOpenAIMessages(system, messages, state),
 	};
 	if (tools.length) body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+	// OpenAI prompt caching is automatic (server-side) for prefixes >= 1024 tokens
+	// -- there is no per-message marker like Anthropic's `cache_control`. The only
+	// knob is `prompt_cache_key`: a stable string, combined with the prefix hash at
+	// lookup, that improves cache-hit *routing* for requests sharing a prefix. We
+	// pass the per-conversation key so a project's turns route together. (Unknown
+	// keys are ignored by OpenAI-compatible servers that don't implement it.)
+	if (opts.cacheKey) body["prompt_cache_key"] = opts.cacheKey;
 
 	const headers: Record<string, string> = { "content-type": "application/json" };
 	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;

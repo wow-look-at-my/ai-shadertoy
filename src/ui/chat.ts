@@ -319,6 +319,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,
+					// Per-conversation key for OpenAI prompt-cache routing (a project is
+					// one conversation thread); namespaced so it can't collide across apps.
+					cacheKey: `shadertoy-${store.project.id}`,
 					requestPermission,
 					onUsage: (usage, durationMs) => {
 						const model = store.settings.chat.model;

@@ -55,6 +55,8 @@ export interface AgentCallbacks {
 	/** Token usage + generation time for one model response (cost/context meter). */
 	onUsage?(usage: Usage, durationMs: number): void;
 	signal?: AbortSignal;
+	/** Stable per-conversation key for OpenAI prompt-cache routing (prompt_cache_key). */
+	cacheKey?: string;
 }
 
 const MAX_ITERATIONS = 12;
@@ -77,6 +79,7 @@ export async function runAgent(
 		const system = textMode ? `${baseSystem()}\n\n${textToolInstructions(tools)}` : baseSystem();
 		const turn = await streamChat(settings, system, projectState(), messages, textMode ? [] : tools, {
 			signal: cb.signal,
+			cacheKey: cb.cacheKey,
 			onEvent: (ev) => {
 				if (ev.type === "text") cb.onAssistantDelta(ev.delta);
 				else if (ev.type === "thinking") cb.onThinkingDelta(ev.delta);

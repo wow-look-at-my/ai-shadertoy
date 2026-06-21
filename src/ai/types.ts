@@ -51,4 +51,8 @@ export interface AssistantTurn {
 export interface StreamOptions {
 	signal?: AbortSignal;
 	onEvent?: (ev: StreamEvent) => void;
+	/** Stable per-conversation routing hint for OpenAI prompt caching
+	 * (`prompt_cache_key`). Requests that share a prompt prefix should share this
+	 * so they route to the same cache; ignored by the Anthropic path. */
+	cacheKey?: string;
 }
