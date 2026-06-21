@@ -646,7 +646,7 @@ function layerRow(store: Store, layer: Layer, index: number, total: number, acti
 	const meta = el("span", { class: "layer-meta muted small" }, `${layer.shapes.length} shp · ${layer.passes.length}p`);
 
 	const opacity = el("input", { class: "layer-opacity", type: "range", title: "Layer opacity", attrs: { min: "0", max: "1", step: "0.01", value: String(layer.opacity) } });
-	opacity.addEventListener("input", () => store.setLayerOpacity(layer.id, Number(opacity.value)));
+	opacity.addEventListener("input", () => store.setLayerOpacity(layer.id, Number(opacity.value), true));
 	opacity.addEventListener("pointerdown", stop);
 
 	const up = el("button", { class: "btn icon tiny", title: "Move toward front", disabled: index === total - 1, on: { click: (e) => { stop(e); store.reorderLayer(layer.id, index + 1); } } }, icon("chevronUp", { size: 15 }));

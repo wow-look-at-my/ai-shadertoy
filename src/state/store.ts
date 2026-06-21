@@ -563,12 +563,15 @@ export class Store {
 		this.touch();
 	}
 
-	setLayerOpacity(layerId: string, opacity: number): void {
+	setLayerOpacity(layerId: string, opacity: number, live = false): void {
 		const layer = this.layerById(layerId);
 		if (!layer) return;
 		layer.opacity = Math.max(0, Math.min(1, opacity));
 		this.renderer.setLayerProps(layerId, { opacity: layer.opacity });
-		this.emit("project", this.project);
+		// A live slider drag must NOT emit "project" -- that would rebuild the
+		// Layers panel mid-drag and destroy the slider being held. The renderer is
+		// already updated; programmatic (AI) calls emit so the panel refreshes.
+		if (!live) this.emit("project", this.project);
 		this.commit(`Set "${layer.name}" opacity`, `opacity:${layerId}`, true);
 		this.touch();
 	}
@@ -593,7 +596,10 @@ export class Store {
 		if (!layer || !shape) return;
 		Object.assign(shape, patch);
 		this.renderer.setLayerShapes(layerId, layer.shapes);
-		this.emit("project", this.project);
+		// `coalesce` marks a live drag/type from the shape editor: skip the
+		// "project" emit so the panel isn't rebuilt mid-gesture (it would steal
+		// focus / interrupt the drag). One-shot/AI edits emit so the fields refresh.
+		if (!coalesce) this.emit("project", this.project);
 		this.commit(`Edit shape in "${layer.name}"`, `shape:${shapeId}`, coalesce);
 		this.touch();
 	}
