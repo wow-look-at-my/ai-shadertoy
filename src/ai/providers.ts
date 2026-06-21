@@ -4,7 +4,7 @@
 // Anthropic's content blocks; the OpenAI path down-converts.
 
 import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
-import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef } from "./types.ts";
+import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { withScheme } from "../util/misc.ts";
 
 export class ProviderError extends Error {
@@ -57,7 +57,9 @@ async function* sseEvents(res: Response, signal?: AbortSignal): AsyncGenerator<{
 
 // ---- neutral -> Anthropic ---------------------------------------------------
 
-function anthropicContent(blocks: Block[]): unknown[] {
+type ACBlock = Record<string, unknown>;
+
+function anthropicContent(blocks: Block[]): ACBlock[] {
 	return blocks.map((b) => {
 		switch (b.type) {
 			case "text":
@@ -77,11 +79,21 @@ function anthropicContent(blocks: Block[]): unknown[] {
 	});
 }
 
-function toAnthropicMessages(messages: Message[]): unknown[] {
-	return messages.map((m) => ({
+// Two prompt-cache breakpoints (the caller also marks `system`): a `cache_control`
+// marker on the last block of the last real message caches the whole conversation
+// prefix, and the volatile project `state` is appended AFTER it as an uncached,
+// varying suffix so changing state can't invalidate that prefix (the "shared
+// prefix, varying suffix" pattern). Max 4 breakpoints/request -- we use 2.
+function toAnthropicMessages(messages: Message[], state: string): ACBlock[] {
+	const out: ACBlock[] = messages.map((m) => ({
 		role: m.role === "assistant" ? "assistant" : "user", // tool results ride in a user message
 		content: anthropicContent(m.blocks),
 	}));
+	const last = out[out.length - 1]?.["content"] as ACBlock[] | undefined;
+	const lastBlock = last?.[last.length - 1];
+	if (lastBlock) lastBlock["cache_control"] = { type: "ephemeral" };
+	if (state.trim()) out.push({ role: "user", content: [{ type: "text", text: state }] });
+	return out;
 }
 
 // Opus 4.8/4.7 and the Fable/Mythos family reject temperature/top_p/top_k with
@@ -90,16 +102,19 @@ function anthropicAcceptsTemperature(model: string): boolean {
 	return !/(opus-4-[78])|fable|mythos/i.test(model);
 }
 
-async function streamAnthropic(settings: Settings, system: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
+async function streamAnthropic(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
 	const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
 	const url = endpoint(`${base}/v1/messages`, settings, cfg.useProxy);
 	const body: Record<string, unknown> = {
 		model: cfg.model,
 		max_tokens: cfg.maxTokens,
-		system,
+		// Cache the (stable) system prompt. Tools render before it, so this single
+		// breakpoint covers tools + system. The volatile project state is NOT here
+		// -- it rides at the end of `messages` so it can't invalidate this prefix.
+		system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
 		stream: true,
-		messages: toAnthropicMessages(messages),
+		messages: toAnthropicMessages(messages, state),
 	};
 	if (tools.length) body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
 	if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
@@ -122,8 +137,9 @@ async function streamAnthropic(settings: Settings, system: string, messages: Mes
 	}
 	if (!res.ok) throw await httpError(res);
 
-	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "end_turn" };
+	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "end_turn", usage: emptyUsage(), durationMs: 0 };
 	const blocks: Record<number, { type: string; id?: string; name?: string; json: string }> = {};
+	let firstTokenAt = 0;
 
 	for await (const ev of sseEvents(res, opts.signal)) {
 		if (ev.data === "[DONE]") break;
@@ -134,7 +150,16 @@ async function streamAnthropic(settings: Settings, system: string, messages: Mes
 			continue;
 		}
 		const type = msg["type"] as string;
-		if (type === "content_block_start") {
+		if (type === "message_start") {
+			const u = (msg["message"] as Record<string, unknown> | undefined)?.["usage"] as Record<string, unknown> | undefined;
+			if (u) {
+				turn.usage.inputTokens = (u["input_tokens"] as number) ?? 0;
+				turn.usage.cacheReadTokens = (u["cache_read_input_tokens"] as number) ?? 0;
+				turn.usage.cacheWriteTokens = (u["cache_creation_input_tokens"] as number) ?? 0;
+				turn.usage.outputTokens = (u["output_tokens"] as number) ?? 0;
+			}
+		} else if (type === "content_block_start") {
+			if (!firstTokenAt) firstTokenAt = performance.now();
 			const idx = msg["index"] as number;
 			const cb = msg["content_block"] as Record<string, unknown>;
 			blocks[idx] = { type: cb["type"] as string, id: cb["id"] as string, name: cb["name"] as string, json: "" };
@@ -160,11 +185,14 @@ async function streamAnthropic(settings: Settings, system: string, messages: Mes
 		} else if (type === "message_delta") {
 			const delta = msg["delta"] as Record<string, unknown>;
 			if (delta && delta["stop_reason"]) turn.stopReason = delta["stop_reason"] as string;
+			const u = msg["usage"] as Record<string, unknown> | undefined;
+			if (u && u["output_tokens"] != null) turn.usage.outputTokens = u["output_tokens"] as number;
 		} else if (type === "error") {
 			const err = msg["error"] as Record<string, unknown>;
 			throw new ProviderError((err?.["message"] as string) ?? "stream error");
 		}
 	}
+	turn.durationMs = firstTokenAt ? performance.now() - firstTokenAt : 0;
 	emit(opts, { type: "done", stopReason: turn.stopReason });
 	return turn;
 }
@@ -178,7 +206,7 @@ function openaiUserContent(blocks: Array<TextBlock | ImageBlock>): unknown {
 	return blocks.map((b) => (b.type === "text" ? { type: "text", text: b.text } : { type: "image_url", image_url: { url: `data:${b.mediaType};base64,${b.data}` } }));
 }
 
-function toOpenAIMessages(system: string, messages: Message[]): unknown[] {
+function toOpenAIMessages(system: string, messages: Message[], state: string): unknown[] {
 	const out: unknown[] = [{ role: "system", content: system }];
 	for (const m of messages) {
 		if (m.role === "assistant") {
@@ -213,10 +241,13 @@ function toOpenAIMessages(system: string, messages: Message[]): unknown[] {
 			if (trailing.length) out.push({ role: "user", content: openaiUserContent(trailing) });
 		}
 	}
+	// Volatile project state as an uncached, varying suffix -- keeps the system +
+	// conversation prefix stable for OpenAI's automatic (server-side) caching.
+	if (state.trim()) out.push({ role: "user", content: state });
 	return out;
 }
 
-async function streamOpenAI(settings: Settings, system: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
+async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
 	const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 	const url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
@@ -225,7 +256,9 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 		max_tokens: cfg.maxTokens,
 		temperature: cfg.temperature,
 		stream: true,
-		messages: toOpenAIMessages(system, messages),
+		// ask for a final usage chunk so we can report cost + context use
+		stream_options: { include_usage: true },
+		messages: toOpenAIMessages(system, messages, state),
 	};
 	if (tools.length) body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 
@@ -244,8 +277,9 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 	}
 	if (!res.ok) throw await httpError(res);
 
-	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop" };
+	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", usage: emptyUsage(), durationMs: 0 };
 	const calls: Record<number, { id: string; name: string; args: string }> = {};
+	let firstTokenAt = 0;
 
 	for await (const ev of sseEvents(res, opts.signal)) {
 		if (ev.data === "[DONE]") break;
@@ -255,15 +289,27 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 		} catch {
 			continue;
 		}
+		const u = msg["usage"] as Record<string, unknown> | undefined;
+		if (u) {
+			const details = u["prompt_tokens_details"] as Record<string, unknown> | undefined;
+			const cached = (details?.["cached_tokens"] as number) ?? 0;
+			const prompt = (u["prompt_tokens"] as number) ?? 0;
+			turn.usage.inputTokens = Math.max(0, prompt - cached);
+			turn.usage.cacheReadTokens = cached;
+			turn.usage.cacheWriteTokens = 0;
+			turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
+		}
 		const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
 		if (!choice) continue;
 		const delta = choice["delta"] as Record<string, unknown> | undefined;
 		if (delta?.["content"]) {
+			if (!firstTokenAt) firstTokenAt = performance.now();
 			turn.text += delta["content"] as string;
 			emit(opts, { type: "text", delta: delta["content"] as string });
 		}
 		const tcs = delta?.["tool_calls"] as Array<Record<string, unknown>> | undefined;
 		if (tcs) {
+			if (!firstTokenAt) firstTokenAt = performance.now();
 			for (const tc of tcs) {
 				const i = (tc["index"] as number) ?? 0;
 				if (!calls[i]) calls[i] = { id: "", name: "", args: "" };
@@ -285,15 +331,16 @@ async function streamOpenAI(settings: Settings, system: string, messages: Messag
 		const c = calls[i];
 		turn.toolCalls.push({ id: c.id || `call_${i}`, name: c.name, input: safeJson(c.args) });
 	}
+	turn.durationMs = firstTokenAt ? performance.now() - firstTokenAt : 0;
 	emit(opts, { type: "done", stopReason: turn.stopReason });
 	return turn;
 }
 
 // ---- dispatch + helpers -----------------------------------------------------
 
-export function streamChat(settings: Settings, system: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Promise<AssistantTurn> {
-	if (settings.chat.provider === "anthropic") return streamAnthropic(settings, system, messages, tools, opts);
-	return streamOpenAI(settings, system, messages, tools, opts);
+export function streamChat(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Promise<AssistantTurn> {
+	if (settings.chat.provider === "anthropic") return streamAnthropic(settings, system, state, messages, tools, opts);
+	return streamOpenAI(settings, system, state, messages, tools, opts);
 }
 
 export interface TestResult {
@@ -388,6 +435,10 @@ export async function listModels(settings: Settings): Promise<string[]> {
 
 function emit(opts: StreamOptions, ev: StreamEvent): void {
 	opts.onEvent?.(ev);
+}
+
+function emptyUsage(): Usage {
+	return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 }
 
 function safeJson(s: string): unknown {
