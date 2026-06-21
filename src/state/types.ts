@@ -19,13 +19,18 @@ export interface ToolUseBlock {
 	name: string;
 	input: unknown;
 }
+export interface ThinkingBlock {
+	type: "thinking";
+	thinking: string; // summarized reasoning text (may be empty if display omitted)
+	signature: string; // opaque signature; must be replayed unchanged on the same model
+}
 export interface ToolResultBlock {
 	type: "tool_result";
 	toolUseId: string;
 	content: Array<TextBlock | ImageBlock>;
 	isError?: boolean;
 }
-export type Block = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
+export type Block = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock;
 
 export interface Message {
 	id: string;
@@ -53,7 +58,9 @@ export interface Uniform {
 	label?: string;
 }
 
-export type ChannelKind = "none" | "image" | "builtin" | "video" | "webcam";
+// "video"/"webcam" are DYNAMIC: a live video element whose current frame is
+// uploaded to the channel texture every render tick (see gl/dynamictexture.ts).
+export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam";
 export type BuiltinTexture = "rgbaNoise" | "grayNoise" | "checker" | "gradient" | "blue";
 export type TexFilter = "linear" | "nearest";
 export type TexWrap = "repeat" | "clamp" | "mirror";
@@ -62,14 +69,40 @@ export interface Channel {
 	kind: ChannelKind;
 	assetId?: string; // when kind === "image" or "video"
 	builtin?: BuiltinTexture; // when kind === "builtin"
+	passId?: string; // when kind === "pass": the pass whose output feeds this channel
 	filter: TexFilter;
 	wrap: TexWrap;
 }
 
-// A bindable media asset. Despite the name it can hold either a still image or a
-// video clip (distinguished by `kind`); both are stored inline as a data URL so
-// they persist and export with the project. "webcam" is a live channel and has
-// no asset.
+// Render-target pixel format for a pass. rgba8 is universal; rgba16f keeps HDR
+// values (needed for bloom/blur of bright sources) when the GPU supports
+// EXT_color_buffer_float, falling back to rgba8 otherwise.
+export type PassFormat = "rgba8" | "rgba16f";
+
+/** Upper bound on inputs per pass. WebGL2 guarantees at least 16 fragment
+ * texture units (MAX_TEXTURE_IMAGE_UNITS); the renderer clamps to the actual
+ * device limit, which is >= this. (Shadertoy's fixed 4 is not a limit we keep.) */
+export const MAX_INPUTS = 16;
+
+/** One node in the render graph: a fragment shader that renders to its own
+ * offscreen texture, with a variable-length list of input channels that can
+ * each sample a built-in texture, an image asset, or the output of ANOTHER pass
+ * (the graph edges) -- including this pass's own previous frame (feedback).
+ * Inputs are addressed as iChannel0..iChannel{N-1} in the shader. The project's
+ * `outputPassId` pass is the one shown on screen. */
+export interface Pass {
+	id: string;
+	name: string;
+	source: string; // GLSL ES 3.00 body defining mainImage()
+	channels: Channel[]; // 0..MAX_INPUTS; named iChannel0..iChannel{N-1}
+	format: PassFormat;
+	x: number; // node position in the graph editor
+	y: number;
+}
+
+// A bindable media asset: a still image or (kind === "video") a clip sampled per
+// frame. Both are stored inline as a data URL so they persist/export with the
+// project. The webcam is a live channel with no asset.
 export interface ImageAsset {
 	id: string;
 	name: string;
@@ -86,9 +119,12 @@ export interface ImageAsset {
 export interface Project {
 	id: string;
 	name: string;
-	shaderSource: string;
+	/** The render graph: one or more passes. Single-pass projects have exactly
+	 * one pass (the output). Custom uniforms are shared across all passes. */
+	passes: Pass[];
+	/** Which pass is composited to the screen (the visible result). */
+	outputPassId: string;
 	uniforms: Uniform[];
-	channels: [Channel, Channel, Channel, Channel];
 	messages: Message[];
 	createdAt: number;
 	updatedAt: number;
@@ -139,17 +175,27 @@ export interface ExportBundle {
 	settings?: Settings; // optional; API keys excluded unless includeKeys
 }
 
-export function defaultChannels(): [Channel, Channel, Channel, Channel] {
-	const none = (): Channel => ({ kind: "none", filter: "linear", wrap: "repeat" });
-	return [none(), none(), none(), none()];
+export function emptyChannel(): Channel {
+	return { kind: "none", filter: "linear", wrap: "repeat" };
 }
 
-/** Repair a persisted/imported project so the app can't be white-screened by one
- * malformed record (missing channels/uniforms/messages from a legacy or corrupt
- * entry). Mutates and returns the project. */
-export function normalizeProject(p: Project): Project {
-	if (!Array.isArray(p.channels) || p.channels.length !== 4) p.channels = defaultChannels();
-	if (!Array.isArray(p.uniforms)) p.uniforms = [];
-	if (!Array.isArray(p.messages)) p.messages = [];
-	return p;
+/** A default input list. New passes start with 4 (the familiar iChannel0..3),
+ * but inputs can be added/removed freely up to MAX_INPUTS. */
+export function defaultChannels(n = 4): Channel[] {
+	return Array.from({ length: n }, emptyChannel);
+}
+
+let passCounter = 0;
+/** Build a fresh pass. `id` is unique within a session; pass ids are persisted. */
+export function makePass(name: string, source: string, channels?: Channel[], x = 40, y = 40): Pass {
+	passCounter++;
+	return {
+		id: `pass_${Date.now().toString(36)}_${passCounter}`,
+		name,
+		source,
+		channels: channels ?? defaultChannels(),
+		format: "rgba8",
+		x,
+		y,
+	};
 }

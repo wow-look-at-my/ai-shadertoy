@@ -1,8 +1,9 @@
-// Central application store. Owns settings, the current project, the asset
-// library, and the renderer, and is the single place that mutates state +
-// persists it. Also implements tool execution for the agent (applyTool).
+// Central application store. Owns settings, the current project (a render graph
+// of passes), the asset library, and the renderer, and is the single place that
+// mutates state + persists it. Also implements tool execution for the agent.
 
-import type { Channel, ImageAsset, Project, Settings, Uniform } from "./types.ts";
+import type { Channel, ImageAsset, Pass, PassFormat, Project, Settings, Uniform } from "./types.ts";
+import { emptyChannel, makePass } from "./types.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
@@ -10,8 +11,9 @@ import type { CompileResult } from "../gl/renderer.ts";
 import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersistence, saveSettings, setCurrentProjectId } from "./persist.ts";
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
 import { debounce } from "../util/misc.ts";
+import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass";
 
 export class Store {
 	settings: Settings = structuredClone(DEFAULT_SETTINGS);
@@ -19,7 +21,12 @@ export class Store {
 	projects: Array<{ id: string; name: string; updatedAt: number }> = [];
 	assets: ImageAsset[] = [];
 	renderer!: Renderer;
+	/** Aggregate compile state: ok when every pass compiles; log lists failures. */
 	lastCompile: CompileResult | null = null;
+	/** Per-pass compile results, keyed by pass id. */
+	passCompiles = new Map<string, CompileResult>();
+	/** Which pass the editor/inspector is focused on. */
+	selectedPassId = "";
 	busy = false;
 
 	private listeners = new Map<EventName, Set<(p: unknown) => void>>();
@@ -60,6 +67,7 @@ export class Store {
 			this.project = projects.find((p) => p.id === wanted) ?? projects.sort((a, b) => b.updatedAt - a.updatedAt)[0];
 		}
 		setCurrentProjectId(this.project.id);
+		this.selectedPassId = this.project.outputPassId;
 		this.refreshProjectList(projects.length ? projects : [this.project]);
 
 		this.applyProjectToRenderer();
@@ -75,53 +83,98 @@ export class Store {
 		this.emit("projects", this.projects);
 	}
 
+	// ---- pass helpers -------------------------------------------------------
+
+	passById(id: string): Pass | undefined {
+		return this.project.passes.find((p) => p.id === id);
+	}
+	passByName(name: string): Pass | undefined {
+		const n = name.toLowerCase();
+		return this.project.passes.find((p) => p.name.toLowerCase() === n);
+	}
+	selectedPass(): Pass {
+		return this.passById(this.selectedPassId) ?? this.passById(this.project.outputPassId) ?? this.project.passes[0];
+	}
+	selectPass(id: string): void {
+		if (!this.passById(id) || id === this.selectedPassId) return;
+		this.selectedPassId = id;
+		this.emit("selectedPass", id);
+	}
+
 	// ---- renderer application ----------------------------------------------
 
 	private applyProjectToRenderer(): void {
-		this.lastCompile = this.renderer.setShader(this.project.shaderSource, this.project.uniforms);
+		this.passCompiles = this.renderer.setPasses(this.project.passes, this.project.outputPassId, this.project.uniforms);
+		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
-		for (let i = 0; i < 4; i++) void this.applyChannel(i);
+		for (const pass of this.project.passes) for (let i = 0; i < pass.channels.length; i++) void this.applyChannel(pass.id, i);
 	}
 
-	private async applyChannel(index: number): Promise<void> {
-		const ch = this.project.channels[index];
+	private aggregateCompile(): CompileResult {
+		const fails: string[] = [];
+		for (const pass of this.project.passes) {
+			const c = this.passCompiles.get(pass.id);
+			if (c && !c.ok) fails.push(`[${pass.name}]\n${c.log}`);
+		}
+		return fails.length ? { ok: false, log: fails.join("\n\n") } : { ok: true, log: "" };
+	}
+
+	/** Compile result for a specific pass (used by the per-pass editor log). */
+	compileFor(passId: string): CompileResult | null {
+		return this.passCompiles.get(passId) ?? null;
+	}
+
+	private async applyChannel(passId: string, index: number): Promise<void> {
+		const pass = this.passById(passId);
+		if (!pass) return;
+		const ch = pass.channels[index];
 		if (ch.kind === "none") {
-			this.renderer.clearChannel(index);
+			this.renderer.clearPassChannel(passId, index);
 		} else if (ch.kind === "builtin" && ch.builtin) {
-			this.renderer.setChannelBuiltin(index, ch.builtin, ch.filter, ch.wrap);
+			this.renderer.setPassChannelBuiltin(passId, index, ch.builtin, ch.filter, ch.wrap);
+		} else if (ch.kind === "pass" && ch.passId) {
+			this.renderer.setPassChannelPass(passId, index, ch.passId, ch.filter, ch.wrap);
 		} else if (ch.kind === "image" && ch.assetId) {
 			const asset = this.assets.find((a) => a.id === ch.assetId);
 			if (!asset) {
-				this.renderer.clearChannel(index);
+				this.renderer.clearPassChannel(passId, index);
 				return;
 			}
 			try {
-				const img = await loadImage(asset.dataUrl);
-				this.renderer.setChannelImage(index, img, img.naturalWidth, img.naturalHeight, ch.filter, ch.wrap);
+				const img = await loadImageEl(asset.dataUrl);
+				this.renderer.setPassChannelImage(passId, index, img, img.naturalWidth, img.naturalHeight, ch.filter, ch.wrap);
 			} catch {
-				this.renderer.clearChannel(index);
+				this.renderer.clearPassChannel(passId, index);
 			}
 		} else if (ch.kind === "video" && ch.assetId) {
 			const asset = this.assets.find((a) => a.id === ch.assetId);
 			if (!asset) {
-				this.renderer.clearChannel(index);
+				this.renderer.clearPassChannel(passId, index);
 				return;
 			}
-			this.renderer.setChannelVideo(index, asset.dataUrl, ch.filter, ch.wrap);
+			// Idempotent: the renderer keeps the playing clip when the key matches,
+			// so re-applying on an unrelated edit doesn't restart playback.
+			this.renderer.setPassChannelVideo(passId, index, asset.dataUrl, asset.id, ch.filter, ch.wrap);
 		} else if (ch.kind === "webcam") {
+			// Already streaming? Refresh filter/wrap instead of re-acquiring the camera.
+			if (this.renderer.dynamicKey(passId, index) === "webcam") {
+				this.renderer.setPassChannelParams(passId, index, ch.filter, ch.wrap);
+				return;
+			}
 			try {
-				const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+				const stream = await requestWebcam();
 				// The binding may have changed while we awaited the permission prompt.
-				const cur = this.project.channels[index];
-				if (cur.kind !== "webcam") {
-					for (const t of stream.getTracks()) t.stop();
+				const cur = this.passById(passId)?.channels[index];
+				if (!cur || cur.kind !== "webcam") {
+					stopStream(stream);
 					return;
 				}
-				this.renderer.setChannelWebcam(index, stream, cur.filter, cur.wrap);
+				this.renderer.setPassChannelWebcam(passId, index, stream, cur.filter, cur.wrap);
 			} catch {
-				// Permission denied or no camera: leave the channel empty.
-				this.renderer.clearChannel(index);
+				this.renderer.clearPassChannel(passId, index); // permission denied / no camera
 			}
+		} else {
+			this.renderer.clearPassChannel(passId, index);
 		}
 	}
 
@@ -137,20 +190,26 @@ export class Store {
 		await db.saveProject(this.project);
 	}
 
-	setShaderSource(src: string, compile = true): CompileResult {
-		this.project.shaderSource = src;
+	/** Edit one pass's source (recompiles just that pass). */
+	setPassSource(passId: string, src: string, compile = true): CompileResult {
+		const pass = this.passById(passId);
+		if (!pass) return { ok: true, log: "" };
+		pass.source = src;
 		if (compile) {
-			this.lastCompile = this.renderer.setShader(src, this.project.uniforms);
+			this.passCompiles.set(passId, this.renderer.setPassSource(passId, src));
+			this.lastCompile = this.aggregateCompile();
 			this.emit("compile", this.lastCompile);
 		}
 		this.emit("project", this.project);
 		this.touch();
-		return this.lastCompile ?? { ok: true, log: "" };
+		return this.passCompiles.get(passId) ?? { ok: true, log: "" };
 	}
 
 	setUniforms(uniforms: Uniform[]): CompileResult {
 		this.project.uniforms = uniforms;
-		this.lastCompile = this.renderer.setShader(this.project.shaderSource, uniforms);
+		// Declarations changed -> every pass header changes, so recompile all.
+		this.passCompiles = this.renderer.setPasses(this.project.passes, this.project.outputPassId, uniforms);
+		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
 		this.emit("project", this.project);
 		this.touch();
@@ -165,19 +224,119 @@ export class Store {
 		this.touch();
 	}
 
-	setChannel(index: number, patch: Partial<Channel>): void {
-		const prev = this.project.channels[index];
+	setPassChannel(passId: string, index: number, patch: Partial<Channel>): void {
+		const pass = this.passById(passId);
+		if (!pass || index < 0 || index >= this.renderer.maxInputs()) return;
+		// Auto-grow the input list so a higher index just adds inputs (no fixed cap).
+		const grew = index >= pass.channels.length;
+		while (pass.channels.length <= index) pass.channels.push(emptyChannel());
+		const prev = pass.channels[index];
 		const next = { ...prev, ...patch };
-		this.project.channels[index] = next;
-		// If only the sampler params changed (same source), update them cheaply so a
-		// playing video isn't reloaded and the webcam isn't re-acquired.
-		const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin;
-		if (sourceSame && next.kind !== "none") {
-			this.renderer.setChannelParams(index, next.filter, next.wrap);
+		pass.channels[index] = next;
+		if (grew) {
+			// Channel count changed -> the pass header changes -> recompile.
+			this.applyProjectToRenderer();
 		} else {
-			void this.applyChannel(index);
+			const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin && prev.passId === next.passId;
+			if (sourceSame && next.kind !== "none") {
+				// Only filter/wrap changed -> cheap update (no image reload, no clip
+				// restart, no webcam re-acquire).
+				this.renderer.setPassChannelParams(passId, index, next.filter, next.wrap);
+			} else {
+				void this.applyChannel(passId, index);
+			}
 		}
 		this.emit("project", this.project);
+		this.touch();
+	}
+
+	/** Append one empty input to a pass (up to the hardware limit). */
+	addPassChannel(passId: string): void {
+		const pass = this.passById(passId);
+		if (!pass || pass.channels.length >= this.renderer.maxInputs()) return;
+		pass.channels.push(emptyChannel());
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.touch();
+	}
+
+	/** Remove one input from a pass. Subsequent inputs shift down (iChannelN is
+	 * positional), so references in the shader may need updating. */
+	removePassChannel(passId: string, index: number): void {
+		const pass = this.passById(passId);
+		if (!pass || index < 0 || index >= pass.channels.length) return;
+		pass.channels.splice(index, 1);
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.touch();
+	}
+
+	// ---- pass graph mutations ----------------------------------------------
+
+	addPass(name: string, source = "", format: PassFormat = "rgba8"): Pass {
+		const x = this.project.passes.reduce((m, p) => Math.max(m, p.x), 0);
+		const pass = makePass(uniquePassName(this.project.passes, name), source, undefined, x ? x - 240 : 40, 60 + this.project.passes.length * 30);
+		pass.format = format;
+		this.project.passes.unshift(pass);
+		this.selectedPassId = pass.id;
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.emit("selectedPass", pass.id);
+		this.touch();
+		return pass;
+	}
+
+	removePass(passId: string): { ok: boolean; error?: string } {
+		if (this.project.passes.length <= 1) return { ok: false, error: "Cannot remove the only pass." };
+		const idx = this.project.passes.findIndex((p) => p.id === passId);
+		if (idx === -1) return { ok: false, error: "No such pass." };
+		this.project.passes.splice(idx, 1);
+		// Detach any channel referencing the removed pass.
+		for (const p of this.project.passes) {
+			p.channels.forEach((c, i) => {
+				if (c.kind === "pass" && c.passId === passId) p.channels[i] = { ...c, kind: "none", passId: undefined };
+			});
+		}
+		if (this.project.outputPassId === passId) this.project.outputPassId = this.project.passes[this.project.passes.length - 1].id;
+		if (this.selectedPassId === passId) this.selectedPassId = this.project.outputPassId;
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.emit("selectedPass", this.selectedPassId);
+		this.touch();
+		return { ok: true };
+	}
+
+	renamePass(passId: string, name: string): void {
+		const pass = this.passById(passId);
+		if (!pass) return;
+		pass.name = uniquePassName(this.project.passes, name, passId);
+		this.emit("project", this.project);
+		this.touch();
+	}
+
+	setOutputPass(passId: string): void {
+		if (!this.passById(passId)) return;
+		this.project.outputPassId = passId;
+		this.renderer.setOutputPass(passId);
+		this.emit("project", this.project);
+		this.touch();
+	}
+
+	setPassFormat(passId: string, format: PassFormat): void {
+		const pass = this.passById(passId);
+		if (!pass || pass.format === format) return;
+		pass.format = format;
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.touch();
+	}
+
+	/** Persist a graph-node position (no recompile, no re-render of views). */
+	movePass(passId: string, x: number, y: number): void {
+		const pass = this.passById(passId);
+		if (!pass) return;
+		pass.x = x;
+		pass.y = y;
 		this.touch();
 	}
 
@@ -190,10 +349,12 @@ export class Store {
 	deleteAsset(id: string): void {
 		this.assets = this.assets.filter((a) => a.id !== id);
 		void db.deleteAsset(id);
-		// detach from any channel using it
-		this.project.channels.forEach((ch, i) => {
-			if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setChannel(i, { kind: "none", assetId: undefined });
-		});
+		// detach from any pass channel using it (image or video)
+		for (const p of this.project.passes) {
+			p.channels.forEach((ch, i) => {
+				if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setPassChannel(p.id, i, { kind: "none", assetId: undefined });
+			});
+		}
 		this.emit("assets", this.assets);
 	}
 
@@ -208,11 +369,16 @@ export class Store {
 
 	// ---- projects -----------------------------------------------------------
 
+	private adoptProject(p: Project): void {
+		this.project = p;
+		this.selectedPassId = p.outputPassId;
+		setCurrentProjectId(p.id);
+	}
+
 	async newProject(defaultShaderSource: string): Promise<void> {
 		await this.saveProjectNow();
-		this.project = makeProject("Untitled shader", defaultShaderSource);
+		this.adoptProject(makeProject("Untitled shader", defaultShaderSource));
 		await db.saveProject(this.project);
-		setCurrentProjectId(this.project.id);
 		this.refreshProjectList(await db.loadProjects());
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
@@ -224,8 +390,7 @@ export class Store {
 		const projects = await db.loadProjects();
 		const next = projects.find((p) => p.id === id);
 		if (!next) return;
-		this.project = next;
-		setCurrentProjectId(id);
+		this.adoptProject(next);
 		this.refreshProjectList(projects);
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
@@ -236,12 +401,11 @@ export class Store {
 		const projects = await db.loadProjects();
 		if (this.project.id === id) {
 			if (projects.length) {
-				this.project = projects.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+				this.adoptProject(projects.sort((a, b) => b.updatedAt - a.updatedAt)[0]);
 			} else {
-				this.project = makeProject("Untitled shader", defaultShaderSource);
+				this.adoptProject(makeProject("Untitled shader", defaultShaderSource));
 				await db.saveProject(this.project);
 			}
-			setCurrentProjectId(this.project.id);
 			this.applyProjectToRenderer();
 			this.emit("project", this.project);
 		}
@@ -258,8 +422,7 @@ export class Store {
 		this.assets = await db.loadAssets();
 		const projects = await db.loadProjects();
 		if (projects.length) {
-			this.project = projects.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-			setCurrentProjectId(this.project.id);
+			this.adoptProject(projects.sort((a, b) => b.updatedAt - a.updatedAt)[0]);
 		}
 		this.refreshProjectList(projects.length ? projects : [this.project]);
 		this.applyProjectToRenderer();
@@ -290,15 +453,17 @@ export class Store {
 	/** Standard compile result. Attaches the render only when the caller asked
 	 * for it (per-tool screenshot flag) or the user enabled always-attach. */
 	private shaderResult(okPrefix: string, withImage: boolean): ToolResult {
-		if (this.lastCompile && !this.lastCompile.ok) {
-			return { content: [text(`Compile FAILED. Read the log and fix it with edit_shader, then it re-renders.\n\nGLSL log (line numbers relative to your source):\n${this.lastCompile.log}`)], isError: true };
+		const err = this.aggregateCompile();
+		if (!err.ok) {
+			return { content: [text(`Compile FAILED. Read the log and fix it with edit_shader, then it re-renders.\n\nGLSL log (line numbers relative to each pass's source):\n${err.log}`)], isError: true };
 		}
 		const stats = this.renderer.stats();
+		const passNote = stats.passes > 1 ? ` (${stats.passes} passes)` : "";
 		if (withImage || this.settings.autoScreenshot) {
 			const shot = this.screenshotBlock();
-			return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
+			return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${passNote}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
 		}
-		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}. (No preview attached — set screenshot:true to see it now, otherwise you'll be shown the final render when you finish.)`)] };
+		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${passNote}. (No preview attached — set screenshot:true to see it now, otherwise you'll be shown the final render when you finish.)`)] };
 	}
 
 	// ---- tool execution: dispatch to the registry via a ToolContext ----------
@@ -309,15 +474,31 @@ export class Store {
 			project: this.project,
 			assets: this.assets,
 			renderer: this.renderer,
-			setShaderSource: (s, c) => this.setShaderSource(s, c),
+			passes: () => this.project.passes,
+			outputPassId: () => this.project.outputPassId,
+			selectedPassId: () => this.selectedPassId,
+			resolvePass: (nameOrId) => this.resolvePass(nameOrId),
+			setPassSource: (id, s, c) => this.setPassSource(id, s, c),
+			addPass: (name, source, format) => this.addPass(name, source, format),
+			removePass: (id) => this.removePass(id),
+			renamePassById: (id, name) => this.renamePass(id, name),
+			setOutputPass: (id) => this.setOutputPass(id),
+			setPassFormat: (id, fmt) => this.setPassFormat(id, fmt),
+			selectPass: (id) => this.selectPass(id),
 			setUniforms: (u) => this.setUniforms(u),
-			setChannel: (i, p) => this.setChannel(i, p),
+			setPassChannel: (id, i, p) => this.setPassChannel(id, i, p),
 			renameProject: (n) => this.renameProject(n),
 			addAsset: (a) => this.addAsset(a),
 			screenshotBlock: () => this.screenshotBlock(),
 			shaderResult: (p, w) => this.shaderResult(p, w),
 			compileError: () => (this.lastCompile && !this.lastCompile.ok ? this.lastCompile.log : null),
 		};
+	}
+
+	/** Resolve a pass by id or name; default (no arg) = the output pass. */
+	private resolvePass(nameOrId?: string): Pass | null {
+		if (!nameOrId) return this.passById(this.project.outputPassId) ?? this.project.passes[0] ?? null;
+		return this.passById(nameOrId) ?? this.passByName(nameOrId) ?? null;
 	}
 
 	async applyTool(name: string, input: unknown): Promise<ToolResult> {
@@ -328,11 +509,11 @@ export class Store {
 	}
 }
 
-function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-	return new Promise((resolve, reject) => {
-		const img = new Image();
-		img.onload = () => resolve(img);
-		img.onerror = () => reject(new Error("image decode failed"));
-		img.src = dataUrl;
-	});
+function uniquePassName(passes: Pass[], base: string, exceptId?: string): string {
+	const trimmed = base.trim() || "Pass";
+	const taken = (n: string) => passes.some((p) => p.id !== exceptId && p.name.toLowerCase() === n.toLowerCase());
+	if (!taken(trimmed)) return trimmed;
+	let i = 2;
+	while (taken(`${trimmed} ${i}`)) i++;
+	return `${trimmed} ${i}`;
 }

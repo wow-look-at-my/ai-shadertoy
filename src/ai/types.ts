@@ -19,6 +19,7 @@ export interface ToolDef {
 
 export type StreamEvent =
 	| { type: "text"; delta: string }
+	| { type: "thinking"; delta: string }
 	| { type: "tool_start"; id: string; name: string }
 	| { type: "tool_args"; id: string; delta: string }
 	| { type: "done"; stopReason: string };
@@ -40,6 +41,9 @@ export interface AssistantTurn {
 	text: string;
 	toolCalls: ToolCall[];
 	stopReason: string;
+	/** Captured thinking blocks (Anthropic extended thinking), in order. Must be
+	 * replayed unchanged on the next turn or tool-use continuations 400. */
+	thinking: Array<{ thinking: string; signature: string }>;
 	usage: Usage;
 	durationMs: number; // generation wall-clock (first token -> done), for tokens/sec
 }

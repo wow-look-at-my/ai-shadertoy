@@ -68,6 +68,8 @@ function anthropicContent(blocks: Block[]): ACBlock[] {
 				return { type: "image", source: { type: "base64", media_type: b.mediaType, data: b.data } };
 			case "tool_use":
 				return { type: "tool_use", id: b.id, name: b.name, input: b.input };
+			case "thinking":
+				return { type: "thinking", thinking: b.thinking, signature: b.signature };
 			case "tool_result":
 				return {
 					type: "tool_result",
@@ -102,6 +104,30 @@ function anthropicAcceptsTemperature(model: string): boolean {
 	return !/(opus-4-[78])|fable|mythos/i.test(model);
 }
 
+// Extended thinking, gated by model so we never send a config that 400s:
+// 4.6+ Opus / Sonnet 4.6 / Fable / Mythos take adaptive thinking; 4.5-era models
+// take a token budget (must stay under max_tokens); anything unrecognised gets no
+// thinking. `display: "summarized"` makes the reasoning visible as it streams.
+// (Thinking and temperature are mutually exclusive in our request — see below.)
+function anthropicThinking(model: string, maxTokens: number): Record<string, unknown> | undefined {
+	if (/(opus-4-[678])|sonnet-4-6|fable|mythos/i.test(model)) {
+		return { type: "adaptive", display: "summarized" };
+	}
+	if (/(opus-4-[015])|sonnet-4-[05]|haiku-4-5/i.test(model)) {
+		const budget = Math.max(1024, Math.min(8192, Math.floor(maxTokens / 2)));
+		return budget < maxTokens ? { type: "enabled", budget_tokens: budget } : undefined;
+	}
+	return undefined;
+}
+
+// `output_config.effort` (GA, no beta header) is supported on Opus 4.5+ and
+// Sonnet 4.6 / Fable / Mythos; it 400s on Sonnet 4.5 / Haiku 4.5 and older, so
+// gate it. We set "medium" (the server default is "high") to trade some depth
+// for lower latency/cost.
+function anthropicEffort(model: string): string | undefined {
+	return /(opus-4-[5678])|sonnet-4-6|fable|mythos/i.test(model) ? "medium" : undefined;
+}
+
 async function streamAnthropic(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
 	const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
@@ -117,7 +143,11 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 		messages: toAnthropicMessages(messages, state),
 	};
 	if (tools.length) body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
-	if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
+	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
+	if (thinking) body["thinking"] = thinking;
+	else if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
+	const effort = anthropicEffort(cfg.model);
+	if (effort) body["output_config"] = { effort };
 
 	let res: Response;
 	try {
@@ -137,8 +167,8 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 	}
 	if (!res.ok) throw await httpError(res);
 
-	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "end_turn", usage: emptyUsage(), durationMs: 0 };
-	const blocks: Record<number, { type: string; id?: string; name?: string; json: string }> = {};
+	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "end_turn", thinking: [], usage: emptyUsage(), durationMs: 0 };
+	const blocks: Record<number, { type: string; id?: string; name?: string; json: string; thinking: string; signature: string }> = {};
 	let firstTokenAt = 0;
 
 	for await (const ev of sseEvents(res, opts.signal)) {
@@ -162,7 +192,7 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 			if (!firstTokenAt) firstTokenAt = performance.now();
 			const idx = msg["index"] as number;
 			const cb = msg["content_block"] as Record<string, unknown>;
-			blocks[idx] = { type: cb["type"] as string, id: cb["id"] as string, name: cb["name"] as string, json: "" };
+			blocks[idx] = { type: cb["type"] as string, id: cb["id"] as string, name: cb["name"] as string, json: "", thinking: (cb["thinking"] as string) ?? "", signature: (cb["signature"] as string) ?? "" };
 			if (cb["type"] === "tool_use") emit(opts, { type: "tool_start", id: cb["id"] as string, name: cb["name"] as string });
 		} else if (type === "content_block_delta") {
 			const idx = msg["index"] as number;
@@ -170,6 +200,15 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 			if (delta["type"] === "text_delta") {
 				turn.text += delta["text"] as string;
 				emit(opts, { type: "text", delta: delta["text"] as string });
+			} else if (delta["type"] === "thinking_delta") {
+				const b = blocks[idx];
+				if (b) {
+					b.thinking += delta["thinking"] as string;
+					emit(opts, { type: "thinking", delta: delta["thinking"] as string });
+				}
+			} else if (delta["type"] === "signature_delta") {
+				const b = blocks[idx];
+				if (b) b.signature += (delta["signature"] as string) ?? "";
 			} else if (delta["type"] === "input_json_delta") {
 				const b = blocks[idx];
 				if (b) {
@@ -181,6 +220,8 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 			const b = blocks[msg["index"] as number];
 			if (b && b.type === "tool_use") {
 				turn.toolCalls.push({ id: b.id ?? "", name: b.name ?? "", input: safeJson(b.json) });
+			} else if (b && b.type === "thinking") {
+				turn.thinking.push({ thinking: b.thinking, signature: b.signature });
 			}
 		} else if (type === "message_delta") {
 			const delta = msg["delta"] as Record<string, unknown>;
@@ -277,7 +318,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 	}
 	if (!res.ok) throw await httpError(res);
 
-	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", usage: emptyUsage(), durationMs: 0 };
+	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: emptyUsage(), durationMs: 0 };
 	const calls: Record<number, { id: string; name: string; args: string }> = {};
 	let firstTokenAt = 0;
 

@@ -24,7 +24,17 @@ export type { ToolResult } from "./tools/index.ts";
 
 // Tools that change what's on screen. After any of these run, the model is
 // shown a forced render when it tries to stop, so it always verifies its work.
-const RENDER_TOOLS = new Set<string>([TOOL_NAMES.initShader, TOOL_NAMES.editShader, TOOL_NAMES.setUniforms, TOOL_NAMES.setChannel, TOOL_NAMES.setChannelAsset, TOOL_NAMES.generateTexture]);
+const RENDER_TOOLS = new Set<string>([
+	TOOL_NAMES.initShader,
+	TOOL_NAMES.editShader,
+	TOOL_NAMES.setUniforms,
+	TOOL_NAMES.setChannel,
+	TOOL_NAMES.setChannelAsset,
+	TOOL_NAMES.generateTexture,
+	TOOL_NAMES.addPass,
+	TOOL_NAMES.removePass,
+	TOOL_NAMES.setOutputPass,
+]);
 
 /** A pending tool call awaiting the user's approval (see requiresPermission). */
 export interface PermissionRequest {
@@ -36,6 +46,7 @@ export interface PermissionRequest {
 export interface AgentCallbacks {
 	onTurnStart(): void;
 	onAssistantDelta(text: string): void;
+	onThinkingDelta(text: string): void;
 	onToolActivity(name: string, phase: "start" | "done", detail?: string): void;
 	onMessage(msg: Message): void; // a finalized message; caller persists + renders
 	/** Ask the user to approve a permission-gated tool call. Resolves true to run
@@ -68,6 +79,7 @@ export async function runAgent(
 			signal: cb.signal,
 			onEvent: (ev) => {
 				if (ev.type === "text") cb.onAssistantDelta(ev.delta);
+				else if (ev.type === "thinking") cb.onThinkingDelta(ev.delta);
 				else if (ev.type === "tool_start") cb.onToolActivity(ev.name, "start");
 			},
 		});
@@ -75,13 +87,16 @@ export async function runAgent(
 
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : turn.toolCalls;
 
+		// Thinking blocks ride at the front of the assistant turn; Anthropic requires
+		// them replayed unchanged or tool-use continuations 400.
+		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
 		const assistantMsg: Message = {
 			id: uid("m_"),
 			role: "assistant",
 			ts: Date.now(),
 			blocks: textMode
-				? [{ type: "text", text: turn.text } as TextBlock]
-				: [...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []), ...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
+				? [...thinkingBlocks, { type: "text", text: turn.text } as TextBlock]
+				: [...thinkingBlocks, ...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []), ...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
 			...(textMode ? { textTools: calls.map((c) => c.name) } : {}),
 		};
 		messages.push(assistantMsg);

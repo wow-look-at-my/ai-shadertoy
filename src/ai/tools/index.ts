@@ -3,6 +3,10 @@
 
 import "./init_shader.ts";
 import "./edit_shader.ts";
+import "./add_pass.ts";
+import "./remove_pass.ts";
+import "./list_passes.ts";
+import "./set_output_pass.ts";
 import "./get_shader.ts";
 import "./set_uniforms.ts";
 import "./rename_shader.ts";

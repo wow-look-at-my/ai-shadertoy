@@ -21,6 +21,7 @@ registerTool({
 				prompt: { type: "string", description: "Description of the texture to generate. Prefer seamless/tileable where relevant." },
 				name: { type: "string", description: "Short name for the asset." },
 				index: { type: "integer", description: "Optional channel 0-3 to bind the result to." },
+				pass: { type: "string", description: "Pass to bind into when index is set (default: the output pass)." },
 			},
 			required: ["prompt"],
 		},
@@ -43,9 +44,12 @@ registerTool({
 		ctx.addAsset(asset);
 		const blocks: Array<TextBlock | ImageBlock> = [text(`Generated texture "${asset.name}" (${asset.width}x${asset.height}).`)];
 		const idx = Number(input["index"]);
-		if (idx >= 0 && idx <= 3) {
-			ctx.setChannel(idx, { kind: "image", assetId: asset.id, builtin: undefined, filter: "linear", wrap: "repeat" });
-			blocks[0] = text(`Generated texture "${asset.name}" and bound it to iChannel${idx}.`);
+		if (idx >= 0 && idx < ctx.renderer.maxInputs()) {
+			const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
+			if (target) {
+				ctx.setPassChannel(target.id, idx, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: "linear", wrap: "repeat" });
+				blocks[0] = text(`Generated texture "${asset.name}" and bound it to ${target.name}.iChannel${idx}.`);
+			}
 		}
 		blocks.push({ type: "image", mediaType: gen.mediaType, data: gen.dataUrl.slice(gen.dataUrl.indexOf(",") + 1) });
 		return { content: blocks };

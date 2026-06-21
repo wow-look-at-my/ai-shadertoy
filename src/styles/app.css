@@ -175,20 +175,38 @@ textarea:focus {
 /* ---- workspace ---- */
 .workspace {
 	display: grid;
-	grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.35fr) minmax(300px, 1.1fr);
+	grid-template-columns: minmax(300px, 0.8fr) minmax(440px, 1.7fr);
 	min-height: 0;
 	overflow: hidden;
 }
-.workspace > section {
+.workspace > section,
+.main-col > section {
 	min-width: 0;
 	min-height: 0;
-	border-right: 1px solid var(--line);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 }
-.workspace > section:last-child {
-	border-right: none;
+.workspace > .chat {
+	border-right: 1px solid var(--line);
+}
+/* Right column: preview stacked on top of the editor, with a draggable handle. */
+.main-col {
+	--preview-h: 48%;
+	display: grid;
+	grid-template-rows: var(--preview-h) 7px minmax(0, 1fr);
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+.v-splitter {
+	background: var(--bg-2);
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+	cursor: row-resize;
+}
+.v-splitter:hover {
+	background: var(--accent);
 }
 
 /* ---- chat ---- */
@@ -248,6 +266,29 @@ textarea:focus {
 }
 .streaming {
 	white-space: pre-wrap;
+}
+.thinking {
+	margin: 0 0 8px;
+	padding: 3px 0 3px 10px;
+	border-left: 2px solid var(--line);
+	color: var(--muted);
+	font-size: 12.5px;
+	white-space: pre-wrap;
+}
+.thinking > summary {
+	cursor: pointer;
+	font-style: italic;
+	color: var(--fg-dim);
+	list-style: none;
+}
+.thinking > summary::-webkit-details-marker {
+	display: none;
+}
+.thinking[open] > summary {
+	margin-bottom: 5px;
+}
+.thinking .md {
+	color: var(--muted);
 }
 .tool-chip {
 	font-size: 12px;
@@ -533,6 +574,209 @@ textarea.code {
 	white-space: pre-wrap;
 }
 
+/* ---- code editor header (per-pass) ---- */
+.code-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	background: var(--bg-1);
+	border-bottom: 1px solid var(--line);
+}
+.code-label {
+	font-size: 12px;
+	color: var(--fg-dim);
+}
+.code-pass {
+	max-width: 200px;
+}
+.code-fmt {
+	width: 84px;
+}
+
+/* ---- passes graph (the object graph) ---- */
+.passes {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.graph-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 7px 10px;
+	background: var(--bg-1);
+	border-bottom: 1px solid var(--line);
+}
+.graph {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	position: relative;
+	background-color: var(--bg);
+	background-image: radial-gradient(var(--bg-2) 1px, transparent 1px);
+	background-size: 22px 22px;
+	cursor: grab;
+	touch-action: none;
+}
+.graph.panning {
+	cursor: grabbing;
+}
+/* The transformed layer that pan/zoom move; nodes + edges live inside it. */
+.graph-viewport {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+	will-change: transform;
+}
+.graph-hint {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+.zoom-label {
+	font-size: 11px;
+	color: var(--fg-dim);
+	min-width: 40px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+.graph-edges {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 0;
+	pointer-events: none;
+}
+.graph-edges .edge {
+	stroke: var(--accent);
+	stroke-width: 2;
+	fill: none;
+	opacity: 0.75;
+}
+.graph-edges .edge.feedback {
+	stroke: var(--warn);
+	stroke-dasharray: 4 3;
+}
+.graph-node {
+	position: absolute;
+	width: 196px;
+	z-index: 1;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.graph-node.selected {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.graph-node.output {
+	border-color: var(--ok);
+}
+.gn-head {
+	height: 30px;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	padding: 0 4px 0 9px;
+	border-bottom: 1px solid var(--line);
+	cursor: move;
+	touch-action: none;
+}
+.gn-name {
+	font-weight: 600;
+	font-size: 13px;
+	max-width: 92px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.graph-node.output .gn-name {
+	color: var(--ok);
+}
+.gn-rename {
+	width: 108px;
+	font-size: 12px;
+	padding: 1px 4px;
+}
+.gn-head .btn.icon.tiny {
+	padding: 2px 3px;
+}
+.gn-row {
+	height: 26px;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	padding: 0 9px;
+	position: relative;
+}
+.gn-ch {
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--fg-dim);
+	width: 30px;
+	flex: none;
+}
+.gn-row .ch-sel {
+	flex: 1;
+	min-width: 0;
+	font-size: 11px;
+	padding: 2px 4px;
+}
+.gn-port {
+	position: absolute;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--accent);
+	border: 1px solid var(--bg);
+}
+.gn-row .gn-port.in {
+	left: -5px;
+	top: 50%;
+	transform: translateY(-50%);
+}
+.gn-port.out {
+	right: -5px;
+	transform: translateY(-50%);
+	background: var(--ok);
+}
+.gn-row .gn-rm {
+	padding: 1px 2px;
+	flex: none;
+	opacity: 0.6;
+}
+.gn-row .gn-rm:hover {
+	opacity: 1;
+}
+.gn-addrow {
+	height: 24px;
+	display: flex;
+	align-items: center;
+	padding: 2px 9px 4px;
+}
+.gn-addrow .btn.tiny {
+	width: 100%;
+	color: var(--fg-dim);
+	font-size: 11px;
+}
+
+/* ---- textures header (per-pass) ---- */
+.tex-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 2px;
+}
+.tex-pass {
+	flex: 1;
+	min-width: 0;
+}
+
 .uniforms,
 .textures {
 	flex: 1;
@@ -609,7 +853,7 @@ textarea.code {
 }
 .ch-row {
 	display: grid;
-	grid-template-columns: 72px 1fr auto auto;
+	grid-template-columns: 72px 1fr auto auto auto;
 	gap: 6px;
 	align-items: center;
 }
@@ -783,9 +1027,12 @@ textarea.code {
 		grid-template-columns: 1fr;
 		height: auto;
 	}
-	.workspace > section {
+	.workspace > .chat {
 		border-right: none;
 		border-bottom: 1px solid var(--line);
-		height: 80vh;
+		height: 70vh;
+	}
+	.main-col {
+		grid-template-rows: 55vh 7px 80vh;
 	}
 }

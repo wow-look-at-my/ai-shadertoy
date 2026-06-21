@@ -1,4 +1,6 @@
-// set_channel -- bind a built-in procedural texture (or clear it) to iChannel0-3.
+// set_channel -- wire one of a pass's input channels (iChannel0-3): bind a
+// built-in procedural texture, the OUTPUT of another pass (the graph edges), or
+// clear it. Use set_channel_asset for image assets.
 
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";
@@ -10,13 +12,16 @@ registerTool({
 	name: TOOL_NAMES.setChannel,
 	def: {
 		name: TOOL_NAMES.setChannel,
-		description: "Bind a built-in procedural texture, the live webcam, or clear an input channel iChannel0-3. (For uploaded images or videos, use set_channel_asset instead.)",
+		description:
+			"Wire one input channel (iChannel0, iChannel1, ...) of a pass. A pass can have as many inputs as it needs (not capped at 4) -- setting an index at or beyond the current count adds inputs. kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass into this channel (this is how you build the graph, e.g. a blur pass sampling the effect pass); kind=webcam binds the live camera (its current frame is sampled every frame, so it animates on its own); kind=none clears it. Targets the output pass by default; set `pass` to wire a different pass's input. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for uploaded/generated images or videos.",
 		parameters: {
 			type: "object",
 			properties: {
-				index: { type: "integer", description: "Channel index 0-3." },
-				kind: { type: "string", enum: ["none", "builtin", "webcam"] },
+				index: { type: "integer", description: "Channel index (0-based). Using an index at/above the current input count adds inputs." },
+				kind: { type: "string", enum: ["none", "builtin", "pass", "webcam"] },
 				builtin: { type: "string", enum: ["rgbaNoise", "grayNoise", "blue", "checker", "gradient"], description: "Required when kind=builtin." },
+				source: { type: "string", description: "Source pass name whose output feeds this channel. Required when kind=pass (may be the same pass for feedback)." },
+				pass: { type: "string", description: "Pass whose input you are wiring (default: the output pass)." },
 				filter: { type: "string", enum: ["linear", "nearest"] },
 				wrap: { type: "string", enum: ["repeat", "clamp", "mirror"] },
 			},
@@ -25,21 +30,32 @@ registerTool({
 	},
 	execute: (ctx, input) => {
 		const index = Number(input["index"]);
-		if (!(index >= 0 && index <= 3)) return { content: [text("index must be 0-3.")], isError: true };
+		if (!(index >= 0 && index < ctx.renderer.maxInputs())) return { content: [text(`index must be 0..${ctx.renderer.maxInputs() - 1}.`)], isError: true };
+		const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
+		if (!target) return { content: [text(`No pass named "${String(input["pass"])}". Use list_passes.`)], isError: true };
 		const filter = (input["filter"] as TexFilter) ?? "linear";
 		const wrap = (input["wrap"] as TexWrap) ?? "repeat";
 		const kind = String(input["kind"] ?? "none");
+
 		if (kind === "none") {
-			ctx.setChannel(index, { kind: "none", assetId: undefined, builtin: undefined });
-			return { content: [text(`iChannel${index} cleared.`)] };
+			ctx.setPassChannel(target.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
+			return { content: [text(`${target.name}.iChannel${index} cleared.`)] };
 		}
 		if (kind === "webcam") {
-			ctx.setChannel(index, { kind: "webcam", assetId: undefined, builtin: undefined, filter, wrap });
-			return { content: [text(`iChannel${index} = webcam (live camera; the user is prompted for permission). Its current frame is sampled each frame; iChannelResolution[${index}] is the camera size.`)] };
+			ctx.setPassChannel(target.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined, filter, wrap });
+			return { content: [text(`${target.name}.iChannel${index} = webcam (live camera; the user is prompted for permission). Its current frame is sampled each frame.`)] };
+		}
+		if (kind === "pass") {
+			const srcName = String(input["source"] ?? "");
+			const src = ctx.resolvePass(srcName);
+			if (!src) return { content: [text(`kind=pass needs a valid 'source' pass name. No pass named "${srcName}". Use list_passes.`)], isError: true };
+			ctx.setPassChannel(target.id, index, { kind: "pass", passId: src.id, builtin: undefined, assetId: undefined, filter, wrap });
+			const fb = src.id === target.id ? " (feedback: previous frame)" : "";
+			return { content: [text(`${target.name}.iChannel${index} = pass "${src.name}"${fb}.`)] };
 		}
 		const builtin = String(input["builtin"] ?? "") as BuiltinTexture;
 		if (!(builtin in BUILTIN_LABELS)) return { content: [text(`builtin must be one of: ${Object.keys(BUILTIN_LABELS).join(", ")}`)], isError: true };
-		ctx.setChannel(index, { kind: "builtin", builtin, filter, wrap, assetId: undefined });
-		return { content: [text(`iChannel${index} = builtin ${builtin} (${BUILTIN_LABELS[builtin]}).`)] };
+		ctx.setPassChannel(target.id, index, { kind: "builtin", builtin, filter, wrap, assetId: undefined, passId: undefined });
+		return { content: [text(`${target.name}.iChannel${index} = builtin ${builtin} (${BUILTIN_LABELS[builtin]}).`)] };
 	},
 });
