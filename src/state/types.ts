@@ -128,6 +128,10 @@ export interface Shape {
 	color: [number, number, number, number]; // RGBA 0..1 (straight; rasterized premultiplied)
 	cornerRadius: number; // 0..1 of the smaller half-extent (rounded corners; quad)
 	feather: number; // edge softness in pixels (>= 0; on top of 1px AA)
+	/** Radial falloff, 0..1. 0 = solid fill (crisp/feathered edge). >0 ramps alpha
+	 * from 1 at the centre to 0 at the edge over this fraction of the half-extent
+	 * (1 = full centre->edge gradient) -- turns the shape into a radial-gradient mask. */
+	falloff: number;
 }
 
 /** One layer in the document's back-to-front stack. A layer is its own node
@@ -263,6 +267,7 @@ export function makeShape(kind: ShapeKind, patch: Partial<Shape> = {}): Shape {
 		color: [0.9, 0.3, 0.4, 1],
 		cornerRadius: 0,
 		feather: 0,
+		falloff: 0,
 		...patch,
 	};
 }

@@ -11,6 +11,7 @@ layout(location = 0) in vec2 a_corner; // unit quad corner in [-0.5, 0.5]
 layout(location = 1) in vec4 a_box;    // xy = centre (0..1 of W,H), zw = size (fraction of W,H)
 layout(location = 2) in vec4 a_color;  // straight RGBA, 0..1
 layout(location = 3) in vec4 a_misc;   // x = rotation (rad), y = kind index, z = cornerRadius (0..1), w = feather (px)
+layout(location = 4) in vec4 a_extra;  // x = radial falloff (0..1), yzw reserved
 
 uniform vec2 uResolution;
 
@@ -20,6 +21,7 @@ out vec4 v_color;
 flat out int v_kind;
 out float v_radius;   // corner radius in pixels
 out float v_feather;  // feather in pixels
+out float v_falloff;  // radial falloff (0..1)
 
 void main() {
 	vec2 halfExtent = vec2(a_box.z * uResolution.x, a_box.w * uResolution.y) * 0.5;
@@ -37,4 +39,5 @@ void main() {
 	v_kind = int(a_misc.y + 0.5);
 	v_radius = a_misc.z * min(halfExtent.x, halfExtent.y);
 	v_feather = a_misc.w;
+	v_falloff = a_extra.x;
 }

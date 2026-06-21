@@ -132,6 +132,7 @@ function normalizeShape(raw: unknown): Shape {
 		color: [c(0, 0.9), c(1, 0.3), c(2, 0.4), c(3, 1)],
 		cornerRadius: clampNum(r.cornerRadius, 0, 1, 0),
 		feather: clampNum(r.feather, 0, 500, 0),
+		falloff: clampNum(r.falloff, 0, 1, 0),
 	});
 	if (typeof r.id === "string" && r.id) s.id = r.id;
 	return s;

@@ -37,14 +37,17 @@ export function parseShapePatch(input: Record<string, unknown>): Partial<Shape> 
 	if (cr !== undefined) patch.cornerRadius = Math.min(1, Math.max(0, cr));
 	const f = num(input["feather"]);
 	if (f !== undefined) patch.feather = Math.max(0, f);
+	const fo = num(input["falloff"]);
+	if (fo !== undefined) patch.falloff = Math.min(1, Math.max(0, fo));
 	return patch;
 }
 
 export function describeShape(s: Shape, i: number): string {
 	const deg = Math.round((s.rotation * 180) / Math.PI);
 	const col = s.color.map((c) => +c.toFixed(2)).join(", ");
-	const extra = s.kind === "quad" && s.cornerRadius > 0 ? `, corner ${s.cornerRadius.toFixed(2)}` : "";
-	return `[${i}] ${SHAPE_LABELS[s.kind]} at (${s.x.toFixed(2)}, ${s.y.toFixed(2)}) size ${s.w.toFixed(2)}x${s.h.toFixed(2)}${deg ? `, rot ${deg} deg` : ""}, rgba(${col})${extra}`;
+	const corner = s.kind === "quad" && s.cornerRadius > 0 ? `, corner ${s.cornerRadius.toFixed(2)}` : "";
+	const grad = s.falloff > 0 ? `, falloff ${s.falloff.toFixed(2)}` : "";
+	return `[${i}] ${SHAPE_LABELS[s.kind]} at (${s.x.toFixed(2)}, ${s.y.toFixed(2)}) size ${s.w.toFixed(2)}x${s.h.toFixed(2)}${deg ? `, rot ${deg} deg` : ""}, rgba(${col})${corner}${grad}`;
 }
 
 /** The shared `x/y/w/h/rotation/color/cornerRadius/feather` schema fields. */
@@ -57,4 +60,5 @@ export const SHAPE_SCHEMA_FIELDS = {
 	color: { type: "array", items: { type: "number" }, description: "Fill colour [r,g,b] or [r,g,b,a], each 0..1." },
 	cornerRadius: { type: "number", description: "Quad only: rounded-corner radius, 0..1 of the smaller half-extent." },
 	feather: { type: "number", description: "Edge softness in pixels (0 = crisp)." },
+	falloff: { type: "number", description: "Radial falloff 0..1. 0 = solid fill; >0 ramps alpha from 1 at the centre to 0 at the edge (1 = full radial gradient) -- use it to make the shape a soft mask." },
 } as const;

@@ -14,6 +14,7 @@ in vec4 v_color;
 flat in int v_kind;
 in float v_radius;
 in float v_feather;
+in float v_falloff;
 
 uniform float uOpacity; // layer opacity, folded into the geometry
 
@@ -37,8 +38,17 @@ float shapeDistance(int kind, vec2 p, vec2 halfExtent, float r) {
 
 void main() {
 	float d = shapeDistance(v_kind, v_local, v_half, v_radius);
-	float aa = fwidth(d) + 2.0 * v_feather + 1e-4;
-	float cov = clamp(0.5 - d / aa, 0.0, 1.0);
+	float cov;
+	if (v_falloff > 0.0) {
+		// Radial gradient: alpha ramps 1 at the centre -> 0 at the edge, over the
+		// inner `falloff` fraction of the half-extent. Makes the shape a soft mask.
+		float minHalf = min(v_half.x, v_half.y);
+		cov = clamp(-d / max(v_falloff * minHalf, 1e-4), 0.0, 1.0);
+	} else {
+		// Solid fill with a crisp / feathered anti-aliased edge.
+		float aa = fwidth(d) + 2.0 * v_feather + 1e-4;
+		cov = clamp(0.5 - d / aa, 0.0, 1.0);
+	}
 	float a = v_color.a * cov * uOpacity;
 	fragColor = vec4(v_color.rgb * a, a); // premultiplied alpha
 }

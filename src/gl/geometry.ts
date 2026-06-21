@@ -8,8 +8,8 @@
 import type { Shape } from "../state/types.ts";
 import { shapeKindIndex } from "./shapes.ts";
 
-// Per-instance layout: a_box(4) + a_color(4) + a_misc(4) = 12 floats.
-const FLOATS_PER_INSTANCE = 12;
+// Per-instance layout: a_box(4) + a_color(4) + a_misc(4) + a_extra(4) = 16 floats.
+const FLOATS_PER_INSTANCE = 16;
 
 // Unit quad corners in [-0.5, 0.5], drawn as a triangle strip.
 const QUAD_CORNERS = new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]);
@@ -42,7 +42,7 @@ export class GeometryBatch {
 		this.instanceBuf = gl.createBuffer()!;
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuf);
 		const stride = FLOATS_PER_INSTANCE * 4;
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < 4; i++) {
 			const loc = 1 + i;
 			gl.enableVertexAttribArray(loc);
 			gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, stride, i * 16);
@@ -101,6 +101,10 @@ export class GeometryBatch {
 			d[o + 9] = shapeKindIndex(s.kind);
 			d[o + 10] = s.cornerRadius;
 			d[o + 11] = s.feather;
+			d[o + 12] = s.falloff;
+			d[o + 13] = 0;
+			d[o + 14] = 0;
+			d[o + 15] = 0;
 		}
 	}
 

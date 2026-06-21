@@ -717,6 +717,10 @@ function shapeRow(store: Store, layer: Layer, shape: Shape, index: number): HTML
 		style.appendChild(el("span", { class: "shape-flabel" }, "round"));
 		style.appendChild(cr);
 	}
+	const fo = el("input", { class: "shape-round", type: "range", title: "Radial falloff (0 = solid, 1 = full gradient mask)", attrs: { min: "0", max: "1", step: "0.01", value: String(shape.falloff) } });
+	fo.addEventListener("input", () => upd({ falloff: Number(fo.value) }));
+	style.appendChild(el("span", { class: "shape-flabel" }, "falloff"));
+	style.appendChild(fo);
 
 	const del = el("button", { class: "btn icon tiny", title: "Delete shape", on: { click: () => store.removeShape(layer.id, shape.id) } }, icon("trash", { size: 14 }));
 	const kindLabel = el("span", { class: "shape-kind", title: "Select on canvas", on: { click: () => store.selectShape(shape.id) } }, `[${index}] ${SHAPE_LABELS[shape.kind]}`);
