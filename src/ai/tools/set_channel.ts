@@ -13,15 +13,15 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.setChannel,
 		description:
-			"Wire one input channel (iChannel0, iChannel1, ...) of a pass. A pass can have as many inputs as it needs (not capped at 4) -- setting an index at or beyond the current count adds inputs. kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass into this channel (this is how you build the graph, e.g. a blur pass sampling the effect pass); kind=webcam binds the live camera (its current frame is sampled every frame, so it animates on its own); kind=none clears it. Targets the output pass by default; set `pass` to wire a different pass's input. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for uploaded/generated images or videos.",
+			"Wire one input channel (iChannel0, iChannel1, ...) of a pass in the ACTIVE layer. A pass can have as many inputs as it needs (not capped at 4) -- setting an index at or beyond the current count adds inputs. kind=under feeds the composite of all the layers BELOW this one (transparent for the bottom layer) -- this is how a layer blends over what's underneath; kind=geometry feeds this layer's rasterized shapes (premultiplied rgba, alpha = coverage); kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass in the same layer (e.g. a blur pass sampling the effect pass); kind=webcam binds the live camera; kind=none clears it. Targets the active layer's output pass by default; set `pass` to wire a different pass. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for images or videos.",
 		parameters: {
 			type: "object",
 			properties: {
 				index: { type: "integer", description: "Channel index (0-based). Using an index at/above the current input count adds inputs." },
-				kind: { type: "string", enum: ["none", "builtin", "pass", "webcam"] },
+				kind: { type: "string", enum: ["none", "under", "geometry", "builtin", "pass", "webcam"] },
 				builtin: { type: "string", enum: ["rgbaNoise", "grayNoise", "blue", "checker", "gradient"], description: "Required when kind=builtin." },
 				source: { type: "string", description: "Source pass name whose output feeds this channel. Required when kind=pass (may be the same pass for feedback)." },
-				pass: { type: "string", description: "Pass whose input you are wiring (default: the output pass)." },
+				pass: { type: "string", description: "Pass whose input you are wiring (default: the active layer's output pass)." },
 				filter: { type: "string", enum: ["linear", "nearest"] },
 				wrap: { type: "string", enum: ["repeat", "clamp", "mirror"] },
 			},
@@ -32,7 +32,7 @@ registerTool({
 		const index = Number(input["index"]);
 		if (!(index >= 0 && index < ctx.renderer.maxInputs())) return { content: [text(`index must be 0..${ctx.renderer.maxInputs() - 1}.`)], isError: true };
 		const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
-		if (!target) return { content: [text(`No pass named "${String(input["pass"])}". Use list_passes.`)], isError: true };
+		if (!target) return { content: [text(`No pass named "${String(input["pass"])}" in the active layer. Use list_passes.`)], isError: true };
 		const filter = (input["filter"] as TexFilter) ?? "linear";
 		const wrap = (input["wrap"] as TexWrap) ?? "repeat";
 		const kind = String(input["kind"] ?? "none");
@@ -40,6 +40,11 @@ registerTool({
 		if (kind === "none") {
 			ctx.setPassChannel(target.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
 			return { content: [text(`${target.name}.iChannel${index} cleared.`)] };
+		}
+		if (kind === "under" || kind === "geometry") {
+			ctx.setPassChannel(target.id, index, { kind, assetId: undefined, builtin: undefined, passId: undefined, filter, wrap });
+			const note = kind === "under" ? "the composite of the layers below" : "this layer's rasterized geometry";
+			return { content: [text(`${target.name}.iChannel${index} = ${kind} (${note}).`)] };
 		}
 		if (kind === "webcam") {
 			ctx.setPassChannel(target.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined, filter, wrap });

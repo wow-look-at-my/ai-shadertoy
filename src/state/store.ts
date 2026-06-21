@@ -1,9 +1,11 @@
-// Central application store. Owns settings, the current project (a render graph
-// of passes), the asset library, and the renderer, and is the single place that
-// mutates state + persists it. Also implements tool execution for the agent.
+// Central application store. Owns settings, the current project (a back-to-front
+// stack of layers, each its own render graph plus geometry), the asset library,
+// and the renderer, and is the single place that mutates state + persists it.
+// Also implements tool execution for the agent.
 
-import type { Channel, ImageAsset, Pass, PassFormat, Project, Settings, Uniform } from "./types.ts";
-import { emptyChannel, makePass } from "./types.ts";
+import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
+import { emptyChannel, makeCompositeLayer, makePass, makeShape } from "./types.ts";
+import { shapeDef } from "../gl/shapes.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
@@ -14,16 +16,15 @@ import { History } from "./history.ts";
 import { debounce, uid } from "../util/misc.ts";
 import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "history" | "restore";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "selectedLayer" | "history" | "restore";
 
 /** The slice of a Project that undo/redo restores: the visible/editable state
- * (name, render graph, uniforms). The conversation log and identity/timestamps
+ * (name, layer stack, uniforms). The conversation log and identity/timestamps
  * are intentionally excluded -- you don't "undo" the chat history, and ids must
  * stay stable. Snapshots are deep-cloned on the way in and out. */
 interface ProjectSnapshot {
 	name: string;
-	passes: Pass[];
-	outputPassId: string;
+	layers: Layer[];
 	uniforms: Uniform[];
 }
 
@@ -38,9 +39,11 @@ export class Store {
 	renderer!: Renderer;
 	/** Aggregate compile state: ok when every pass compiles; log lists failures. */
 	lastCompile: CompileResult | null = null;
-	/** Per-pass compile results, keyed by pass id. */
+	/** Per-pass compile results, keyed by pass id (across all layers). */
 	passCompiles = new Map<string, CompileResult>();
-	/** Which pass the editor/inspector is focused on. */
+	/** Which layer the editor is focused on (its graph fills the Code/Passes tabs). */
+	selectedLayerId = "";
+	/** Which pass (within the active layer) the editor/inspector is focused on. */
 	selectedPassId = "";
 	busy = false;
 	/** Undo/redo over project snapshots. Reset whenever the active project
@@ -85,7 +88,7 @@ export class Store {
 			this.project = projects.find((p) => p.id === wanted) ?? projects.sort((a, b) => b.updatedAt - a.updatedAt)[0];
 		}
 		setCurrentProjectId(this.project.id);
-		this.selectedPassId = this.project.outputPassId;
+		this.resetSelection();
 		this.history = new History<ProjectSnapshot>(this.snapshot(), (s) => structuredClone(s), { limit: HISTORY_LIMIT, coalesceMs: HISTORY_COALESCE_MS });
 		this.history.setOnChange(() => this.emit("history"));
 		this.refreshProjectList(projects.length ? projects : [this.project]);
@@ -103,38 +106,82 @@ export class Store {
 		this.emit("projects", this.projects);
 	}
 
-	// ---- pass helpers -------------------------------------------------------
+	// ---- layer / pass helpers ----------------------------------------------
 
-	passById(id: string): Pass | undefined {
-		return this.project.passes.find((p) => p.id === id);
+	get layers(): Layer[] {
+		return this.project.layers;
 	}
-	passByName(name: string): Pass | undefined {
+	layerById(id: string): Layer | undefined {
+		return this.project.layers.find((l) => l.id === id);
+	}
+	/** The layer whose graph is currently being edited (top layer by default). */
+	activeLayer(): Layer {
+		return this.layerById(this.selectedLayerId) ?? this.project.layers[this.project.layers.length - 1];
+	}
+	layerOfPass(passId: string): Layer | undefined {
+		return this.project.layers.find((l) => l.passes.some((p) => p.id === passId));
+	}
+	passById(id: string): Pass | undefined {
+		for (const l of this.project.layers) {
+			const p = l.passes.find((x) => x.id === id);
+			if (p) return p;
+		}
+		return undefined;
+	}
+	/** Find a pass by name within a layer (pass names are unique per layer). */
+	passByNameIn(layer: Layer, name: string): Pass | undefined {
 		const n = name.toLowerCase();
-		return this.project.passes.find((p) => p.name.toLowerCase() === n);
+		return layer.passes.find((p) => p.name.toLowerCase() === n);
 	}
 	selectedPass(): Pass {
-		return this.passById(this.selectedPassId) ?? this.passById(this.project.outputPassId) ?? this.project.passes[0];
+		const layer = this.activeLayer();
+		const p = layer.passes.find((x) => x.id === this.selectedPassId);
+		return p ?? layer.passes.find((x) => x.id === layer.outputPassId) ?? layer.passes[0];
 	}
+
+	/** Point the selection at a valid (layer, pass) -- top layer, its output pass. */
+	private resetSelection(): void {
+		const layer = this.project.layers[this.project.layers.length - 1];
+		this.selectedLayerId = layer?.id ?? "";
+		this.selectedPassId = layer?.outputPassId ?? "";
+	}
+
+	selectLayer(id: string): void {
+		const layer = this.layerById(id);
+		if (!layer || id === this.selectedLayerId) return;
+		this.selectedLayerId = id;
+		this.selectedPassId = layer.outputPassId;
+		this.emit("selectedLayer", id);
+		this.emit("selectedPass", this.selectedPassId);
+	}
+
 	selectPass(id: string): void {
-		if (!this.passById(id) || id === this.selectedPassId) return;
+		const layer = this.layerOfPass(id);
+		if (!layer) return;
+		const changedLayer = layer.id !== this.selectedLayerId;
+		if (id === this.selectedPassId && !changedLayer) return;
+		this.selectedLayerId = layer.id;
 		this.selectedPassId = id;
+		if (changedLayer) this.emit("selectedLayer", layer.id);
 		this.emit("selectedPass", id);
 	}
 
 	// ---- renderer application ----------------------------------------------
 
 	private applyProjectToRenderer(): void {
-		this.passCompiles = this.renderer.setPasses(this.project.passes, this.project.outputPassId, this.project.uniforms);
+		this.passCompiles = this.renderer.setDocument(this.project.layers, this.project.uniforms);
 		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
-		for (const pass of this.project.passes) for (let i = 0; i < pass.channels.length; i++) void this.applyChannel(pass.id, i);
+		for (const layer of this.project.layers) for (const pass of layer.passes) for (let i = 0; i < pass.channels.length; i++) void this.applyChannel(pass.id, i);
 	}
 
 	private aggregateCompile(): CompileResult {
 		const fails: string[] = [];
-		for (const pass of this.project.passes) {
-			const c = this.passCompiles.get(pass.id);
-			if (c && !c.ok) fails.push(`[${pass.name}]\n${c.log}`);
+		for (const layer of this.project.layers) {
+			for (const pass of layer.passes) {
+				const c = this.passCompiles.get(pass.id);
+				if (c && !c.ok) fails.push(`[${layer.name}/${pass.name}]\n${c.log}`);
+			}
 		}
 		return fails.length ? { ok: false, log: fails.join("\n\n") } : { ok: true, log: "" };
 	}
@@ -150,6 +197,8 @@ export class Store {
 		const ch = pass.channels[index];
 		if (ch.kind === "none") {
 			this.renderer.clearPassChannel(passId, index);
+		} else if (ch.kind === "under" || ch.kind === "geometry") {
+			this.renderer.setPassChannelAmbient(passId, index, ch.kind, ch.filter, ch.wrap);
 		} else if (ch.kind === "builtin" && ch.builtin) {
 			this.renderer.setPassChannelBuiltin(passId, index, ch.builtin, ch.filter, ch.wrap);
 		} else if (ch.kind === "pass" && ch.passId) {
@@ -214,7 +263,7 @@ export class Store {
 
 	/** Live (uncloned) view of the undoable project slice; History clones it. */
 	private snapshot(): ProjectSnapshot {
-		return { name: this.project.name, passes: this.project.passes, outputPassId: this.project.outputPassId, uniforms: this.project.uniforms };
+		return { name: this.project.name, layers: this.project.layers, uniforms: this.project.uniforms };
 	}
 
 	/** Record the just-applied mutation into history. Call AFTER mutating
@@ -226,12 +275,12 @@ export class Store {
 	/** Restore a snapshot (from undo/redo) into the live project + renderer. */
 	private applySnapshot(s: ProjectSnapshot): void {
 		this.project.name = s.name;
-		this.project.passes = structuredClone(s.passes);
-		this.project.outputPassId = s.outputPassId;
+		this.project.layers = structuredClone(s.layers);
 		this.project.uniforms = structuredClone(s.uniforms);
-		if (!this.passById(this.selectedPassId)) this.selectedPassId = this.project.outputPassId;
+		if (!this.layerById(this.selectedLayerId) || !this.passById(this.selectedPassId)) this.resetSelection();
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
+		this.emit("selectedLayer", this.selectedLayerId);
 		this.emit("selectedPass", this.selectedPassId);
 		// Source changed out from under the editor: force the code box to refresh
 		// even if it currently has focus (a normal "project" sync won't clobber a
@@ -299,13 +348,11 @@ export class Store {
 	setUniforms(uniforms: Uniform[]): CompileResult {
 		this.project.uniforms = uniforms;
 		// Declarations changed -> every pass header changes, so recompile all.
-		this.passCompiles = this.renderer.setPasses(this.project.passes, this.project.outputPassId, uniforms);
-		this.lastCompile = this.aggregateCompile();
-		this.emit("compile", this.lastCompile);
+		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.commit("Edit uniforms", "uniforms");
 		this.touch();
-		return this.lastCompile;
+		return this.lastCompile ?? { ok: true, log: "" };
 	}
 
 	updateUniformValue(name: string, value: number[]): void {
@@ -368,13 +415,15 @@ export class Store {
 		this.touch();
 	}
 
-	// ---- pass graph mutations ----------------------------------------------
+	// ---- pass graph mutations (within a layer) ------------------------------
 
-	addPass(name: string, source = "", format: PassFormat = "rgba8"): Pass {
-		const x = this.project.passes.reduce((m, p) => Math.max(m, p.x), 0);
-		const pass = makePass(uniquePassName(this.project.passes, name), source, undefined, x ? x - 240 : 40, 60 + this.project.passes.length * 30);
+	addPass(name: string, source = "", format: PassFormat = "rgba8", layerId?: string): Pass {
+		const layer = (layerId && this.layerById(layerId)) || this.activeLayer();
+		const x = layer.passes.reduce((m, p) => Math.max(m, p.x), 0);
+		const pass = makePass(uniquePassName(layer.passes, name), source, undefined, x ? x - 240 : 40, 60 + layer.passes.length * 30);
 		pass.format = format;
-		this.project.passes.unshift(pass);
+		layer.passes.unshift(pass);
+		this.selectedLayerId = layer.id;
 		this.selectedPassId = pass.id;
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
@@ -385,19 +434,20 @@ export class Store {
 	}
 
 	removePass(passId: string): { ok: boolean; error?: string } {
-		if (this.project.passes.length <= 1) return { ok: false, error: "Cannot remove the only pass." };
-		const idx = this.project.passes.findIndex((p) => p.id === passId);
-		if (idx === -1) return { ok: false, error: "No such pass." };
-		const removedName = this.project.passes[idx].name;
-		this.project.passes.splice(idx, 1);
-		// Detach any channel referencing the removed pass.
-		for (const p of this.project.passes) {
+		const layer = this.layerOfPass(passId);
+		if (!layer) return { ok: false, error: "No such pass." };
+		if (layer.passes.length <= 1) return { ok: false, error: "Cannot remove a layer's only pass." };
+		const idx = layer.passes.findIndex((p) => p.id === passId);
+		const removedName = layer.passes[idx].name;
+		layer.passes.splice(idx, 1);
+		// Detach any channel (in this layer) referencing the removed pass.
+		for (const p of layer.passes) {
 			p.channels.forEach((c, i) => {
 				if (c.kind === "pass" && c.passId === passId) p.channels[i] = { ...c, kind: "none", passId: undefined };
 			});
 		}
-		if (this.project.outputPassId === passId) this.project.outputPassId = this.project.passes[this.project.passes.length - 1].id;
-		if (this.selectedPassId === passId) this.selectedPassId = this.project.outputPassId;
+		if (layer.outputPassId === passId) layer.outputPassId = layer.passes[layer.passes.length - 1].id;
+		if (this.selectedPassId === passId) this.selectedPassId = layer.outputPassId;
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedPass", this.selectedPassId);
@@ -407,20 +457,22 @@ export class Store {
 	}
 
 	renamePass(passId: string, name: string): void {
-		const pass = this.passById(passId);
-		if (!pass) return;
-		pass.name = uniquePassName(this.project.passes, name, passId);
+		const layer = this.layerOfPass(passId);
+		const pass = layer?.passes.find((p) => p.id === passId);
+		if (!layer || !pass) return;
+		pass.name = uniquePassName(layer.passes, name, passId);
 		this.emit("project", this.project);
 		this.commit(`Rename pass to "${pass.name}"`, `renamepass:${passId}`);
 		this.touch();
 	}
 
 	setOutputPass(passId: string): void {
-		if (!this.passById(passId)) return;
-		this.project.outputPassId = passId;
-		this.renderer.setOutputPass(passId);
+		const layer = this.layerOfPass(passId);
+		if (!layer) return;
+		layer.outputPassId = passId;
+		this.applyProjectToRenderer();
 		this.emit("project", this.project);
-		this.commit("Set output pass", "output");
+		this.commit("Set layer output pass", `output:${layer.id}`);
 		this.touch();
 	}
 
@@ -444,6 +496,120 @@ export class Store {
 		this.touch();
 	}
 
+	// ---- layer stack mutations ---------------------------------------------
+
+	/** Add a new layer ON TOP of the stack (drawn last/front). Defaults to a ready
+	 * "Composite" layer wired under->iChannel0, geometry->iChannel1 (source-over). */
+	addLayer(name = "Layer", shapes: Shape[] = []): Layer {
+		const layer = makeCompositeLayer(uniqueLayerName(this.project.layers, name), shapes);
+		this.project.layers.push(layer);
+		this.selectedLayerId = layer.id;
+		this.selectedPassId = layer.outputPassId;
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.emit("selectedLayer", layer.id);
+		this.emit("selectedPass", layer.outputPassId);
+		this.commit(`Add layer "${layer.name}"`, "addlayer");
+		this.touch();
+		return layer;
+	}
+
+	removeLayer(layerId: string): { ok: boolean; error?: string } {
+		if (this.project.layers.length <= 1) return { ok: false, error: "Cannot remove the only layer." };
+		const idx = this.project.layers.findIndex((l) => l.id === layerId);
+		if (idx === -1) return { ok: false, error: "No such layer." };
+		const name = this.project.layers[idx].name;
+		this.project.layers.splice(idx, 1);
+		if (this.selectedLayerId === layerId) this.resetSelection();
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.emit("selectedLayer", this.selectedLayerId);
+		this.emit("selectedPass", this.selectedPassId);
+		this.commit(`Remove layer "${name}"`, "removelayer");
+		this.touch();
+		return { ok: true };
+	}
+
+	/** Move a layer to a new index in the stack (0 = bottom/back). */
+	reorderLayer(layerId: string, toIndex: number): void {
+		const from = this.project.layers.findIndex((l) => l.id === layerId);
+		if (from === -1) return;
+		const to = Math.max(0, Math.min(this.project.layers.length - 1, toIndex));
+		if (to === from) return;
+		const [layer] = this.project.layers.splice(from, 1);
+		this.project.layers.splice(to, 0, layer);
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.commit(`Reorder layer "${layer.name}"`, "reorderlayer");
+		this.touch();
+	}
+
+	renameLayer(layerId: string, name: string): void {
+		const layer = this.layerById(layerId);
+		if (!layer) return;
+		layer.name = uniqueLayerName(this.project.layers, name, layerId);
+		this.emit("project", this.project);
+		this.commit(`Rename layer to "${layer.name}"`, `renamelayer:${layerId}`);
+		this.touch();
+	}
+
+	setLayerVisible(layerId: string, visible: boolean): void {
+		const layer = this.layerById(layerId);
+		if (!layer || layer.visible === visible) return;
+		layer.visible = visible;
+		this.renderer.setLayerProps(layerId, { visible });
+		this.emit("project", this.project);
+		this.commit(`${visible ? "Show" : "Hide"} layer "${layer.name}"`, `vis:${layerId}`);
+		this.touch();
+	}
+
+	setLayerOpacity(layerId: string, opacity: number): void {
+		const layer = this.layerById(layerId);
+		if (!layer) return;
+		layer.opacity = Math.max(0, Math.min(1, opacity));
+		this.renderer.setLayerProps(layerId, { opacity: layer.opacity });
+		this.emit("project", this.project);
+		this.commit(`Set "${layer.name}" opacity`, `opacity:${layerId}`, true);
+		this.touch();
+	}
+
+	// ---- shape (geometry) mutations ----------------------------------------
+
+	addShape(layerId: string, kind: ShapeKind, patch: Partial<Shape> = {}): Shape | null {
+		const layer = this.layerById(layerId);
+		if (!layer) return null;
+		const shape = makeShape(kind, { ...(shapeDef(kind)?.defaults ?? {}), ...patch });
+		layer.shapes.push(shape);
+		this.renderer.setLayerShapes(layerId, layer.shapes);
+		this.emit("project", this.project);
+		this.commit(`Add ${kind} to "${layer.name}"`, "addshape");
+		this.touch();
+		return shape;
+	}
+
+	updateShape(layerId: string, shapeId: string, patch: Partial<Shape>, coalesce = false): void {
+		const layer = this.layerById(layerId);
+		const shape = layer?.shapes.find((s) => s.id === shapeId);
+		if (!layer || !shape) return;
+		Object.assign(shape, patch);
+		this.renderer.setLayerShapes(layerId, layer.shapes);
+		this.emit("project", this.project);
+		this.commit(`Edit shape in "${layer.name}"`, `shape:${shapeId}`, coalesce);
+		this.touch();
+	}
+
+	removeShape(layerId: string, shapeId: string): void {
+		const layer = this.layerById(layerId);
+		if (!layer) return;
+		const idx = layer.shapes.findIndex((s) => s.id === shapeId);
+		if (idx === -1) return;
+		layer.shapes.splice(idx, 1);
+		this.renderer.setLayerShapes(layerId, layer.shapes);
+		this.emit("project", this.project);
+		this.commit(`Remove shape from "${layer.name}"`, "removeshape");
+		this.touch();
+	}
+
 	addAsset(asset: ImageAsset): void {
 		this.assets.push(asset);
 		void db.saveAsset(asset);
@@ -454,10 +620,12 @@ export class Store {
 		this.assets = this.assets.filter((a) => a.id !== id);
 		void db.deleteAsset(id);
 		// detach from any pass channel using it (image or video)
-		for (const p of this.project.passes) {
-			p.channels.forEach((ch, i) => {
-				if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setPassChannel(p.id, i, { kind: "none", assetId: undefined });
-			});
+		for (const layer of this.project.layers) {
+			for (const p of layer.passes) {
+				p.channels.forEach((ch, i) => {
+					if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setPassChannel(p.id, i, { kind: "none", assetId: undefined });
+				});
+			}
 		}
 		this.emit("assets", this.assets);
 	}
@@ -475,7 +643,7 @@ export class Store {
 
 	private adoptProject(p: Project): void {
 		this.project = p;
-		this.selectedPassId = p.outputPassId;
+		this.resetSelection();
 		setCurrentProjectId(p.id);
 		// History is per-project: starting fresh on the adopted project's state.
 		this.history?.reset(this.snapshot());
@@ -490,10 +658,10 @@ export class Store {
 		this.emit("project", this.project);
 	}
 
-	/** Clone the current project (passes, channels, uniforms, conversation) into a
-	 * new independent project and switch to it. Pass ids are remapped so the copy
-	 * shares no state with the original; image assets are referenced by id from
-	 * the shared library, so they need no copy. */
+	/** Clone the current project (layers, passes, channels, geometry, uniforms,
+	 * conversation) into a new independent project and switch to it. Layer/pass/
+	 * shape ids are remapped so the copy shares no state with the original; image
+	 * assets are referenced by id from the shared library, so they need no copy. */
 	async duplicateProject(): Promise<void> {
 		await this.saveProjectNow();
 		const copy = cloneProjectAsNew(this.project, uniqueProjectName(this.projects, this.project.name));
@@ -579,12 +747,15 @@ export class Store {
 			return { content: [text(`Compile FAILED. Read the log and fix it with edit_shader, then it re-renders.\n\nGLSL log (line numbers relative to each pass's source):\n${err.log}`)], isError: true };
 		}
 		const stats = this.renderer.stats();
-		const passNote = stats.passes > 1 ? ` (${stats.passes} passes)` : "";
+		const parts: string[] = [];
+		if (stats.layers > 1) parts.push(`${stats.layers} layers`);
+		if (stats.passes > 1) parts.push(`${stats.passes} passes`);
+		const note = parts.length ? ` (${parts.join(", ")})` : "";
 		if (withImage || this.settings.autoScreenshot) {
 			const shot = this.screenshotBlock();
-			return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${passNote}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
+			return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${note}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
 		}
-		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${passNote}. (No preview attached — set screenshot:true to see it now, otherwise you'll be shown the final render when you finish.)`)] };
+		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${note}. (No preview attached — set screenshot:true to see it now, otherwise you'll be shown the final render when you finish.)`)] };
 	}
 
 	// ---- tool execution: dispatch to the registry via a ToolContext ----------
@@ -595,8 +766,11 @@ export class Store {
 			project: this.project,
 			assets: this.assets,
 			renderer: this.renderer,
-			passes: () => this.project.passes,
-			outputPassId: () => this.project.outputPassId,
+			layers: () => this.project.layers,
+			activeLayerId: () => this.activeLayer().id,
+			resolveLayer: (nameOrId) => this.resolveLayer(nameOrId),
+			passes: () => this.activeLayer().passes,
+			outputPassId: () => this.activeLayer().outputPassId,
 			selectedPassId: () => this.selectedPassId,
 			resolvePass: (nameOrId) => this.resolvePass(nameOrId),
 			setPassSource: (id, s, c) => this.setPassSource(id, s, c),
@@ -608,6 +782,16 @@ export class Store {
 			selectPass: (id) => this.selectPass(id),
 			setUniforms: (u) => this.setUniforms(u),
 			setPassChannel: (id, i, p) => this.setPassChannel(id, i, p),
+			addLayer: (name, shapes) => this.addLayer(name, shapes),
+			removeLayer: (id) => this.removeLayer(id),
+			renameLayerById: (id, name) => this.renameLayer(id, name),
+			reorderLayer: (id, to) => this.reorderLayer(id, to),
+			setLayerVisible: (id, v) => this.setLayerVisible(id, v),
+			setLayerOpacity: (id, o) => this.setLayerOpacity(id, o),
+			selectLayer: (id) => this.selectLayer(id),
+			addShape: (layerId, kind, patch) => this.addShape(layerId, kind, patch),
+			updateShape: (layerId, shapeId, patch) => this.updateShape(layerId, shapeId, patch),
+			removeShape: (layerId, shapeId) => this.removeShape(layerId, shapeId),
 			renameProject: (n) => this.renameProject(n),
 			addAsset: (a) => this.addAsset(a),
 			screenshotBlock: () => this.screenshotBlock(),
@@ -616,10 +800,28 @@ export class Store {
 		};
 	}
 
-	/** Resolve a pass by id or name; default (no arg) = the output pass. */
+	/** Resolve a layer by id or name; default (no arg) = the active layer. */
+	private resolveLayer(nameOrId?: string): Layer | null {
+		if (!nameOrId) return this.activeLayer() ?? null;
+		const n = nameOrId.toLowerCase();
+		return this.layerById(nameOrId) ?? this.project.layers.find((l) => l.name.toLowerCase() === n) ?? null;
+	}
+
+	/** Resolve a pass by id or name within the active layer; default = the active
+	 * layer's output pass. Falls back to a global id/name match. */
 	private resolvePass(nameOrId?: string): Pass | null {
-		if (!nameOrId) return this.passById(this.project.outputPassId) ?? this.project.passes[0] ?? null;
-		return this.passById(nameOrId) ?? this.passByName(nameOrId) ?? null;
+		const layer = this.activeLayer();
+		if (!nameOrId) return layer.passes.find((p) => p.id === layer.outputPassId) ?? layer.passes[0] ?? null;
+		return this.passById(nameOrId) ?? this.passByNameIn(layer, nameOrId) ?? this.passByNameAnywhere(nameOrId) ?? null;
+	}
+
+	private passByNameAnywhere(name: string): Pass | undefined {
+		const n = name.toLowerCase();
+		for (const l of this.project.layers) {
+			const p = l.passes.find((x) => x.name.toLowerCase() === n);
+			if (p) return p;
+		}
+		return undefined;
 	}
 
 	async applyTool(name: string, input: unknown): Promise<ToolResult> {
@@ -630,31 +832,29 @@ export class Store {
 	}
 }
 
-/** Deep-clone a project into a brand-new one: fresh project + pass ids (with all
- * outputPassId / channel passId references remapped onto the new ids), fresh
- * timestamps, and the given name. */
+/** Deep-clone a project into a brand-new one: fresh project + layer + pass + shape
+ * ids (with all outputPassId / channel passId references remapped onto the new
+ * pass ids), fresh timestamps, and the given name. */
 function cloneProjectAsNew(src: Project, name: string): Project {
 	const clone = structuredClone(src);
-	const idMap = new Map<string, string>();
-	for (const pass of clone.passes) {
-		const fresh = uid("pass_");
-		idMap.set(pass.id, fresh);
-		pass.id = fresh;
-	}
-	for (const pass of clone.passes) {
-		for (const ch of pass.channels) {
-			if (ch.kind === "pass" && ch.passId) ch.passId = idMap.get(ch.passId) ?? ch.passId;
+	for (const layer of clone.layers) {
+		layer.id = uid("layer_");
+		const idMap = new Map<string, string>();
+		for (const pass of layer.passes) {
+			const fresh = uid("pass_");
+			idMap.set(pass.id, fresh);
+			pass.id = fresh;
 		}
+		for (const pass of layer.passes) {
+			for (const ch of pass.channels) {
+				if (ch.kind === "pass" && ch.passId) ch.passId = idMap.get(ch.passId) ?? ch.passId;
+			}
+		}
+		layer.outputPassId = idMap.get(layer.outputPassId) ?? layer.passes[layer.passes.length - 1].id;
+		for (const shape of layer.shapes) shape.id = uid("shape_");
 	}
 	const now = Date.now();
-	return {
-		...clone,
-		id: uid("p_"),
-		name,
-		outputPassId: idMap.get(src.outputPassId) ?? clone.passes[clone.passes.length - 1].id,
-		createdAt: now,
-		updatedAt: now,
-	};
+	return { ...clone, id: uid("p_"), name, createdAt: now, updatedAt: now };
 }
 
 /** "Foo" -> "Foo copy" -> "Foo copy 2" ..., stripping an existing copy suffix so
@@ -671,6 +871,15 @@ function uniqueProjectName(existing: Array<{ name: string }>, base: string): str
 function uniquePassName(passes: Pass[], base: string, exceptId?: string): string {
 	const trimmed = base.trim() || "Pass";
 	const taken = (n: string) => passes.some((p) => p.id !== exceptId && p.name.toLowerCase() === n.toLowerCase());
+	if (!taken(trimmed)) return trimmed;
+	let i = 2;
+	while (taken(`${trimmed} ${i}`)) i++;
+	return `${trimmed} ${i}`;
+}
+
+function uniqueLayerName(layers: Layer[], base: string, exceptId?: string): string {
+	const trimmed = base.trim() || "Layer";
+	const taken = (n: string) => layers.some((l) => l.id !== exceptId && l.name.toLowerCase() === n.toLowerCase());
 	if (!taken(trimmed)) return trimmed;
 	let i = 2;
 	while (taken(`${trimmed} ${i}`)) i++;

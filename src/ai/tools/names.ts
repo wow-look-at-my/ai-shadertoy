@@ -16,6 +16,16 @@ export const TOOL_NAMES = {
 	removePass: "remove_pass",
 	listPasses: "list_passes",
 	setOutputPass: "set_output_pass",
+	addLayer: "add_layer",
+	removeLayer: "remove_layer",
+	listLayers: "list_layers",
+	reorderLayer: "reorder_layer",
+	setLayer: "set_layer",
+	selectLayer: "select_layer",
+	addShape: "add_shape",
+	editShape: "edit_shape",
+	removeShape: "remove_shape",
+	listShapes: "list_shapes",
 } as const;
 
 export type ToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];

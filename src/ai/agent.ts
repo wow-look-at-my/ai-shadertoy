@@ -34,6 +34,13 @@ const RENDER_TOOLS = new Set<string>([
 	TOOL_NAMES.addPass,
 	TOOL_NAMES.removePass,
 	TOOL_NAMES.setOutputPass,
+	TOOL_NAMES.addLayer,
+	TOOL_NAMES.removeLayer,
+	TOOL_NAMES.reorderLayer,
+	TOOL_NAMES.setLayer,
+	TOOL_NAMES.addShape,
+	TOOL_NAMES.editShape,
+	TOOL_NAMES.removeShape,
 ]);
 
 /** A pending tool call awaiting the user's approval (see requiresPermission). */
