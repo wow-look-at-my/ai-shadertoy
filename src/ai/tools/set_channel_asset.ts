@@ -9,11 +9,11 @@ registerTool({
 	name: TOOL_NAMES.setChannelAsset,
 	def: {
 		name: TOOL_NAMES.setChannelAsset,
-		description: "Bind a user-uploaded or generated image asset (by name, see list_assets) to an input channel iChannel0-3. Targets the output pass by default; set `pass` to wire a different pass's input.",
+		description: "Bind a user-uploaded or generated image asset (by name, see list_assets) to an input channel (iChannel0, iChannel1, ...). A pass can have as many inputs as it needs; an index at/above the current count adds inputs. Targets the output pass by default; set `pass` to wire a different pass's input.",
 		parameters: {
 			type: "object",
 			properties: {
-				index: { type: "integer", description: "Channel index 0-3." },
+				index: { type: "integer", description: "Channel index (0-based)." },
 				asset: { type: "string", description: "Asset name from list_assets." },
 				pass: { type: "string", description: "Pass whose input you are wiring (default: the output pass)." },
 				filter: { type: "string", enum: ["linear", "nearest"] },
@@ -24,7 +24,7 @@ registerTool({
 	},
 	execute: (ctx, input) => {
 		const index = Number(input["index"]);
-		if (!(index >= 0 && index <= 3)) return { content: [text("index must be 0-3.")], isError: true };
+		if (!(index >= 0 && index < ctx.renderer.maxInputs())) return { content: [text(`index must be 0..${ctx.renderer.maxInputs() - 1}.`)], isError: true };
 		const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
 		if (!target) return { content: [text(`No pass named "${String(input["pass"])}". Use list_passes.`)], isError: true };
 		const name = String(input["asset"] ?? "");

@@ -57,7 +57,7 @@ export function buildSystemPrompt(): string {
 
 # Multi-pass render graph (this is beyond Shadertoy's fixed buffers)
 - A project is a GRAPH of passes. Each pass is a full-screen fragment shader that renders to its OWN offscreen texture at the canvas resolution. One pass is the OUTPUT (composited to the screen).
-- Each pass has its own four input channels iChannel0..3. A channel can sample: a built-in texture, an uploaded/generated image, or THE OUTPUT OF ANOTHER PASS. Wiring a pass's output into another pass's channel is how you build the pipeline (these are the graph edges).
+- Each pass has its own input channels iChannel0, iChannel1, ... -- as MANY as you need (NOT capped at 4; up to the GPU's texture-unit limit, at least 16). set_channel with an index at/above the current count just adds inputs; only the channels you actually declare exist in the shader. A channel can sample: a built-in texture, an uploaded/generated image, or THE OUTPUT OF ANOTHER PASS. Wiring a pass's output into another pass's channel is how you build the pipeline (these are the graph edges).
 - Passes execute in dependency order (a pass that samples another renders after it). If a channel samples its OWN pass, it reads that pass's PREVIOUS frame -- this is feedback (use it for trails, reaction-diffusion, progressive accumulation, fluid).
 - Use add_pass to create passes, set_channel (kind=pass) to wire them, set_output_pass to choose what's on screen, list_passes/get_shader to inspect, remove_pass to delete. edit_shader/get_shader/set_channel take an optional 'pass' name and default to the output pass.
 - Use rgba16f format for HDR intermediates (a bright effect you will blur/bloom) so highlights survive; default rgba8 is fine otherwise.
@@ -71,8 +71,9 @@ export function buildSystemPrompt(): string {
   int   iFrame           // frame counter
   vec4  iMouse           // xy = current/last pointer (pixels, y-up); zw = click pos (signed)
   vec4  iDate            // year, month, day, seconds-in-day
-  sampler2D iChannel0..3 // this pass's input textures
-  vec3  iChannelResolution[4]
+  sampler2D iChannel0, iChannel1, ...   // this pass's input textures (as many as you wire)
+  vec3  iChannelResolution[N]           // N = this pass's input count
+Only the iChannelK inputs this pass actually has are declared -- don't sample an input you haven't wired.
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
 Custom uniforms (set_uniforms) are SHARED across all passes. Built-in procedural textures you can bind to channels: ${builtins}.
 

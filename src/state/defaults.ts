@@ -1,7 +1,7 @@
 // Default settings and project factories.
 
 import type { Channel, Pass, ProviderId, Project, Settings, Uniform } from "./types.ts";
-import { defaultChannels, makePass } from "./types.ts";
+import { defaultChannels, emptyChannel, makePass, MAX_INPUTS } from "./types.ts";
 import { uid } from "../util/misc.ts";
 
 // Model presets per provider. Free-text entry is still allowed in Settings; these
@@ -81,14 +81,17 @@ interface LegacyProject {
 	outputPassId?: string;
 }
 
-function normalizeChannels(raw: unknown): [Channel, Channel, Channel, Channel] {
-	const base = defaultChannels();
-	if (!Array.isArray(raw)) return base;
-	for (let i = 0; i < 4; i++) {
+function normalizeChannels(raw: unknown): Channel[] {
+	// Variable-length input list (0..MAX_INPUTS). Legacy projects stored exactly
+	// four; those are preserved as four. A missing list defaults to four.
+	if (!Array.isArray(raw)) return defaultChannels(4);
+	const n = Math.min(raw.length, MAX_INPUTS);
+	const out: Channel[] = [];
+	for (let i = 0; i < n; i++) {
 		const c = raw[i] as Partial<Channel> | undefined;
-		if (c && typeof c === "object") base[i] = { ...base[i], ...c };
+		out.push(c && typeof c === "object" ? { ...emptyChannel(), ...c } : emptyChannel());
 	}
-	return base;
+	return out;
 }
 
 function normalizePass(raw: unknown, i: number): Pass {

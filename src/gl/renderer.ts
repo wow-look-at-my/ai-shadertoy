@@ -81,6 +81,7 @@ export class Renderer {
 
 	private floatColorBuffer = false;
 	private floatLinear = false;
+	private maxTextureUnits = 16;
 
 	private renderScale = 1;
 	private startTime = performance.now();
@@ -111,6 +112,9 @@ export class Renderer {
 		// Float render targets (HDR passes) + linear filtering of them, when available.
 		this.floatColorBuffer = !!gl.getExtension("EXT_color_buffer_float");
 		this.floatLinear = !!gl.getExtension("OES_texture_float_linear");
+		// Max input samplers per pass (WebGL2 guarantees >= 16). The data model
+		// also clamps to MAX_INPUTS; this is the hardware ceiling.
+		this.maxTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as number;
 
 		this.vao = gl.createVertexArray()!;
 		this.vert = this.compileShader(gl.VERTEX_SHADER, vertSource) ?? this.fail("vertex shader failed");
@@ -134,6 +138,11 @@ export class Renderer {
 
 	supportsFloat(): boolean {
 		return this.floatColorBuffer;
+	}
+
+	/** Hardware ceiling on input samplers per pass (>= 16 on WebGL2). */
+	maxInputs(): number {
+		return this.maxTextureUnits;
 	}
 
 	// ---- shader compilation -------------------------------------------------
@@ -165,7 +174,7 @@ export class Renderer {
 	 * is kept so the pass keeps showing its last good render. */
 	private compilePass(p: RenderPass, userSource: string): CompileResult {
 		const gl = this.gl;
-		const { source } = assembleFragment(userSource, this.uniforms);
+		const { source } = assembleFragment(userSource, this.uniforms, p.channels.length);
 		const frag = gl.createShader(gl.FRAGMENT_SHADER)!;
 		gl.shaderSource(frag, source);
 		gl.compileShader(frag);
@@ -202,13 +211,15 @@ export class Renderer {
 
 		const results = new Map<string, CompileResult>();
 		for (const spec of passes) {
+			const count = Math.min(spec.channels.length, this.maxTextureUnits);
 			let rp = this.passes.get(spec.id);
 			if (!rp) {
-				rp = { id: spec.id, name: spec.name, format: spec.format, program: null, locCache: new Map(), channels: [newSlot(), newSlot(), newSlot(), newSlot()], a: null, b: null, cur: 0, width: 0, height: 0 };
+				rp = { id: spec.id, name: spec.name, format: spec.format, program: null, locCache: new Map(), channels: Array.from({ length: count }, newSlot), a: null, b: null, cur: 0, width: 0, height: 0 };
 				this.passes.set(spec.id, rp);
 				if (this.allocW > 0) this.allocPassTargets(rp, this.allocW, this.allocH);
 			}
 			rp.name = spec.name;
+			this.reconcileSlots(rp, count);
 			if (rp.format !== spec.format) {
 				rp.format = spec.format;
 				if (this.allocW > 0) this.allocPassTargets(rp, this.allocW, this.allocH);
@@ -247,6 +258,15 @@ export class Renderer {
 		if (p.a) this.freeTarget(p.a);
 		if (p.b) this.freeTarget(p.b);
 		for (const c of p.channels) if (c.tex) gl.deleteTexture(c.tex);
+	}
+
+	/** Grow/shrink a pass's input slots to `count`, freeing dropped textures. */
+	private reconcileSlots(p: RenderPass, count: number): void {
+		while (p.channels.length < count) p.channels.push(newSlot());
+		while (p.channels.length > count) {
+			const s = p.channels.pop()!;
+			if (s.tex) this.gl.deleteTexture(s.tex);
+		}
 	}
 
 	private loc(p: RenderPass, name: string): WebGLUniformLocation | null {
@@ -315,7 +335,7 @@ export class Renderer {
 
 	private slot(passId: string, index: number): ChannelSlot | null {
 		const p = this.passes.get(passId);
-		if (!p || index < 0 || index > 3) return null;
+		if (!p || index < 0 || index >= p.channels.length) return null;
 		return p.channels[index];
 	}
 
@@ -513,7 +533,7 @@ export class Renderer {
 		this.setFloat4(p, "iDate", d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds());
 
 		const chRes: number[] = [];
-		for (let i = 0; i < 4; i++) {
+		for (let i = 0; i < p.channels.length; i++) {
 			const slot = p.channels[i];
 			const r = this.resolveChannel(slot, p, rendered);
 			gl.activeTexture(gl.TEXTURE0 + i);

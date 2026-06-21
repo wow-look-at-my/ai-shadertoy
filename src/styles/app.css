@@ -612,14 +612,37 @@ textarea.code {
 .graph {
 	flex: 1;
 	min-height: 0;
-	overflow: auto;
+	overflow: hidden;
 	position: relative;
 	background-color: var(--bg);
 	background-image: radial-gradient(var(--bg-2) 1px, transparent 1px);
 	background-size: 22px 22px;
+	cursor: grab;
+	touch-action: none;
 }
-.graph-canvas {
-	position: relative;
+.graph.panning {
+	cursor: grabbing;
+}
+/* The transformed layer that pan/zoom move; nodes + edges live inside it. */
+.graph-viewport {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+	will-change: transform;
+}
+.graph-hint {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+.zoom-label {
+	font-size: 11px;
+	color: var(--fg-dim);
+	min-width: 40px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
 }
 .graph-edges {
 	position: absolute;
@@ -719,9 +742,27 @@ textarea.code {
 }
 .gn-port.out {
 	right: -5px;
-	top: 82px;
 	transform: translateY(-50%);
 	background: var(--ok);
+}
+.gn-row .gn-rm {
+	padding: 1px 2px;
+	flex: none;
+	opacity: 0.6;
+}
+.gn-row .gn-rm:hover {
+	opacity: 1;
+}
+.gn-addrow {
+	height: 24px;
+	display: flex;
+	align-items: center;
+	padding: 2px 9px 4px;
+}
+.gn-addrow .btn.tiny {
+	width: 100%;
+	color: var(--fg-dim);
+	font-size: 11px;
 }
 
 /* ---- textures header (per-pass) ---- */
@@ -812,7 +853,7 @@ textarea.code {
 }
 .ch-row {
 	display: grid;
-	grid-template-columns: 72px 1fr auto auto;
+	grid-template-columns: 72px 1fr auto auto auto;
 	gap: 6px;
 	align-items: center;
 }

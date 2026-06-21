@@ -7,8 +7,13 @@ also wire up input textures and expose live parameters as sliders.
 
 - **No backend.** Everything runs in your browser. Your API key is stored locally
   and used only for calls you authorize.
+- **Multi-pass render graph.** Not limited to a single shader (or Shadertoy's
+  fixed buffers): build a *graph* of passes, each rendering to its own texture and
+  sampling the output of others — e.g. effect → blur X → blur Y → composite — with
+  per-pass feedback (a pass reading its own previous frame). Each pass has as many
+  inputs as the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html`
-  (~500 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
+  (~650 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
 - **Bring your own model.** Works with Anthropic (Claude) or any
   OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator
@@ -24,12 +29,28 @@ also wire up input textures and expose live parameters as sliders.
 4. The model iterates until it both compiles and looks right. You can tweak the
    code, parameters, and textures by hand at any time.
 
-The AI's tools: `init_shader` (the first shader / a full rewrite), `edit_shader`
-(targeted snippet replacements — the usual way it changes an existing shader, so
-it doesn't retype the whole thing), `set_uniforms` (live slider parameters),
+The AI's tools: `init_shader` (the first shader / a full rewrite of the output
+pass), `edit_shader` (targeted snippet replacements — the usual way it changes an
+existing shader, so it doesn't retype the whole thing), `add_pass` / `remove_pass`
+/ `list_passes` / `set_output_pass` (build and inspect the multi-pass render
+graph), `set_uniforms` (live slider parameters, shared across passes),
 `rename_shader` (rename the current shader), `set_channel` / `set_channel_asset`
-(bind textures to `iChannel0..3`), `list_assets`, `capture_screenshot`, and
-(optional) `generate_texture`.
+(wire a pass input to a built-in texture, an image, or — `kind: pass` — another
+pass's output), `list_assets`, `capture_screenshot`, and (optional)
+`generate_texture`.
+
+### Multi-pass render graph
+
+A project is a graph of **passes**. Each pass is a full-screen fragment shader
+that renders to its own offscreen texture; its inputs (`iChannel0`, `iChannel1`,
+…) can sample built-in textures, image assets, or the **output of another pass** —
+those wires are the graph edges. Passes execute in dependency order, and a channel
+pointing at its own pass reads the *previous* frame (feedback, for trails /
+accumulation / ping-pong simulation). One pass is the **output**, composited to
+the screen. Passes can use an `rgba16f` target to keep HDR values for bloom/blur.
+Edit it visually in the **Passes** tab (draggable nodes wired by their inputs), or
+let the AI build it. Inputs per pass are not capped at four — add as many as you
+need.
 
 Some tools require your approval before they take effect. When the AI calls one
 (currently `rename_shader`), the chat shows an **Approve / Deny** prompt and the
@@ -42,8 +63,9 @@ in its reply.
 ### Built-in uniforms (Shadertoy-compatible)
 
 `iResolution`, `iTime`, `iTimeDelta`, `iFrameRate`, `iFrame`, `iMouse`, `iDate`,
-`iChannel0..3`, `iChannelResolution[4]`. You only write `mainImage`; the harness
-adds `#version`, precision, the uniform declarations, and `main()`.
+`iChannel0`, `iChannel1`, … (one sampler per input the pass declares, plus a
+matching `iChannelResolution[N]`). You only write `mainImage`; the harness adds
+`#version`, precision, the uniform declarations, and `main()`.
 
 ## Setup
 
@@ -106,9 +128,11 @@ src/
   gl/                   # WebGL2 renderer, shader assembly, procedural textures
   ai/                   # provider adapters (Anthropic + OpenAI), agent loop, tools
   state/                # types, central store, IndexedDB persistence, defaults
-  ui/                   # vanilla-DOM components (chat, preview, editor, settings)
+  ui/                   # vanilla-DOM components: chat | (preview stacked over the
+                        #   editor: Code / Passes graph / Uniforms / Textures)
   util/                 # DOM helper, tiny markdown renderer, misc
-  shaders/              # default.frag.glsl (embedded into the bundle)
+  shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
+                        #   (all embedded into the bundle)
   styles/app.css
 ```
 

@@ -44,7 +44,7 @@ registerTool({
 		ctx.addAsset(asset);
 		const blocks: Array<TextBlock | ImageBlock> = [text(`Generated texture "${asset.name}" (${asset.width}x${asset.height}).`)];
 		const idx = Number(input["index"]);
-		if (idx >= 0 && idx <= 3) {
+		if (idx >= 0 && idx < ctx.renderer.maxInputs()) {
 			const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
 			if (target) {
 				ctx.setPassChannel(target.id, idx, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: "linear", wrap: "repeat" });
