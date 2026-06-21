@@ -92,6 +92,9 @@ npm run build         # ts0 build -> dist/index.html
   `Message` as `ThinkingBlock`s, and replayed **first** in `anthropicContent` —
   required, or tool-use continuations 400. The chat UI streams the summary into a
   collapsible `.thinking` block.
+- `output_config.effort` is set to `medium` (`anthropicEffort`, same model gate as
+  thinking — it 400s on Sonnet 4.5 / Haiku 4.5 and older; the server default is
+  `high`).
 - Anthropic SSE events handled: `content_block_start/delta/stop` (text, thinking,
   signature, tool input deltas), `message_delta`, `error`. OpenAI:
   `choices[].delta.content` / `.tool_calls[]`, `finish_reason`.

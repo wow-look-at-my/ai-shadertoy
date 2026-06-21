@@ -108,6 +108,14 @@ function anthropicThinking(model: string, maxTokens: number): Record<string, unk
 	return undefined;
 }
 
+// `output_config.effort` (GA, no beta header) is supported on Opus 4.5+ and
+// Sonnet 4.6 / Fable / Mythos; it 400s on Sonnet 4.5 / Haiku 4.5 and older, so
+// gate it. We set "medium" (the server default is "high") to trade some depth
+// for lower latency/cost.
+function anthropicEffort(model: string): string | undefined {
+	return /(opus-4-[5678])|sonnet-4-6|fable|mythos/i.test(model) ? "medium" : undefined;
+}
+
 async function streamAnthropic(settings: Settings, system: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
 	const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
@@ -123,6 +131,8 @@ async function streamAnthropic(settings: Settings, system: string, messages: Mes
 	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
 	if (thinking) body["thinking"] = thinking;
 	else if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
+	const effort = anthropicEffort(cfg.model);
+	if (effort) body["output_config"] = { effort };
 
 	let res: Response;
 	try {
