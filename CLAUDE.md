@@ -101,10 +101,12 @@ npm run build         # ts0 build -> dist/index.html
   `requestWebcam`, …). `store.ts` (single
   owner of state + the renderer + persistence + `applyTool`) tracks `selectedPassId`
   and exposes pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
-  `setPassSource`/`setPassChannel`/`add`+`removePassChannel`/`movePass`); `defaults.ts`
-  has `normalizeProject` which migrates legacy single-`shaderSource` projects to one
-  "Image" pass on load/import. `persist.ts` (IndexedDB for projects/assets,
-  localStorage for settings, export/import; normalizes on read).
+  `setPassSource`/`setPassChannel`/`add`+`removePassChannel`/`movePass`), plus
+  `commitMessages()` which persists in-place edits/deletes the chat UI makes to
+  `project.messages`; `defaults.ts` has `normalizeProject` which migrates legacy
+  single-`shaderSource` projects to one "Image" pass on load/import. `persist.ts`
+  (IndexedDB for projects/assets, localStorage for settings, export/import;
+  normalizes on read).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
   splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
@@ -114,7 +116,13 @@ npm run build         # ts0 build -> dist/index.html
   add/remove control — not fixed at four). UI glyphs come from `src/util/icons.ts` —
   `icon(name)` builds an inline `<svg>` (Material Design Icons path data,
   `fill: currentColor`); no emoji, no icon font, no network request. Add a new glyph
-  by inlining its `@mdi/js` path.
+  by inlining its `@mdi/js` path. The chat (`chat.ts`) shows hover **edit/delete**
+  actions on user prompts and assistant replies: delete removes a whole conversation
+  round, edit rewrites a user prompt then re-runs from there (forking the
+  conversation). The round math that keeps every `tool_use` paired with its
+  `tool_result` (an orphan 400s the next request) is pure and DOM-free in
+  `src/util/conversation.ts` (`isDeletable` / `deletionRange`) — tested by
+  `node --experimental-strip-types`.
 - `src/shaders/*.glsl` — real `.glsl` files (per the file-type rule): the editable
   `default.frag.glsl` plus the renderer's internal `fullscreen.vert.glsl` (full-screen
   triangle, shared by every pass) and `present.frag.glsl` (output blit). All embedded
