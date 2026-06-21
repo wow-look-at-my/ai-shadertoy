@@ -10,8 +10,9 @@ import type { Channel, ImageAsset } from "../../state/types.ts";
 function describeChannel(c: Channel, assets: ImageAsset[]): string {
 	if (c.kind === "none") return "empty";
 	if (c.kind === "builtin") return `builtin:${c.builtin}`;
+	if (c.kind === "webcam") return "webcam (live camera)";
 	const a = assets.find((x) => x.id === c.assetId);
-	return `image:${a?.name ?? c.assetId}`;
+	return `${c.kind === "video" ? "video" : "image"}:${a?.name ?? c.assetId}`;
 }
 
 registerTool({

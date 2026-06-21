@@ -34,8 +34,14 @@ npm run build         # ts0 build -> dist/index.html
 
 ## Architecture
 
-- `src/gl/` — `Renderer` (WebGL2, animation clock, uniforms, screenshot with
-  average-colour feedback), `wrapper.ts` (assembles the full GLSL ES 3.00 source
+- `src/gl/` — `Renderer` (WebGL2, animation clock, uniforms, the four iChannel
+  textures, screenshot with average-colour feedback). Channels are static
+  (built-in procedural / image) or **dynamic** (uploaded video / webcam): a
+  dynamic channel owns an `HTMLVideoElement`, re-uploads the current frame every
+  render tick (`updateVideoTexture` — texImage2D on first/size-change, then
+  texSubImage2D), tracks play/pause/reset, and stops its stream on teardown
+  (`setChannelVideo` / `setChannelWebcam`; `setChannelParams` changes filter/wrap
+  without reloading). `wrapper.ts` (assembles the full GLSL ES 3.00 source
   around the user's `mainImage`; emits `#line 1` so compile errors map to user
   line numbers), `textures.ts` (procedural built-ins).
 - `src/ai/` — `providers.ts` translates the neutral conversation model to/from
@@ -55,7 +61,8 @@ npm run build         # ts0 build -> dist/index.html
   `toolDefs({ imageGen, allowInitShader })` gates the offered set. Tools:
   `init_shader` (first turn / full rewrite only), `edit_shader` (forgiving
   exact-snippet replace — the primary edit path), `get_shader`, `set_uniforms`,
-  `rename_shader` (permission-gated), `set_channel`, `set_channel_asset`,
+  `rename_shader` (permission-gated), `set_channel` (built-in / webcam / clear),
+  `set_channel_asset` (bind an image OR video asset — videos animate per frame),
   `list_assets`, `capture_screenshot`, `generate_texture` (gated on image-gen).
 - **Permission-gated tools**: a tool can set `requiresPermission: true` (+ an
   optional `permissionPrompt(input)` for the prompt text) in its registration.

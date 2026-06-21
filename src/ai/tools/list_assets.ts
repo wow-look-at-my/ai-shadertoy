@@ -8,12 +8,12 @@ registerTool({
 	name: TOOL_NAMES.listAssets,
 	def: {
 		name: TOOL_NAMES.listAssets,
-		description: "List image assets available to bind to channels (uploaded by the user or previously generated).",
+		description: "List image and video assets available to bind to channels (uploaded by the user or previously generated).",
 		parameters: { type: "object", properties: {} },
 	},
 	execute: (ctx) => {
-		if (!ctx.assets.length) return { content: [text("No image assets. The user can upload one, or use generate_texture if image generation is enabled.")] };
-		const list = ctx.assets.map((a) => `- ${a.name} (${a.width}x${a.height}, ${a.source})`).join("\n");
-		return { content: [text(`Available image assets:\n${list}`)] };
+		if (!ctx.assets.length) return { content: [text("No media assets. The user can upload an image or video, or use generate_texture if image generation is enabled.")] };
+		const list = ctx.assets.map((a) => `- ${a.name} (${a.kind === "video" ? "video, " : ""}${a.width}x${a.height}, ${a.source})`).join("\n");
+		return { content: [text(`Available media assets:\n${list}`)] };
 	},
 });

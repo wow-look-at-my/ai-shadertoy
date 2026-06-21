@@ -3,7 +3,8 @@
 A single-page, **client-side** sandbox where an AI builds 2D WebGL2 fragment
 shaders with you. Describe what you want in chat; the AI writes the shader, sees
 the rendered result (screenshots) and the GLSL compile log, and iterates. It can
-also wire up input textures and expose live parameters as sliders.
+also wire up input channels (images, **videos**, the **webcam**, or procedural
+built-ins) and expose live parameters as sliders.
 
 - **No backend.** Everything runs in your browser. Your API key is stored locally
   and used only for calls you authorize.
@@ -27,8 +28,9 @@ also wire up input textures and expose live parameters as sliders.
 The AI's tools: `init_shader` (the first shader / a full rewrite), `edit_shader`
 (targeted snippet replacements — the usual way it changes an existing shader, so
 it doesn't retype the whole thing), `set_uniforms` (live slider parameters),
-`rename_shader` (rename the current shader), `set_channel` / `set_channel_asset`
-(bind textures to `iChannel0..3`), `list_assets`, `capture_screenshot`, and
+`rename_shader` (rename the current shader), `set_channel` (bind a built-in
+texture or the live webcam) / `set_channel_asset` (bind an uploaded/generated
+image or video) to `iChannel0..3`, `list_assets`, `capture_screenshot`, and
 (optional) `generate_texture`.
 
 Some tools require your approval before they take effect. When the AI calls one
@@ -44,6 +46,22 @@ in its reply.
 `iResolution`, `iTime`, `iTimeDelta`, `iFrameRate`, `iFrame`, `iMouse`, `iDate`,
 `iChannel0..3`, `iChannelResolution[4]`. You only write `mainImage`; the harness
 adds `#version`, precision, the uniform declarations, and `main()`.
+
+### Input channels (textures, video, webcam)
+
+Each of `iChannel0..3` can be bound — in the **Textures** tab or by the AI — to:
+
+- a **built-in** procedural texture (RGBA/gray/blue noise, checker, gradient),
+- an uploaded or generated **image**,
+- an uploaded **video** clip, or
+- the live **webcam**.
+
+Videos and the webcam are *dynamic*: their current frame is uploaded to the
+texture every render frame, so sampling the channel animates on its own (and
+`iChannelResolution[i]` reports the source's pixel size). Each channel has its own
+**filter** (linear/nearest) and **wrap** (repeat/clamp/mirror) controls. Webcam
+use prompts the browser for camera permission; nothing is uploaded anywhere — the
+frames stay in your GPU.
 
 ## Setup
 
@@ -80,10 +98,12 @@ for Claude models, and tokens-only (no dollar figure) for unrecognized endpoints
 
 ## Persistence & sharing
 
-Projects, conversations, and image assets are stored in **IndexedDB**; settings in
-`localStorage`. The app requests persistent storage so the browser won't evict it.
-Use **Export** / **Import** (top bar) to move everything as a single JSON file
-(API keys excluded by default).
+Projects, conversations, and media assets (images and videos) are stored in
+**IndexedDB**; settings in `localStorage`. Videos are kept inline like images, so
+prefer short, low-resolution loops (uploads are capped at 32 MB). The app requests
+persistent storage so the browser won't evict it. Use **Export** / **Import** (top
+bar) to move everything as a single JSON file (API keys excluded by default).
+Webcam channels store only the *binding* — the camera is re-requested on load.
 
 ## Develop
 

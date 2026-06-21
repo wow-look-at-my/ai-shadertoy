@@ -3,7 +3,7 @@
 
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
-import { debounce, pickFile, uid } from "../util/misc.ts";
+import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import type { BuiltinTexture, ImageAsset, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -161,22 +161,42 @@ function fixLen(u: Uniform): void {
 // ---- textures --------------------------------------------------------------
 
 function renderTextures(store: Store, container: HTMLElement): void {
+	const images = store.assets.filter((a) => a.kind !== "video");
+	const videos = store.assets.filter((a) => a.kind === "video");
+
 	const rows = [0, 1, 2, 3].map((i) => {
 		const ch = store.project.channels[i];
-		const value = ch.kind === "none" ? "none" : ch.kind === "builtin" ? `builtin:${ch.builtin}` : `image:${ch.assetId}`;
+		const value =
+			ch.kind === "none"
+				? "none"
+				: ch.kind === "builtin"
+					? `builtin:${ch.builtin}`
+					: ch.kind === "webcam"
+						? "webcam"
+						: ch.kind === "video"
+							? `video:${ch.assetId}`
+							: `image:${ch.assetId}`;
+		const opt = (v: string, label: string) => el("option", { value: v, attrs: { selected: v === value ? "selected" : undefined } }, label);
 		const sel = el(
 			"select",
 			{ class: "ch-sel" },
-			el("option", { value: "none", attrs: { selected: value === "none" ? "selected" : undefined } }, "(empty)"),
-			el("optgroup", { attrs: { label: "Built-in" } }, ...(Object.keys(BUILTIN_LABELS) as BuiltinTexture[]).map((b) => el("option", { value: `builtin:${b}`, attrs: { selected: value === `builtin:${b}` ? "selected" : undefined } }, BUILTIN_LABELS[b]))),
-			el("optgroup", { attrs: { label: "Images" } }, ...store.assets.map((a) => el("option", { value: `image:${a.id}`, attrs: { selected: value === `image:${a.id}` ? "selected" : undefined } }, a.name)), el("option", { value: "upload" }, "Upload image…")),
+			opt("none", "(empty)"),
+			opt("webcam", "Webcam (live)"),
+			el("optgroup", { attrs: { label: "Built-in" } }, ...(Object.keys(BUILTIN_LABELS) as BuiltinTexture[]).map((b) => opt(`builtin:${b}`, BUILTIN_LABELS[b]))),
+			el("optgroup", { attrs: { label: "Images" } }, ...images.map((a) => opt(`image:${a.id}`, a.name)), el("option", { value: "upload-image" }, "Upload image…")),
+			el("optgroup", { attrs: { label: "Videos" } }, ...videos.map((a) => opt(`video:${a.id}`, a.name)), el("option", { value: "upload-video" }, "Upload video…")),
 		);
-		sel.addEventListener("change", () => {
+		sel.addEventListener("change", async () => {
 			const v = sel.value;
 			if (v === "none") store.setChannel(i, { kind: "none", assetId: undefined, builtin: undefined });
+			else if (v === "webcam") store.setChannel(i, { kind: "webcam", assetId: undefined, builtin: undefined });
 			else if (v.startsWith("builtin:")) store.setChannel(i, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined });
-			else if (v === "upload") void uploadAndBind(store, i);
 			else if (v.startsWith("image:")) store.setChannel(i, { kind: "image", assetId: v.slice(6), builtin: undefined });
+			else if (v.startsWith("video:")) store.setChannel(i, { kind: "video", assetId: v.slice(6), builtin: undefined });
+			else if (v === "upload-image" || v === "upload-video") {
+				await uploadAndBind(store, i, v === "upload-video" ? "video" : "image");
+				renderTextures(store, container); // reset the select if the picker was cancelled
+			}
 		});
 
 		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.setChannel(i, { filter: val as "linear" | "nearest" }));
@@ -188,18 +208,43 @@ function renderTextures(store: Store, container: HTMLElement): void {
 	render(
 		container,
 		el("div", { class: "ch-list" }, ...rows),
-		el("p", { class: "muted small" }, "Built-in textures need no upload. Uploaded/generated images appear here and in the AI's list_assets."),
+		el("p", { class: "muted small" }, "Built-ins and the webcam need no upload. Videos animate (their current frame is sampled each frame). Uploaded images/videos also appear in the AI's list_assets."),
 	);
 }
 
-async function uploadAndBind(store: Store, channel: number): Promise<void> {
-	const file = await pickFile("image/*");
+const MAX_VIDEO_BYTES = 32 * 1024 * 1024;
+
+async function uploadAndBind(store: Store, channel: number, type: "image" | "video"): Promise<void> {
+	const file = await pickFile(type === "video" ? "video/*" : "image/*");
 	if (!file) return;
+	if (type === "video" && file.size > MAX_VIDEO_BYTES) {
+		alert(`Video is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
+		return;
+	}
 	const dataUrl = await fileToDataUrl(file);
-	const img = await loadImg(dataUrl);
-	const asset: ImageAsset = { id: uid("a_"), name: file.name.replace(/\.[^.]+$/, ""), mediaType: file.type || "image/png", dataUrl, width: img.naturalWidth, height: img.naturalHeight, source: "upload" };
+	let width: number;
+	let height: number;
+	if (type === "video") {
+		const meta = await loadVideoMeta(dataUrl);
+		width = meta.width;
+		height = meta.height;
+	} else {
+		const img = await loadImg(dataUrl);
+		width = img.naturalWidth;
+		height = img.naturalHeight;
+	}
+	const asset: ImageAsset = {
+		id: uid("a_"),
+		name: file.name.replace(/\.[^.]+$/, ""),
+		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
+		dataUrl,
+		width,
+		height,
+		source: "upload",
+		kind: type,
+	};
 	store.addAsset(asset);
-	store.setChannel(channel, { kind: "image", assetId: asset.id, builtin: undefined });
+	store.setChannel(channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined });
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -245,5 +290,15 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 		img.onload = () => resolve(img);
 		img.onerror = () => reject(new Error("decode failed"));
 		img.src = src;
+	});
+}
+function loadVideoMeta(src: string): Promise<{ width: number; height: number }> {
+	return new Promise((resolve, reject) => {
+		const v = document.createElement("video");
+		v.preload = "metadata";
+		v.muted = true;
+		v.onloadedmetadata = () => resolve({ width: v.videoWidth, height: v.videoHeight });
+		v.onerror = () => reject(new Error("video decode failed"));
+		v.src = src;
 	});
 }

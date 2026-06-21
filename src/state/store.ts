@@ -101,6 +101,27 @@ export class Store {
 			} catch {
 				this.renderer.clearChannel(index);
 			}
+		} else if (ch.kind === "video" && ch.assetId) {
+			const asset = this.assets.find((a) => a.id === ch.assetId);
+			if (!asset) {
+				this.renderer.clearChannel(index);
+				return;
+			}
+			this.renderer.setChannelVideo(index, asset.dataUrl, ch.filter, ch.wrap);
+		} else if (ch.kind === "webcam") {
+			try {
+				const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+				// The binding may have changed while we awaited the permission prompt.
+				const cur = this.project.channels[index];
+				if (cur.kind !== "webcam") {
+					for (const t of stream.getTracks()) t.stop();
+					return;
+				}
+				this.renderer.setChannelWebcam(index, stream, cur.filter, cur.wrap);
+			} catch {
+				// Permission denied or no camera: leave the channel empty.
+				this.renderer.clearChannel(index);
+			}
 		}
 	}
 
@@ -145,8 +166,17 @@ export class Store {
 	}
 
 	setChannel(index: number, patch: Partial<Channel>): void {
-		this.project.channels[index] = { ...this.project.channels[index], ...patch };
-		void this.applyChannel(index);
+		const prev = this.project.channels[index];
+		const next = { ...prev, ...patch };
+		this.project.channels[index] = next;
+		// If only the sampler params changed (same source), update them cheaply so a
+		// playing video isn't reloaded and the webcam isn't re-acquired.
+		const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin;
+		if (sourceSame && next.kind !== "none") {
+			this.renderer.setChannelParams(index, next.filter, next.wrap);
+		} else {
+			void this.applyChannel(index);
+		}
 		this.emit("project", this.project);
 		this.touch();
 	}
@@ -162,7 +192,7 @@ export class Store {
 		void db.deleteAsset(id);
 		// detach from any channel using it
 		this.project.channels.forEach((ch, i) => {
-			if (ch.kind === "image" && ch.assetId === id) this.setChannel(i, { kind: "none", assetId: undefined });
+			if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setChannel(i, { kind: "none", assetId: undefined });
 		});
 		this.emit("assets", this.assets);
 	}

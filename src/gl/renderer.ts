@@ -33,6 +33,18 @@ interface ChannelState {
 	tex: WebGLTexture | null;
 	width: number;
 	height: number;
+	/** Dynamic sources (video file / webcam) re-upload their current frame each
+	 * render tick; `video` is the backing element and `stream` (webcam) is stopped
+	 * on teardown. `uploaded` tracks whether the first full texImage2D has run so
+	 * subsequent frames can use the cheaper texSubImage2D. */
+	video: HTMLVideoElement | null;
+	stream: MediaStream | null;
+	dynamic: boolean;
+	uploaded: boolean;
+}
+
+function emptyChannel(): ChannelState {
+	return { tex: null, width: 0, height: 0, video: null, stream: null, dynamic: false, uploaded: false };
 }
 
 export class Renderer {
@@ -54,12 +66,7 @@ export class Renderer {
 	private rafId = 0;
 
 	private mouse = { x: 0, y: 0, downX: 0, downY: 0, pressed: false, everDown: false };
-	private channels: ChannelState[] = [
-		{ tex: null, width: 0, height: 0 },
-		{ tex: null, width: 0, height: 0 },
-		{ tex: null, width: 0, height: 0 },
-		{ tex: null, width: 0, height: 0 },
-	];
+	private channels: ChannelState[] = [emptyChannel(), emptyChannel(), emptyChannel(), emptyChannel()];
 
 	onStats: ((s: RenderStats) => void) | null = null;
 	onContextLost: (() => void) | null = null;
@@ -164,15 +171,92 @@ export class Renderer {
 		this.uploadChannel(index, w, h, image, filter, wrap);
 	}
 
+	/** Bind a video clip (data/object URL). The element is created here so the
+	 * renderer owns playback (kept in sync with the animation clock) and the
+	 * per-frame texture upload. */
+	setChannelVideo(index: number, url: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const v = document.createElement("video");
+		v.loop = true;
+		v.crossOrigin = "anonymous";
+		v.src = url;
+		this.attachVideo(index, v, null, filter, wrap);
+	}
+
+	/** Bind the live webcam (a MediaStream acquired by the caller). */
+	setChannelWebcam(index: number, stream: MediaStream, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const v = document.createElement("video");
+		v.srcObject = stream;
+		this.attachVideo(index, v, stream, filter, wrap);
+	}
+
+	private attachVideo(index: number, video: HTMLVideoElement, stream: MediaStream | null, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const gl = this.gl;
+		const ch = this.channels[index];
+		this.stopDynamic(ch);
+		video.muted = true;
+		video.playsInline = true;
+		video.autoplay = true;
+		if (!ch.tex) ch.tex = gl.createTexture();
+		// 1x1 black placeholder so the sampler is complete before the first frame.
+		gl.bindTexture(gl.TEXTURE_2D, ch.tex);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+		this.setTexParams(ch, filter, wrap);
+		ch.video = video;
+		ch.stream = stream;
+		ch.dynamic = true;
+		ch.uploaded = false;
+		ch.width = 0;
+		ch.height = 0;
+		if (!this.paused) void video.play().catch(() => {});
+		this.renderFrame();
+	}
+
+	/** Cheap filter/wrap update for an already-bound channel (no re-upload, so a
+	 * playing video keeps going and the webcam is not re-acquired). */
+	setChannelParams(index: number, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const ch = this.channels[index];
+		if (!ch.tex) return;
+		this.setTexParams(ch, filter, wrap);
+		this.renderFrame();
+	}
+
 	clearChannel(index: number): void {
 		const ch = this.channels[index];
+		this.stopDynamic(ch);
 		if (ch.tex) this.gl.deleteTexture(ch.tex);
-		this.channels[index] = { tex: null, width: 0, height: 0 };
+		this.channels[index] = emptyChannel();
+	}
+
+	/** Pause + detach any dynamic source on a channel and stop a webcam stream. */
+	private stopDynamic(ch: ChannelState): void {
+		if (ch.video) {
+			ch.video.pause();
+			ch.video.srcObject = null;
+			ch.video.removeAttribute("src");
+			ch.video.load();
+		}
+		if (ch.stream) for (const t of ch.stream.getTracks()) t.stop();
+		ch.video = null;
+		ch.stream = null;
+		ch.dynamic = false;
+		ch.uploaded = false;
+	}
+
+	private setTexParams(ch: ChannelState, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const gl = this.gl;
+		gl.bindTexture(gl.TEXTURE_2D, ch.tex);
+		const f = filter === "nearest" ? gl.NEAREST : gl.LINEAR;
+		const wr = wrap === "clamp" ? gl.CLAMP_TO_EDGE : wrap === "mirror" ? gl.MIRRORED_REPEAT : gl.REPEAT;
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wr);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wr);
 	}
 
 	private uploadChannel(index: number, w: number, h: number, data: Uint8Array | TexImageSource, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const gl = this.gl;
 		const ch = this.channels[index];
+		this.stopDynamic(ch);
 		if (!ch.tex) ch.tex = gl.createTexture();
 		gl.bindTexture(gl.TEXTURE_2D, ch.tex);
 		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -182,15 +266,31 @@ export class Renderer {
 			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, data);
 		}
 		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-		const f = filter === "nearest" ? gl.NEAREST : gl.LINEAR;
-		const wr = wrap === "clamp" ? gl.CLAMP_TO_EDGE : wrap === "mirror" ? gl.MIRRORED_REPEAT : gl.REPEAT;
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wr);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wr);
+		this.setTexParams(ch, filter, wrap);
 		ch.width = w;
 		ch.height = h;
 		this.renderFrame();
+	}
+
+	/** Upload the current frame of a dynamic (video/webcam) channel. Allocates GPU
+	 * storage on the first frame / a size change, then updates in place. */
+	private updateVideoTexture(ch: ChannelState): void {
+		const gl = this.gl;
+		const v = ch.video;
+		if (!v || v.readyState < 2 /* HAVE_CURRENT_DATA */ || v.videoWidth === 0) return;
+		const w = v.videoWidth;
+		const h = v.videoHeight;
+		gl.bindTexture(gl.TEXTURE_2D, ch.tex);
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+		if (!ch.uploaded || ch.width !== w || ch.height !== h) {
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+			ch.uploaded = true;
+			ch.width = w;
+			ch.height = h;
+		} else {
+			gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, v);
+		}
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 	}
 
 	// ---- playback -----------------------------------------------------------
@@ -199,11 +299,13 @@ export class Renderer {
 		if (!this.paused) return;
 		this.paused = false;
 		this.startTime += performance.now() - this.pausedAt;
+		for (const ch of this.channels) if (ch.video) void ch.video.play().catch(() => {});
 	}
 	pause(): void {
 		if (this.paused) return;
 		this.paused = true;
 		this.pausedAt = performance.now();
+		for (const ch of this.channels) if (ch.video) ch.video.pause();
 	}
 	togglePlay(): void {
 		this.paused ? this.play() : this.pause();
@@ -215,6 +317,16 @@ export class Renderer {
 		this.startTime = performance.now();
 		this.pausedAt = this.startTime;
 		this.frame = 0;
+		// Rewind seekable clips (webcam streams have no timeline to reset).
+		for (const ch of this.channels) {
+			if (ch.video && !ch.stream) {
+				try {
+					ch.video.currentTime = 0;
+				} catch {
+					/* not seekable yet */
+				}
+			}
+		}
 		this.renderFrame();
 	}
 
@@ -286,6 +398,7 @@ export class Renderer {
 		for (let i = 0; i < 4; i++) {
 			const ch = this.channels[i];
 			gl.activeTexture(gl.TEXTURE0 + i);
+			if (ch.dynamic) this.updateVideoTexture(ch);
 			gl.bindTexture(gl.TEXTURE_2D, ch.tex);
 			const l = this.loc(`iChannel${i}`);
 			if (l) gl.uniform1i(l, i);
@@ -407,6 +520,8 @@ export class Renderer {
 	destroy(): void {
 		cancelAnimationFrame(this.rafId);
 		window.removeEventListener("pointerup", this.onPointerUp);
+		// Release any video elements / webcam streams so the camera light goes off.
+		for (let i = 0; i < this.channels.length; i++) this.clearChannel(i);
 	}
 }
 

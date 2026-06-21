@@ -9,7 +9,7 @@ registerTool({
 	name: TOOL_NAMES.setChannelAsset,
 	def: {
 		name: TOOL_NAMES.setChannelAsset,
-		description: "Bind a user-uploaded or generated image asset (by name, see list_assets) to an input channel iChannel0-3.",
+		description: "Bind a user-uploaded or generated image OR video asset (by name, see list_assets) to an input channel iChannel0-3. Videos animate: their current frame is sampled each frame.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -27,7 +27,8 @@ registerTool({
 		const name = String(input["asset"] ?? "");
 		const asset = ctx.assets.find((a) => a.name === name) ?? ctx.assets.find((a) => a.id === name);
 		if (!asset) return { content: [text(`No asset named "${name}". Use list_assets.`)], isError: true };
-		ctx.setChannel(index, { kind: "image", assetId: asset.id, builtin: undefined, filter: (input["filter"] as TexFilter) ?? "linear", wrap: (input["wrap"] as TexWrap) ?? "repeat" });
-		return { content: [text(`iChannel${index} = image "${asset.name}" (${asset.width}x${asset.height}).`)] };
+		const isVideo = asset.kind === "video";
+		ctx.setChannel(index, { kind: isVideo ? "video" : "image", assetId: asset.id, builtin: undefined, filter: (input["filter"] as TexFilter) ?? "linear", wrap: (input["wrap"] as TexWrap) ?? "repeat" });
+		return { content: [text(`iChannel${index} = ${isVideo ? "video" : "image"} "${asset.name}" (${asset.width}x${asset.height}).${isVideo ? " It animates: sampling iChannel" + index + " returns the current video frame." : ""}`)] };
 	},
 });

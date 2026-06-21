@@ -20,7 +20,8 @@ function channelLine(i: number, ch: Channel, assetName?: string): string {
 	let v: string;
 	if (ch.kind === "none") v = "empty";
 	else if (ch.kind === "builtin") v = `builtin:${ch.builtin}`;
-	else v = `image:${assetName ?? ch.assetId ?? "?"}`;
+	else if (ch.kind === "webcam") v = "webcam (live camera)";
+	else v = `${ch.kind === "video" ? "video" : "image"}:${assetName ?? ch.assetId ?? "?"}`;
 	return `  iChannel${i}: ${v}`;
 }
 
@@ -54,7 +55,9 @@ export function buildSystemPrompt(): string {
   sampler2D iChannel0..3 // input textures
   vec3  iChannelResolution[4]
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
-Built-in procedural textures you can bind to channels: ${builtins}.
+
+# Channels (iChannel0..3 inputs)
+A channel can be bound to: a built-in procedural texture (${builtins}); an uploaded/generated image; an uploaded video; or the live webcam. Videos and the webcam are DYNAMIC -- their current frame is uploaded every render frame, so sampling the channel animates by itself (don't add iTime to make a video move; just sample it). iChannelResolution[i] gives each channel's pixel size (for videos/webcam it's the source resolution). Use set_channel for built-ins/webcam/clearing and set_channel_asset to bind an image or video by name (see list_assets). You cannot upload media yourself -- the user does that -- but you can bind what already exists and you can turn on the webcam.
 
 # Working style
 - Prefer doing over describing: use your tools to change the shader rather than pasting code into chat. Keep chat replies short -- a sentence or two about what you did or what you need.
@@ -97,8 +100,8 @@ const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.editShader]: "<edit_shader><old>exact snippet from the current shader</old><new>replacement</new></edit_shader>   (add <replace_all>true</replace_all> to replace every occurrence)",
 	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
 	[TOOL_NAMES.renameShader]: '<rename_shader>{"name":"Plasma Storm"}</rename_shader>   (asks the user to approve before it takes effect)',
-	[TOOL_NAMES.setChannel]: '<set_channel>{"index":0,"kind":"builtin","builtin":"rgbaNoise"}</set_channel>',
-	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>',
+	[TOOL_NAMES.setChannel]: '<set_channel>{"index":0,"kind":"builtin","builtin":"rgbaNoise"}</set_channel>   (kind: none | builtin | webcam; use set_channel_asset for images/videos)',
+	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>   (binds an image or video asset; videos animate on their own)',
 	[TOOL_NAMES.listAssets]: "<list_assets></list_assets>",
 	[TOOL_NAMES.getShader]: "<get_shader></get_shader>",
 	[TOOL_NAMES.screenshot]: "<capture_screenshot></capture_screenshot>",
