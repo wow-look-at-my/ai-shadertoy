@@ -719,9 +719,27 @@ textarea.code {
 }
 .gn-port.out {
 	right: -5px;
-	top: 82px;
 	transform: translateY(-50%);
 	background: var(--ok);
+}
+.gn-row .gn-rm {
+	padding: 1px 2px;
+	flex: none;
+	opacity: 0.6;
+}
+.gn-row .gn-rm:hover {
+	opacity: 1;
+}
+.gn-addrow {
+	height: 24px;
+	display: flex;
+	align-items: center;
+	padding: 2px 9px 4px;
+}
+.gn-addrow .btn.tiny {
+	width: 100%;
+	color: var(--fg-dim);
+	font-size: 11px;
 }
 
 /* ---- textures header (per-pass) ---- */
@@ -812,7 +830,7 @@ textarea.code {
 }
 .ch-row {
 	display: grid;
-	grid-template-columns: 72px 1fr auto auto;
+	grid-template-columns: 72px 1fr auto auto auto;
 	gap: 6px;
 	align-items: center;
 }

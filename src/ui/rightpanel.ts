@@ -129,9 +129,12 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; syn
 const NODE_W = 196;
 const HEADER_H = 30;
 const ROW_H = 26;
-const IN_Y0 = HEADER_H + ROW_H / 2;
-const OUT_Y = HEADER_H + 2 * ROW_H;
-const NODE_H = HEADER_H + 4 * ROW_H + 6;
+const ADDROW_H = 24;
+
+// Per-node geometry (input count varies, so heights/ports are computed).
+const inPortY = (i: number): number => HEADER_H + ROW_H / 2 + i * ROW_H;
+const outPortY = (pass: Pass): number => HEADER_H + (Math.max(pass.channels.length, 1) * ROW_H) / 2;
+const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + ADDROW_H + 6;
 
 function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => void): void {
 	const passes = store.project.passes;
@@ -139,7 +142,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 
 	// Edges (SVG) behind the nodes.
 	const w = Math.max(640, ...passes.map((p) => p.x + NODE_W + 60));
-	const h = Math.max(360, ...passes.map((p) => p.y + NODE_H + 60));
+	const h = Math.max(360, ...passes.map((p) => p.y + nodeHeight(p) + 60));
 	const svgNS = "http://www.w3.org/2000/svg";
 	const svg = document.createElementNS(svgNS, "svg");
 	svg.setAttribute("class", "graph-edges");
@@ -157,9 +160,9 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 				const src = byId.get(c.passId);
 				if (!src) return;
 				const sx = src.x + NODE_W;
-				const sy = src.y + OUT_Y;
+				const sy = src.y + outPortY(src);
 				const tx = tgt.x;
-				const ty = tgt.y + IN_Y0 + i * ROW_H;
+				const ty = tgt.y + inPortY(i);
 				const path = document.createElementNS(svgNS, "path");
 				const dx = Math.max(40, Math.abs(tx - sx) * 0.5);
 				path.setAttribute("d", `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`);
@@ -169,12 +172,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		}
 	};
 
-	const nodeEls = new Map<string, HTMLElement>();
-	for (const pass of passes) {
-		const node = buildNode(store, pass, select, () => drawEdges());
-		nodeEls.set(pass.id, node);
-		canvas.appendChild(node);
-	}
+	for (const pass of passes) canvas.appendChild(buildNode(store, pass, select, () => drawEdges()));
 	canvas.insertBefore(svg, canvas.firstChild);
 	drawEdges();
 
@@ -182,7 +180,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		"div",
 		{ class: "graph-toolbar" },
 		el("button", { class: "btn tiny", on: { click: () => { store.addPass("Pass", ""); } } }, "+ Add pass"),
-		el("span", { class: "muted small" }, "Drag node headers to arrange. Wire a channel to a pass output to chain effects; point a channel at its own pass for feedback."),
+		el("span", { class: "muted small" }, "Drag headers to arrange. Wire a channel to a pass output to chain effects; point one at its own pass for feedback. Add as many inputs as you need."),
 	);
 
 	render(container, toolbar, el("div", { class: "graph" }, canvas));
@@ -208,14 +206,19 @@ function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireCha
 		if (e.target === nameEl || e.target === header) store.selectPass(pass.id);
 	});
 
-	const rows = [0, 1, 2, 3].map((i) => {
+	const rows = pass.channels.map((_c, i) => {
 		const sel = channelSelect(store, pass, i, true);
-		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel);
+		const rm = el("button", { class: "btn icon tiny gn-rm", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 12 }));
+		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel, rm);
 	});
+	const atMax = pass.channels.length >= store.renderer.maxInputs();
+	const addRow = el("div", { class: "gn-addrow" }, el("button", { class: "btn tiny", attrs: { disabled: atMax ? "" : undefined }, title: atMax ? "Input limit reached" : "Add an input channel", on: { click: () => store.addPassChannel(pass.id) } }, `+ input (iChannel${pass.channels.length})`));
 
 	node.appendChild(header);
-	node.appendChild(el("div", { class: "gn-body" }, ...rows));
-	node.appendChild(el("span", { class: "gn-port out", title: "Output (sampled by other passes)" }));
+	node.appendChild(el("div", { class: "gn-body" }, ...rows, addRow));
+	const out = el("span", { class: "gn-port out", title: "Output (sampled by other passes)" });
+	out.style.top = `${outPortY(pass)}px`;
+	node.appendChild(out);
 	return node;
 }
 
@@ -388,19 +391,23 @@ function renderTextures(store: Store, container: HTMLElement): void {
 	);
 	passSel.addEventListener("change", () => store.selectPass(passSel.value));
 
-	const rows = [0, 1, 2, 3].map((i) => {
-		const ch = pass.channels[i];
+	const rows = pass.channels.map((ch, i) => {
 		const sel = channelSelect(store, pass, i, false);
 		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.setPassChannel(pass.id, i, { filter: val as "linear" | "nearest" }));
 		const wrapSel = selectFrom(["repeat", "clamp", "mirror"], ch.wrap, (val) => store.setPassChannel(pass.id, i, { wrap: val as "repeat" | "clamp" | "mirror" }));
-		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel);
+		const rm = el("button", { class: "btn icon tiny", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 14 }));
+		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel, rm);
 	});
+
+	const atMax = pass.channels.length >= store.renderer.maxInputs();
+	const addBtn = el("button", { class: "btn", attrs: { disabled: atMax ? "" : undefined }, on: { click: () => store.addPassChannel(pass.id) } }, atMax ? `Max inputs (${store.renderer.maxInputs()})` : `+ Add input (iChannel${pass.channels.length})`);
 
 	render(
 		container,
 		el("div", { class: "tex-head" }, el("span", { class: "field-label" }, "Inputs for pass"), passSel),
-		el("div", { class: "ch-list" }, ...rows),
-		el("p", { class: "muted small" }, "Bind a built-in texture, an image, or another pass's output (kind=pass) — including this pass's own previous frame for feedback."),
+		pass.channels.length ? el("div", { class: "ch-list" }, ...rows) : el("p", { class: "muted small" }, "This pass has no inputs yet."),
+		addBtn,
+		el("p", { class: "muted small" }, "Bind a built-in texture, an image, or another pass's output (kind=pass) — including this pass's own previous frame for feedback. A pass can have as many inputs as the GPU allows (≥16), not just 4."),
 	);
 }
 
