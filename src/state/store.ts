@@ -10,7 +10,7 @@ import { Renderer } from "../gl/renderer.ts";
 import type { CompileResult } from "../gl/renderer.ts";
 import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersistence, saveSettings, setCurrentProjectId } from "./persist.ts";
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
-import { debounce } from "../util/misc.ts";
+import { debounce, uid } from "../util/misc.ts";
 
 type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass";
 
@@ -354,6 +354,20 @@ export class Store {
 		this.emit("project", this.project);
 	}
 
+	/** Clone the current project (passes, channels, uniforms, conversation) into a
+	 * new independent project and switch to it. Pass ids are remapped so the copy
+	 * shares no state with the original; image assets are referenced by id from
+	 * the shared library, so they need no copy. */
+	async duplicateProject(): Promise<void> {
+		await this.saveProjectNow();
+		const copy = cloneProjectAsNew(this.project, uniqueProjectName(this.projects, this.project.name));
+		await db.saveProject(copy);
+		this.adoptProject(copy);
+		this.refreshProjectList(await db.loadProjects());
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+	}
+
 	async switchProject(id: string): Promise<void> {
 		if (id === this.project.id) return;
 		await this.saveProjectNow();
@@ -477,6 +491,44 @@ export class Store {
 		if (!tool) return { content: [text(`Unknown tool: ${name}`)], isError: true };
 		return tool.execute(this.toolContext(), (input ?? {}) as Record<string, unknown>);
 	}
+}
+
+/** Deep-clone a project into a brand-new one: fresh project + pass ids (with all
+ * outputPassId / channel passId references remapped onto the new ids), fresh
+ * timestamps, and the given name. */
+function cloneProjectAsNew(src: Project, name: string): Project {
+	const clone = structuredClone(src);
+	const idMap = new Map<string, string>();
+	for (const pass of clone.passes) {
+		const fresh = uid("pass_");
+		idMap.set(pass.id, fresh);
+		pass.id = fresh;
+	}
+	for (const pass of clone.passes) {
+		for (const ch of pass.channels) {
+			if (ch.kind === "pass" && ch.passId) ch.passId = idMap.get(ch.passId) ?? ch.passId;
+		}
+	}
+	const now = Date.now();
+	return {
+		...clone,
+		id: uid("p_"),
+		name,
+		outputPassId: idMap.get(src.outputPassId) ?? clone.passes[clone.passes.length - 1].id,
+		createdAt: now,
+		updatedAt: now,
+	};
+}
+
+/** "Foo" -> "Foo copy" -> "Foo copy 2" ..., stripping an existing copy suffix so
+ * duplicating a copy doesn't pile up ("Foo copy" -> "Foo copy 2", not "copy copy"). */
+function uniqueProjectName(existing: Array<{ name: string }>, base: string): string {
+	const root = base.replace(/ copy(?: \d+)?$/i, "").trim() || "Untitled shader";
+	const taken = (n: string) => existing.some((p) => p.name.toLowerCase() === n.toLowerCase());
+	if (!taken(`${root} copy`)) return `${root} copy`;
+	let i = 2;
+	while (taken(`${root} copy ${i}`)) i++;
+	return `${root} copy ${i}`;
 }
 
 function uniquePassName(passes: Pass[], base: string, exceptId?: string): string {
