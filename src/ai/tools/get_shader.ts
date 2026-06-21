@@ -11,8 +11,9 @@ function describeChannel(c: Channel, assets: ImageAsset[], passes: Pass[]): stri
 	if (c.kind === "none") return "empty";
 	if (c.kind === "builtin") return `builtin:${c.builtin}`;
 	if (c.kind === "pass") return `pass:${passes.find((p) => p.id === c.passId)?.name ?? c.passId}`;
+	if (c.kind === "webcam") return "webcam";
 	const a = assets.find((x) => x.id === c.assetId);
-	return `image:${a?.name ?? c.assetId}`;
+	return `${c.kind === "video" ? "video" : "image"}:${a?.name ?? c.assetId}`;
 }
 
 function graphSummary(ctx: ToolContext): string {

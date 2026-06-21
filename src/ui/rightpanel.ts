@@ -6,7 +6,8 @@
 
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
-import { debounce, pickFile, uid } from "../util/misc.ts";
+import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
+import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import type { BuiltinTexture, Channel, ImageAsset, Pass, PassFormat, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -392,6 +393,8 @@ function channelValue(ch: Channel): string {
 	if (ch.kind === "none") return "none";
 	if (ch.kind === "builtin") return `builtin:${ch.builtin}`;
 	if (ch.kind === "pass") return `pass:${ch.passId}`;
+	if (ch.kind === "webcam") return "webcam";
+	if (ch.kind === "video") return `video:${ch.assetId}`;
 	return `image:${ch.assetId}`;
 }
 
@@ -402,25 +405,29 @@ function channelSelect(store: Store, pass: Pass, index: number, compact: boolean
 	const value = channelValue(ch);
 	// All passes are selectable as a source, including this pass itself (feedback).
 	const sourcePasses = store.project.passes;
+	const images = store.assets.filter((a) => a.kind !== "video");
+	const videos = store.assets.filter((a) => a.kind === "video");
+	const opt = (v: string, label: string) => el("option", { value: v, attrs: { selected: v === value ? "selected" : undefined } }, label);
 	const sel = el(
 		"select",
 		{ class: "ch-sel" },
-		el("option", { value: "none", attrs: { selected: value === "none" ? "selected" : undefined } }, compact ? "—" : "(empty)"),
-		el(
-			"optgroup",
-			{ attrs: { label: "Passes" } },
-			...sourcePasses.map((p) => el("option", { value: `pass:${p.id}`, attrs: { selected: value === `pass:${p.id}` ? "selected" : undefined } }, p.id === pass.id ? `${p.name} (feedback)` : p.name)),
-		),
-		el("optgroup", { attrs: { label: "Built-in" } }, ...(Object.keys(BUILTIN_LABELS) as BuiltinTexture[]).map((b) => el("option", { value: `builtin:${b}`, attrs: { selected: value === `builtin:${b}` ? "selected" : undefined } }, BUILTIN_LABELS[b]))),
-		el("optgroup", { attrs: { label: "Images" } }, ...store.assets.map((a) => el("option", { value: `image:${a.id}`, attrs: { selected: value === `image:${a.id}` ? "selected" : undefined } }, a.name)), el("option", { value: "upload" }, "Upload image…")),
+		opt("none", compact ? "—" : "(empty)"),
+		opt("webcam", compact ? "Webcam" : "Webcam (live)"),
+		el("optgroup", { attrs: { label: "Passes" } }, ...sourcePasses.map((p) => opt(`pass:${p.id}`, p.id === pass.id ? `${p.name} (feedback)` : p.name))),
+		el("optgroup", { attrs: { label: "Built-in" } }, ...(Object.keys(BUILTIN_LABELS) as BuiltinTexture[]).map((b) => opt(`builtin:${b}`, BUILTIN_LABELS[b]))),
+		el("optgroup", { attrs: { label: "Images" } }, ...images.map((a) => opt(`image:${a.id}`, a.name)), el("option", { value: "upload-image" }, "Upload image…")),
+		el("optgroup", { attrs: { label: "Videos" } }, ...videos.map((a) => opt(`video:${a.id}`, a.name)), el("option", { value: "upload-video" }, "Upload video…")),
 	);
 	sel.addEventListener("change", () => {
 		const v = sel.value;
 		if (v === "none") store.setPassChannel(pass.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v === "webcam") store.setPassChannel(pass.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined });
 		else if (v.startsWith("pass:")) store.setPassChannel(pass.id, index, { kind: "pass", passId: v.slice(5), builtin: undefined, assetId: undefined });
 		else if (v.startsWith("builtin:")) store.setPassChannel(pass.id, index, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined, passId: undefined });
-		else if (v === "upload") void uploadAndBind(store, pass.id, index);
+		else if (v === "upload-image") void uploadAndBind(store, pass.id, index, "image");
+		else if (v === "upload-video") void uploadAndBind(store, pass.id, index, "video");
 		else if (v.startsWith("image:")) store.setPassChannel(pass.id, index, { kind: "image", assetId: v.slice(6), builtin: undefined, passId: undefined });
+		else if (v.startsWith("video:")) store.setPassChannel(pass.id, index, { kind: "video", assetId: v.slice(6), builtin: undefined, passId: undefined });
 	});
 	return sel;
 }
@@ -527,18 +534,39 @@ function renderTextures(store: Store, container: HTMLElement): void {
 		el("div", { class: "tex-head" }, el("span", { class: "field-label" }, "Inputs for pass"), passSel),
 		pass.channels.length ? el("div", { class: "ch-list" }, ...rows) : el("p", { class: "muted small" }, "This pass has no inputs yet."),
 		addBtn,
-		el("p", { class: "muted small" }, "Bind a built-in texture, an image, or another pass's output (kind=pass) — including this pass's own previous frame for feedback. A pass can have as many inputs as the GPU allows (≥16), not just 4."),
+		el("p", { class: "muted small" }, "Bind a built-in texture, an image, a video, the live webcam, or another pass's output (kind=pass) — including this pass's own previous frame for feedback. Videos and the webcam animate (their current frame is sampled each frame). A pass can have as many inputs as the GPU allows (≥16), not just 4."),
 	);
 }
 
-async function uploadAndBind(store: Store, passId: string, channel: number): Promise<void> {
-	const file = await pickFile("image/*");
+async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<void> {
+	const file = await pickFile(type === "video" ? "video/*" : "image/*");
 	if (!file) return;
+	if (type === "video" && file.size > MAX_VIDEO_BYTES) {
+		alert(`Video is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
+		return;
+	}
 	const dataUrl = await fileToDataUrl(file);
-	const img = await loadImg(dataUrl);
-	const asset: ImageAsset = { id: uid("a_"), name: file.name.replace(/\.[^.]+$/, ""), mediaType: file.type || "image/png", dataUrl, width: img.naturalWidth, height: img.naturalHeight, source: "upload" };
+	let width: number;
+	let height: number;
+	if (type === "video") {
+		({ width, height } = await loadVideoMeta(dataUrl));
+	} else {
+		const img = await loadImageEl(dataUrl);
+		width = img.naturalWidth;
+		height = img.naturalHeight;
+	}
+	const asset: ImageAsset = {
+		id: uid("a_"),
+		name: file.name.replace(/\.[^.]+$/, ""),
+		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
+		dataUrl,
+		width,
+		height,
+		source: "upload",
+		kind: type,
+	};
 	store.addAsset(asset);
-	store.setPassChannel(passId, channel, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined });
+	store.setPassChannel(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -569,20 +597,4 @@ function hexToRgb(hex: string): number[] {
 	const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
 	if (!m) return [0, 0, 0];
 	return [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255];
-}
-function fileToDataUrl(file: File): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const r = new FileReader();
-		r.onload = () => resolve(r.result as string);
-		r.onerror = () => reject(new Error("read failed"));
-		r.readAsDataURL(file);
-	});
-}
-function loadImg(src: string): Promise<HTMLImageElement> {
-	return new Promise((resolve, reject) => {
-		const img = new Image();
-		img.onload = () => resolve(img);
-		img.onerror = () => reject(new Error("decode failed"));
-		img.src = src;
-	});
 }

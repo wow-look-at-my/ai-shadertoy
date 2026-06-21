@@ -58,14 +58,16 @@ export interface Uniform {
 	label?: string;
 }
 
-export type ChannelKind = "none" | "image" | "builtin" | "pass";
+// "video"/"webcam" are DYNAMIC: a live video element whose current frame is
+// uploaded to the channel texture every render tick (see gl/dynamictexture.ts).
+export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam";
 export type BuiltinTexture = "rgbaNoise" | "grayNoise" | "checker" | "gradient" | "blue";
 export type TexFilter = "linear" | "nearest";
 export type TexWrap = "repeat" | "clamp" | "mirror";
 
 export interface Channel {
 	kind: ChannelKind;
-	assetId?: string; // when kind === "image"
+	assetId?: string; // when kind === "image" or "video"
 	builtin?: BuiltinTexture; // when kind === "builtin"
 	passId?: string; // when kind === "pass": the pass whose output feeds this channel
 	filter: TexFilter;
@@ -98,6 +100,9 @@ export interface Pass {
 	y: number;
 }
 
+// A bindable media asset: a still image or (kind === "video") a clip sampled per
+// frame. Both are stored inline as a data URL so they persist/export with the
+// project. The webcam is a live channel with no asset.
 export interface ImageAsset {
 	id: string;
 	name: string;
@@ -106,6 +111,8 @@ export interface ImageAsset {
 	width: number;
 	height: number;
 	source: "upload" | "generated";
+	/** Absent (legacy) or "image" for stills; "video" for clips sampled per frame. */
+	kind?: "image" | "video";
 	prompt?: string;
 }
 

@@ -1,4 +1,5 @@
-// set_channel_asset -- bind a user-uploaded or generated image asset to a channel.
+// set_channel_asset -- bind a user-uploaded or generated image OR video asset to
+// a channel. Videos animate: their current frame is sampled every frame.
 
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";
@@ -9,7 +10,7 @@ registerTool({
 	name: TOOL_NAMES.setChannelAsset,
 	def: {
 		name: TOOL_NAMES.setChannelAsset,
-		description: "Bind a user-uploaded or generated image asset (by name, see list_assets) to an input channel (iChannel0, iChannel1, ...). A pass can have as many inputs as it needs; an index at/above the current count adds inputs. Targets the output pass by default; set `pass` to wire a different pass's input.",
+		description: "Bind a user-uploaded or generated image OR video asset (by name, see list_assets) to an input channel (iChannel0, iChannel1, ...). Videos animate: their current frame is sampled each frame. A pass can have as many inputs as it needs; an index at/above the current count adds inputs. Targets the output pass by default; set `pass` to wire a different pass's input.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -30,7 +31,8 @@ registerTool({
 		const name = String(input["asset"] ?? "");
 		const asset = ctx.assets.find((a) => a.name === name) ?? ctx.assets.find((a) => a.id === name);
 		if (!asset) return { content: [text(`No asset named "${name}". Use list_assets.`)], isError: true };
-		ctx.setPassChannel(target.id, index, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: (input["filter"] as TexFilter) ?? "linear", wrap: (input["wrap"] as TexWrap) ?? "repeat" });
-		return { content: [text(`${target.name}.iChannel${index} = image "${asset.name}" (${asset.width}x${asset.height}).`)] };
+		const isVideo = asset.kind === "video";
+		ctx.setPassChannel(target.id, index, { kind: isVideo ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: (input["filter"] as TexFilter) ?? "linear", wrap: (input["wrap"] as TexWrap) ?? "repeat" });
+		return { content: [text(`${target.name}.iChannel${index} = ${isVideo ? "video" : "image"} "${asset.name}" (${asset.width}x${asset.height}).${isVideo ? " It animates: sampling this channel returns the current video frame." : ""}`)] };
 	},
 });

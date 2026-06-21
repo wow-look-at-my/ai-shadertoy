@@ -20,7 +20,8 @@ function channelDesc(ch: Channel, passes: Pass[]): string {
 	if (ch.kind === "none") return "empty";
 	if (ch.kind === "builtin") return `builtin:${ch.builtin}`;
 	if (ch.kind === "pass") return `pass:${passes.find((p) => p.id === ch.passId)?.name ?? ch.passId}`;
-	return `image:${ch.assetId ?? "?"}`;
+	if (ch.kind === "webcam") return "webcam";
+	return `${ch.kind === "video" ? "video" : "image"}:${ch.assetId ?? "?"}`;
 }
 
 function passSummary(p: Project): string {
@@ -57,7 +58,7 @@ export function buildSystemPrompt(): string {
 
 # Multi-pass render graph (this is beyond Shadertoy's fixed buffers)
 - A project is a GRAPH of passes. Each pass is a full-screen fragment shader that renders to its OWN offscreen texture at the canvas resolution. One pass is the OUTPUT (composited to the screen).
-- Each pass has its own input channels iChannel0, iChannel1, ... -- as MANY as you need (NOT capped at 4; up to the GPU's texture-unit limit, at least 16). set_channel with an index at/above the current count just adds inputs; only the channels you actually declare exist in the shader. A channel can sample: a built-in texture, an uploaded/generated image, or THE OUTPUT OF ANOTHER PASS. Wiring a pass's output into another pass's channel is how you build the pipeline (these are the graph edges).
+- Each pass has its own input channels iChannel0, iChannel1, ... -- as MANY as you need (NOT capped at 4; up to the GPU's texture-unit limit, at least 16). set_channel with an index at/above the current count just adds inputs; only the channels you actually declare exist in the shader. A channel can sample: a built-in texture, an uploaded/generated image, an uploaded VIDEO, the live WEBCAM, or THE OUTPUT OF ANOTHER PASS. Wiring a pass's output into another pass's channel is how you build the pipeline (these are the graph edges). Video and webcam channels are DYNAMIC -- their current frame is uploaded every render frame, so sampling them animates by itself (don't add iTime to make a video move; just sample it). Bind a video with set_channel_asset (it's an asset) and the webcam with set_channel kind=webcam; you cannot upload media yourself (the user does), but you can wire what exists and turn on the webcam.
 - Passes execute in dependency order (a pass that samples another renders after it). If a channel samples its OWN pass, it reads that pass's PREVIOUS frame -- this is feedback (use it for trails, reaction-diffusion, progressive accumulation, fluid).
 - Use add_pass to create passes, set_channel (kind=pass) to wire them, set_output_pass to choose what's on screen, list_passes/get_shader to inspect, remove_pass to delete. edit_shader/get_shader/set_channel take an optional 'pass' name and default to the output pass.
 - Use rgba16f format for HDR intermediates (a bright effect you will blur/bloom) so highlights survive; default rgba8 is fine otherwise.
@@ -121,8 +122,8 @@ const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.setOutputPass]: '<set_output_pass>{"pass":"Image"}</set_output_pass>',
 	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
 	[TOOL_NAMES.renameShader]: '<rename_shader>{"name":"Plasma Storm"}</rename_shader>   (asks the user to approve before it takes effect)',
-	[TOOL_NAMES.setChannel]: '<set_channel>{"pass":"Image","index":0,"kind":"pass","source":"BlurY"}</set_channel>   (kind: none | builtin | pass; "source" is the pass name when kind=pass)',
-	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>',
+	[TOOL_NAMES.setChannel]: '<set_channel>{"pass":"Image","index":0,"kind":"pass","source":"BlurY"}</set_channel>   (kind: none | builtin | pass | webcam; "source" is the pass name when kind=pass)',
+	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>   (binds an image or video asset; videos animate on their own)',
 	[TOOL_NAMES.listAssets]: "<list_assets></list_assets>",
 	[TOOL_NAMES.getShader]: "<get_shader><pass>Effect</pass></get_shader>   (<pass> optional, defaults to the output pass)",
 	[TOOL_NAMES.screenshot]: "<capture_screenshot></capture_screenshot>",

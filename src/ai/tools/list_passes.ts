@@ -11,7 +11,8 @@ function chan(c: Channel, ctx: ToolContext): string | null {
 	if (c.kind === "none") return null;
 	if (c.kind === "builtin") return `builtin:${c.builtin}`;
 	if (c.kind === "pass") return `pass:${ctx.passes().find((p) => p.id === c.passId)?.name ?? c.passId}`;
-	return `image:${ctx.assets.find((a) => a.id === c.assetId)?.name ?? c.assetId}`;
+	if (c.kind === "webcam") return "webcam";
+	return `${c.kind === "video" ? "video" : "image"}:${ctx.assets.find((a) => a.id === c.assetId)?.name ?? c.assetId}`;
 }
 
 registerTool({
