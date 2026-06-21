@@ -71,12 +71,20 @@ npm run build         # ts0 build -> dist/index.html
   message. `init_shader` is recomputed each iteration so it drops out once the
   shader is authored.
 - `src/state/` — `types.ts` (provider-neutral content-block conversation model),
-  `store.ts` (single owner of state + persistence + `applyTool`), `persist.ts`
-  (IndexedDB for projects/assets, localStorage for settings, export/import).
+  `store.ts` (single owner of state + persistence + `applyTool`; `commitMessages()`
+  persists in-place edits/deletes the chat UI makes to `project.messages`),
+  `persist.ts` (IndexedDB for projects/assets, localStorage for settings,
+  export/import).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   UI glyphs come from `src/util/icons.ts` — `icon(name)` builds an inline
   `<svg>` (Material Design Icons path data, `fill: currentColor`); no emoji, no
   icon font, no network request. Add a new glyph by inlining its `@mdi/js` path.
+  The chat (`chat.ts`) shows hover **edit/delete** actions on user prompts and
+  assistant replies: delete removes a whole conversation round, edit rewrites a
+  user prompt then re-runs from there (forking the conversation). The round math
+  that keeps every `tool_use` paired with its `tool_result` (an orphan 400s the
+  next request) is pure and DOM-free in `src/util/conversation.ts`
+  (`isDeletable` / `deletionRange`) — tested by `node --experimental-strip-types`.
 - `src/shaders/*.glsl` — kept as real `.glsl` files (per the file-type rule),
   embedded into the single-file bundle by ts0's fetch interceptor and loaded at
   runtime via `fetch(new URL(...))`.

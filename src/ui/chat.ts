@@ -6,6 +6,7 @@ import { append, clear, el } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
+import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
 import { hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
@@ -85,6 +86,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		stopBtn.hidden = !b;
 		sendBtn.hidden = !!b;
 		input.disabled = !!b;
+		list.classList.toggle("busy", !!b); // hide per-message edit/delete actions mid-run
 	});
 
 	// Only rebuild the whole conversation when the project itself changes
@@ -102,7 +104,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		if (!store.project.messages.length) {
 			append(list, [el("div", { class: "chat-hint" }, el("p", {}, "Tell the AI what to build. It writes the shader, sees the result, and iterates."), el("p", { class: "muted" }, "Examples: ", el("em", {}, "“a swirling plasma in purples and gold”, “raymarched torus with soft shadows”, “animated checkerboard floor”")))]);
 		} else {
-			for (const m of store.project.messages) list.appendChild(messageEl(m));
+			for (const m of store.project.messages) list.appendChild(renderMessage(m));
 		}
 		scroll();
 	}
@@ -176,16 +178,96 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		});
 	}
 
-	async function send(): Promise<void> {
-		const value = input.value.trim();
-		if (!value) return;
-		// Anthropic always needs a key; OpenAI-compatible endpoints may be keyless
-		// (e.g. a local Ollama server), so don't block those.
+	// Anthropic always needs a key; OpenAI-compatible endpoints may be keyless
+	// (e.g. a local Ollama server), so don't block those.
+	function ensureReady(): boolean {
 		if (store.settings.chat.provider === "anthropic" && !store.settings.chat.apiKey) {
 			alert("Add your API key in Settings first.");
 			deps.openSettings();
-			return;
+			return false;
 		}
+		return true;
+	}
+
+	// ---- per-message edit / delete -----------------------------------------
+	// Only real user prompts and assistant replies get edit/delete controls; the
+	// auto-generated tool-result / tool-output rows are swept along with them. The
+	// round math -- which keeps tool_use/tool_result pairs intact -- lives in
+	// util/conversation.ts (isDeletable / deletionRange) so it stays testable.
+
+	function renderMessage(m: Message): HTMLElement {
+		const node = messageEl(m);
+		if (isDeletable(m)) {
+			const buttons: HTMLElement[] = [];
+			if (m.role === "user" && !m.toolOutput) {
+				buttons.push(el("button", { class: "msg-act", title: "Edit & resend", on: { click: () => beginEdit(node, m) } }, icon("pencil", { size: 14 })));
+			}
+			buttons.push(el("button", { class: "msg-act", title: "Delete", on: { click: () => deleteMessage(m) } }, icon("trash", { size: 14 })));
+			node.appendChild(el("div", { class: "msg-actions" }, ...buttons));
+		}
+		return node;
+	}
+
+	function deleteMessage(m: Message): void {
+		if (store.busy) return;
+		const range = deletionRange(store.project.messages, m.id);
+		if (!range) return;
+		const what = range.count > 1 ? "this message and its responses" : "this message";
+		if (!confirm(`Delete ${what}? This cannot be undone.`)) return;
+		store.project.messages.splice(range.start, range.count);
+		store.commitMessages();
+		renderAll();
+	}
+
+	// Edit a user prompt and re-run from there: editing forks the conversation, so
+	// everything after the edited message is dropped and the agent regenerates.
+	function beginEdit(node: HTMLElement, m: Message): void {
+		if (store.busy) return;
+		const i = store.project.messages.findIndex((x) => x.id === m.id);
+		if (i === -1) return;
+		const ta = el("textarea", { class: "msg-edit-input", attrs: { rows: "3" } });
+		ta.value = m.blocks.filter((b): b is TextBlock => b.type === "text").map((b) => b.text).join("\n");
+		const save = el("button", { class: "btn primary tiny" }, "Save & resend");
+		const cancel = el("button", { class: "btn tiny" }, "Cancel");
+		clear(node);
+		node.appendChild(el("div", { class: "msg-edit" }, ta, el("div", { class: "msg-edit-actions" }, save, cancel)));
+		ta.focus();
+		ta.setSelectionRange(ta.value.length, ta.value.length);
+
+		const restore = (): void => node.replaceWith(renderMessage(m));
+		const commit = (): void => {
+			const v = ta.value.trim();
+			if (!v || !ensureReady()) return;
+			const at = store.project.messages.findIndex((x) => x.id === m.id); // re-find: list may have shifted
+			if (at === -1) return;
+			const txt = m.blocks.find((b): b is TextBlock => b.type === "text");
+			if (txt) txt.text = v;
+			else m.blocks.unshift({ type: "text", text: v }); // keep any attached image
+			m.ts = Date.now();
+			store.project.messages.splice(at + 1); // drop the now-stale continuation
+			store.commitMessages();
+			renderAll();
+			void runTurn();
+		};
+		save.addEventListener("click", commit);
+		cancel.addEventListener("click", restore);
+		ta.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				e.preventDefault();
+				restore();
+			} else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				e.preventDefault();
+				commit();
+			}
+		});
+	}
+
+	// ---- sending -----------------------------------------------------------
+
+	async function send(): Promise<void> {
+		const value = input.value.trim();
+		if (!value) return;
+		if (!ensureReady()) return;
 
 		const blocks: Block[] = [{ type: "text", text: value }];
 		if (attach) {
@@ -197,10 +279,15 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const userMsg: Message = { id: uid("m_"), role: "user", ts: Date.now(), blocks };
 		store.project.messages.push(userMsg);
 		if (store.project.messages.length === 1) clear(list);
-		list.appendChild(messageEl(userMsg));
+		list.appendChild(renderMessage(userMsg));
 		input.value = "";
 		scroll();
+		await runTurn();
+	}
 
+	// Run the agent loop against the current message list. Used both by send() and
+	// by the edit-and-resend flow (which has already mutated the message list).
+	async function runTurn(): Promise<void> {
 		abort = new AbortController();
 		store.setBusy(true);
 		costTurn = 0; // start a fresh per-turn cost tally
@@ -260,14 +347,15 @@ export function createChat(deps: ChatDeps): HTMLElement {
 					onMessage: (msg) => {
 						void store.saveProjectNow();
 						if (msg.role === "assistant" && streamingText) {
+							// Swap the bare streaming bubble for a fully rendered one (so it
+							// gains its edit/delete actions and final markdown).
 							const bubble = streamingText.parentElement;
 							endStream();
-							if (bubble) {
-								clear(bubble);
-								append(bubble, assistantContent(msg));
-							}
+							const final = renderMessage(msg);
+							if (bubble && bubble.parentElement) bubble.replaceWith(final);
+							else list.appendChild(final);
 						} else {
-							list.appendChild(messageEl(msg));
+							list.appendChild(renderMessage(msg));
 						}
 						scroll();
 					},

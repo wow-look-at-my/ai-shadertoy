@@ -162,6 +162,13 @@ export class Store {
 		await db.saveProject(this.project);
 	}
 
+	/** The chat UI edited/deleted entries in `project.messages` in place. Bump the
+	 * timestamp, refresh the project list, and persist immediately. */
+	commitMessages(): void {
+		this.touch();
+		void this.saveProjectNow();
+	}
+
 	/** Edit one pass's source (recompiles just that pass). */
 	setPassSource(passId: string, src: string, compile = true): CompileResult {
 		const pass = this.passById(passId);
