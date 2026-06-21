@@ -83,11 +83,18 @@ npm run build         # ts0 build -> dist/index.html
   Fable family — `providers.ts` omits `temperature` for those models
   (`anthropicAcceptsTemperature`).
 - Anthropic browser calls require `anthropic-dangerous-direct-browser-access: true`.
-- Thinking is left off (no `thinking` param) so the simple browser tool-loop
-  doesn't have to replay thinking blocks. Fable 5 (always-on thinking) is
-  deliberately not a preset.
-- Anthropic SSE events handled: `content_block_start/delta/stop`, `message_delta`,
-  `error`. OpenAI: `choices[].delta.content` / `.tool_calls[]`, `finish_reason`.
+- Extended thinking is **on** for Anthropic, model-gated in `providers.ts`
+  (`anthropicThinking`): `{type:"adaptive", display:"summarized"}` for 4.6+ Opus /
+  Sonnet 4.6 / Fable / Mythos, a token `budget` for 4.5-era models, and nothing for
+  unrecognised models (so we never send a config that 400s). Thinking and
+  `temperature` are mutually exclusive in the request. Thinking blocks are captured
+  off the stream (`thinking_delta` + `signature_delta`), stored on the assistant
+  `Message` as `ThinkingBlock`s, and replayed **first** in `anthropicContent` —
+  required, or tool-use continuations 400. The chat UI streams the summary into a
+  collapsible `.thinking` block.
+- Anthropic SSE events handled: `content_block_start/delta/stop` (text, thinking,
+  signature, tool input deltas), `message_delta`, `error`. OpenAI:
+  `choices[].delta.content` / `.tool_calls[]`, `finish_reason`.
 
 ## Conventions
 
