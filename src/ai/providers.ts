@@ -447,7 +447,12 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 		/* fall through to the generic success below */
 	}
 	const shown = reply.length > 60 ? `${reply.slice(0, 60)}…` : reply;
-	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
+	const base = reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).`;
+	// Ollama has no cache parameter on its OpenAI endpoint -- caching is automatic
+	// by prompt prefix, but only while the model stays resident. Surface the one
+	// real lever (keep_alive) at setup time, since there is no marker to send.
+	const tip = isOllamaEndpoint(cfg) ? " Note: Ollama caches the prompt prefix automatically (there is no cache flag to send); set OLLAMA_KEEP_ALIVE=-1 to keep the model and its cache loaded between turns." : "";
+	return { ok: true, message: `${base}${tip}` };
 }
 
 /** List available model ids from the provider (Anthropic /v1/models or an
@@ -524,11 +529,17 @@ function corsHint(e: unknown, cfg: ChatConfig): ProviderError {
 	return new ProviderError(`Network error: ${msg}`, undefined, hint);
 }
 
-// Ollama (and similar local OpenAI-compatible servers) reject browser requests
-// until the origin is allowlisted. Detect it by the default port / name.
-function ollamaCorsHint(cfg: ChatConfig): string | undefined {
-	if (cfg.provider !== "openai") return undefined;
+// Detect a local Ollama endpoint by its default port / name. Used for both the
+// CORS-allowlist hint and the keep-alive caching tip (both Ollama-specific).
+function isOllamaEndpoint(cfg: ChatConfig): boolean {
+	if (cfg.provider !== "openai") return false;
 	const url = (cfg.baseUrl || "").toLowerCase();
-	if (!/:11434(\b|\/|$)/.test(url) && !url.includes("ollama")) return undefined;
+	return /:11434(\b|\/|$)/.test(url) || url.includes("ollama");
+}
+
+// Ollama (and similar local OpenAI-compatible servers) reject browser requests
+// until the origin is allowlisted.
+function ollamaCorsHint(cfg: ChatConfig): string | undefined {
+	if (!isOllamaEndpoint(cfg)) return undefined;
 	return "Ollama blocks browser requests unless you allow this origin. Restart Ollama with OLLAMA_ORIGINS set: run `OLLAMA_ORIGINS='*' ollama serve`; or (macOS app) `launchctl setenv OLLAMA_ORIGINS '*'` then restart Ollama; or (Linux systemd) `systemctl edit ollama`, add `Environment=\"OLLAMA_ORIGINS=*\"`, then `systemctl restart ollama`. Then try again.";
 }
