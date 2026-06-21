@@ -36,7 +36,34 @@ export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader
 		store.renderer.togglePlay();
 	});
 
+	// Global undo/redo. Inside a text field (code editor, chat box, name inputs)
+	// we defer to the browser's native per-character undo, which is what the user
+	// expects there; everywhere else these drive the project-level history.
+	window.addEventListener("keydown", (e) => {
+		const mod = e.ctrlKey || e.metaKey;
+		if (!mod || e.altKey) return;
+		const key = e.key.toLowerCase();
+		const isUndo = key === "z" && !e.shiftKey;
+		const isRedo = (key === "z" && e.shiftKey) || key === "y";
+		if (!isUndo && !isRedo) return;
+		if (isTextEntry(e.target as HTMLElement | null)) return;
+		e.preventDefault();
+		if (isUndo) store.undo();
+		else store.redo();
+	});
+
 	return root;
+}
+
+// True for elements with meaningful native text undo, where we must not hijack
+// Ctrl+Z. Non-text inputs (range/color/checkbox) and selects fall through to the
+// project history instead.
+function isTextEntry(t: HTMLElement | null): boolean {
+	if (!t) return false;
+	if (t.isContentEditable) return true;
+	if (t.tagName === "TEXTAREA") return true;
+	if (t.tagName === "INPUT") return /^(text|search|url|email|password|number|tel)$/.test((t as HTMLInputElement).type);
+	return false;
 }
 
 // Vertical resize of the preview / editor split. Updates --preview-h on the

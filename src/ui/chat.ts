@@ -204,6 +204,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		abort = new AbortController();
 		store.setBusy(true);
 		costTurn = 0; // start a fresh per-turn cost tally
+		// Collapse every edit this turn makes into a single undo step, so one
+		// Ctrl+Z reverts "what the AI just did" rather than each tool call.
+		store.beginHistoryGroup(`AI: ${value.length > 40 ? `${value.slice(0, 40)}…` : value}`);
 		try {
 			await runAgent(
 				store.settings,
@@ -277,6 +280,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
 			list.appendChild(el("div", { class: "msg error" }, el("strong", {}, "Error: "), detail));
 		} finally {
+			store.endHistoryGroup();
 			store.setBusy(false);
 			abort = null;
 			endStream();

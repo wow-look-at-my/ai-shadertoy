@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       - name: Type-check
         run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
       - name: Build single-file bundle
         run: npx ts0 build
       - name: Enforce <1MB single file

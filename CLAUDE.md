@@ -71,8 +71,21 @@ npm run build         # ts0 build -> dist/index.html
   message. `init_shader` is recomputed each iteration so it drops out once the
   shader is authored.
 - `src/state/` — `types.ts` (provider-neutral content-block conversation model),
-  `store.ts` (single owner of state + persistence + `applyTool`), `persist.ts`
-  (IndexedDB for projects/assets, localStorage for settings, export/import).
+  `store.ts` (single owner of state + persistence + `applyTool` + undo/redo),
+  `persist.ts` (IndexedDB for projects/assets, localStorage for settings,
+  export/import), `history.ts` (generic, DOM-free snapshot undo/redo stack).
+- **Undo/redo**: `history.ts` is a generic `History<S>` (two stacks of
+  `{snapshot,label}`, coalescing by tag + time window, reference-counted grouping,
+  a size cap, an `onChange` callback). The store owns a `History<ProjectSnapshot>`
+  over the undoable project slice (`name`, `passes`, `outputPassId`, `uniforms` —
+  NOT messages/ids). Each mutating store method calls `this.commit(label, tag,
+  coalesce?)` after mutating; `applySnapshot` restores + re-renders. Typing and
+  slider drags coalesce; an **agent turn is one undo step** via
+  `beginHistoryGroup`/`endHistoryGroup` (the chat wraps `runAgent`). History
+  resets on project switch (`adoptProject`) and is gated off while `busy`. The
+  store emits `"history"`; the topbar renders Undo/Redo buttons and `app.ts` binds
+  Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z / Ctrl+Y (deferring to native undo inside text
+  fields). Unit-tested in `test/history.test.ts` (`npm run test`, run by CI).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   UI glyphs come from `src/util/icons.ts` — `icon(name)` builds an inline
   `<svg>` (Material Design Icons path data, `fill: currentColor`); no emoji, no
@@ -123,8 +136,8 @@ npm run build         # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml`: build (npm ci, tsc, ts0 build, size gate) then deploy
-— publishes the single file as a **public** per-branch buildhost site via GHA
+`.github/workflows/ci.yml`: build (npm ci, tsc, `npm test`, ts0 build, size gate)
+then deploy — publishes the single file as a **public** per-branch buildhost site via GHA
 OIDC (`X-Public-Site: true`) to `sites.pazer.build/ai-shadertoy/branch/<branch>/`.
 Models the buildhost repo's `buildhost-publish-site` action, inlined through
 `wow-look-at-my/actions@typescript#latest`.
