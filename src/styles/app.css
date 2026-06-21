@@ -393,12 +393,19 @@ textarea:focus {
 	border: 1px solid var(--line);
 	border-radius: 6px;
 	padding: 10px;
-	overflow-x: auto;
 	margin: 8px 0;
+	max-width: 100%;
+	/* Shader code must wrap, never scroll sideways. */
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 .md pre code {
 	background: none;
 	padding: 0;
+	white-space: inherit;
+	overflow-wrap: inherit;
+	word-break: inherit;
 }
 .msg.user .md code,
 .msg.user .md pre {
@@ -490,7 +497,9 @@ textarea.code {
 	font-size: 13px;
 	line-height: 1.5;
 	tab-size: 4;
-	white-space: pre;
+	/* Soft-wrap long lines so the editor never scrolls horizontally. */
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
 	background: var(--bg);
 }
 .compile-log {
