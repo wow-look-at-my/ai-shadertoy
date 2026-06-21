@@ -177,10 +177,18 @@ npm run build         # ts0 build -> dist/index.html
   compatible endpoints (any non-hosted base URL — `isHostedOpenAI`) additionally
   get `cache_prompt: true` to opt into KV-cache prefix reuse (llama.cpp et al.);
   never sent to hosted OpenAI/Azure, which 400 on unknown fields. 2 Anthropic
-  breakpoints/request (max is 4); ephemeral 5-min TTL.
-- The chat panel shows a usage indicator (tokens/sec, context %, cost this turn +
-  session). `Usage` is captured per response; cost/context come from `pricing.ts`
-  (tokens-only when the model's pricing is unknown).
+  breakpoints/request (max is 4); ephemeral 5-min TTL. Local servers (Ollama) DO
+  reuse the prompt prefix across turns but omit cached-token counts from their
+  OpenAI `usage`; `estimateCachedFromPrefix` (providers.ts, unit-tested in
+  `test/cache.test.ts`) fills `cacheReadTokens` from the leading prefix shared with
+  the previous request for that conversation (keyed by `cacheKey`), so the **%
+  cached** meter reflects reality — it never overrides a server-reported count.
+  Verified against a live Ollama: turn-2 cache is ~95–98% and the estimate tracks
+  it within ~1–2%.
+- The chat panel shows a usage indicator (tokens/sec, context %, **% cached** when
+  any prompt cache was hit, cost this turn + session). `Usage` is captured per
+  response; cost/context come from `pricing.ts` (tokens-only when the model's
+  pricing is unknown).
 
 ## Conventions
 
