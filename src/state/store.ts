@@ -13,7 +13,7 @@ import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
 import { History } from "./history.ts";
 import { debounce } from "../util/misc.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "history";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "history" | "restore";
 
 /** The slice of a Project that undo/redo restores: the visible/editable state
  * (name, render graph, uniforms). The conversation log and identity/timestamps
@@ -205,6 +205,10 @@ export class Store {
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedPass", this.selectedPassId);
+		// Source changed out from under the editor: force the code box to refresh
+		// even if it currently has focus (a normal "project" sync won't clobber a
+		// focused textarea, but an undo/redo must always be reflected).
+		this.emit("restore");
 		this.touch();
 	}
 
