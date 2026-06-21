@@ -3,7 +3,8 @@
 A single-page, **client-side** sandbox where an AI builds 2D WebGL2 fragment
 shaders with you. Describe what you want in chat; the AI writes the shader, sees
 the rendered result (screenshots) and the GLSL compile log, and iterates. It can
-also wire up input textures and expose live parameters as sliders.
+also wire up input channels — built-in textures, images, **videos**, the
+**webcam**, or another pass's output — and expose live parameters as sliders.
 
 - **No backend.** Everything runs in your browser. Your API key is stored locally
   and used only for calls you authorize.
@@ -13,7 +14,7 @@ also wire up input textures and expose live parameters as sliders.
   per-pass feedback (a pass reading its own previous frame). Each pass has as many
   inputs as the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html`
-  (~650 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
+  (~720 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
 - **Bring your own model.** Works with Anthropic (Claude) or any
   OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator
@@ -35,9 +36,9 @@ existing shader, so it doesn't retype the whole thing), `add_pass` / `remove_pas
 / `list_passes` / `set_output_pass` (build and inspect the multi-pass render
 graph), `set_uniforms` (live slider parameters, shared across passes),
 `rename_shader` (rename the current shader), `set_channel` / `set_channel_asset`
-(wire a pass input to a built-in texture, an image, or — `kind: pass` — another
-pass's output), `list_assets`, `capture_screenshot`, and (optional)
-`generate_texture`.
+(wire a pass input to a built-in texture, an image, a video, the webcam, or —
+`kind: pass` — another pass's output), `list_assets`, `capture_screenshot`, and
+(optional) `generate_texture`.
 
 ### Multi-pass render graph
 
@@ -51,6 +52,17 @@ the screen. Passes can use an `rgba16f` target to keep HDR values for bloom/blur
 Edit it visually in the **Passes** tab (draggable nodes wired by their inputs), or
 let the AI build it. Inputs per pass are not capped at four — add as many as you
 need.
+
+### Input channels (textures, video, webcam)
+
+Each input channel can be bound — in the **Textures** tab or by the AI — to a
+built-in procedural texture, an uploaded/generated **image**, an uploaded
+**video** clip, the live **webcam**, or another pass's output. Videos and the
+webcam are *dynamic*: their current frame is uploaded every render frame, so
+sampling the channel animates on its own (and `iChannelResolution` reports the
+source's size). Each channel has its own filter (linear/nearest) and wrap
+(repeat/clamp/mirror). Webcam use prompts the browser for camera permission;
+nothing is uploaded anywhere — the frames stay on your GPU.
 
 Some tools require your approval before they take effect. When the AI calls one
 (currently `rename_shader`), the chat shows an **Approve / Deny** prompt and the
@@ -107,12 +119,15 @@ for Claude models, and tokens-only (no dollar figure) for unrecognized endpoints
 
 ## Persistence & sharing
 
-Projects, conversations, and image assets are stored in **IndexedDB**; settings in
-`localStorage`. The app requests persistent storage so the browser won't evict it.
-The top bar manages projects: create a **New** one, **Duplicate** the current one
-(a full independent copy of its passes, uniforms, and conversation — handy for
-forking an experiment), switch between them, or **Delete**. Use **Export** /
-**Import** to move everything as a single JSON file (API keys excluded by default).
+Projects, conversations, and media assets (images and videos) are stored in
+**IndexedDB**; settings in `localStorage`. Videos are kept inline like images, so
+prefer short, low-resolution loops (uploads are capped at 32 MB); webcam channels
+store only the *binding* — the camera is re-requested on load. The app requests
+persistent storage so the browser won't evict it. The top bar manages projects:
+create a **New** one, **Duplicate** the current one (a full independent copy of its
+passes, uniforms, and conversation — handy for forking an experiment), switch
+between them, or **Delete**. Use **Export** / **Import** to move everything as a
+single JSON file (API keys excluded by default).
 
 ## Develop
 

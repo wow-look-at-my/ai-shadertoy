@@ -42,8 +42,14 @@ npm run build         # ts0 build -> dist/index.html
   `rgba8` or `rgba16f` (HDR, when `EXT_color_buffer_float`/`OES_texture_float_linear`
   allow, else it falls back). `setPasses()` (re)compiles + reconciles per-pass
   slots and returns a per-pass `CompileResult`; `setPassChannel*`/`clearPassChannel`
-  bind inputs; `maxInputs()` exposes the GPU texture-unit ceiling. It also owns the
-  clock, uniforms, and screenshot (average-colour feedback). `wrapper.ts` assembles
+  bind inputs; `maxInputs()` exposes the GPU texture-unit ceiling. Channels can be
+  **dynamic** (uploaded video / live webcam): a `DynamicTexture` (`dynamictexture.ts`)
+  owns a `<video>` whose current frame is re-uploaded every render tick (texImage2D
+  then texSubImage2D), follows play/pause/reset, and stops its stream on teardown
+  (`setPassChannelVideo` / `setPassChannelWebcam`; `setPassChannelParams` changes
+  filter/wrap without reloading; `dynamicKey()` lets the store skip redundant
+  reloads). It also owns the clock, uniforms, and screenshot (average-colour
+  feedback). `wrapper.ts` assembles
   the full GLSL ES 3.00 source around the user's `mainImage` for a pass, declaring
   exactly that pass's `iChannel0..N-1` + `iChannelResolution[N]` (channel count is a
   parameter — inputs are not capped at four) and emitting `#line 1` so compile
@@ -68,10 +74,11 @@ npm run build         # ts0 build -> dist/index.html
   optional `pass`), `add_pass` / `remove_pass` / `list_passes` / `set_output_pass`
   (manage the render graph), `get_shader` (pass + graph summary), `set_uniforms`
   (shared across passes), `rename_shader` (permission-gated), `set_channel`
-  (`kind: none|builtin|pass`; `pass` feeds another pass's output — the graph edges;
-  any index auto-grows the input list), `set_channel_asset`, `list_assets`,
-  `capture_screenshot`, `generate_texture` (gated on image-gen). Most edit tools
-  default to the output pass and resolve a `pass` arg via `ctx.resolvePass`.
+  (`kind: none|builtin|pass|webcam`; `pass` feeds another pass's output — the graph
+  edges; `webcam` is the live camera; any index auto-grows the input list),
+  `set_channel_asset` (bind an image OR video asset — videos animate per frame),
+  `list_assets`, `capture_screenshot`, `generate_texture` (gated on image-gen). Most
+  edit tools default to the output pass and resolve a `pass` arg via `ctx.resolvePass`.
 - **Permission-gated tools**: a tool can set `requiresPermission: true` (+ an
   optional `permissionPrompt(input)` for the prompt text) in its registration.
   Before running such a call the agent loop awaits `cb.requestPermission(...)`;
@@ -88,7 +95,10 @@ npm run build         # ts0 build -> dist/index.html
 - `src/state/` — `types.ts`: a `Project` is a **render graph** — `passes: Pass[]`
   (each a `Pass` with `source`, a variable-length `channels: Channel[]` input list
   up to `MAX_INPUTS`, `format`, and graph-editor `x`/`y`) plus an `outputPassId`; a
-  `Channel` adds `kind:"pass"` (+`passId`) for pass→pass wiring. `store.ts` (single
+  `Channel` adds `kind:"pass"` (+`passId`) for pass→pass wiring, plus `"video"`
+  (an `ImageAsset` with `kind:"video"`) and `"webcam"` for dynamic inputs.
+  `src/util/media.ts` holds the file/webcam plumbing (`fileToDataUrl`, `loadVideoMeta`,
+  `requestWebcam`, …). `store.ts` (single
   owner of state + the renderer + persistence + `applyTool`) tracks `selectedPassId`
   and exposes pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
   `setPassSource`/`setPassChannel`/`add`+`removePassChannel`/`movePass`), plus

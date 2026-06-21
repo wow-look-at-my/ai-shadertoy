@@ -13,12 +13,12 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.setChannel,
 		description:
-			"Wire one input channel (iChannel0, iChannel1, ...) of a pass. A pass can have as many inputs as it needs (not capped at 4) -- setting an index at or beyond the current count adds inputs. kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass into this channel (this is how you build the graph, e.g. a blur pass sampling the effect pass); kind=none clears it. Targets the output pass by default; set `pass` to wire a different pass's input. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for uploaded/generated images.",
+			"Wire one input channel (iChannel0, iChannel1, ...) of a pass. A pass can have as many inputs as it needs (not capped at 4) -- setting an index at or beyond the current count adds inputs. kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass into this channel (this is how you build the graph, e.g. a blur pass sampling the effect pass); kind=webcam binds the live camera (its current frame is sampled every frame, so it animates on its own); kind=none clears it. Targets the output pass by default; set `pass` to wire a different pass's input. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for uploaded/generated images or videos.",
 		parameters: {
 			type: "object",
 			properties: {
 				index: { type: "integer", description: "Channel index (0-based). Using an index at/above the current input count adds inputs." },
-				kind: { type: "string", enum: ["none", "builtin", "pass"] },
+				kind: { type: "string", enum: ["none", "builtin", "pass", "webcam"] },
 				builtin: { type: "string", enum: ["rgbaNoise", "grayNoise", "blue", "checker", "gradient"], description: "Required when kind=builtin." },
 				source: { type: "string", description: "Source pass name whose output feeds this channel. Required when kind=pass (may be the same pass for feedback)." },
 				pass: { type: "string", description: "Pass whose input you are wiring (default: the output pass)." },
@@ -40,6 +40,10 @@ registerTool({
 		if (kind === "none") {
 			ctx.setPassChannel(target.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
 			return { content: [text(`${target.name}.iChannel${index} cleared.`)] };
+		}
+		if (kind === "webcam") {
+			ctx.setPassChannel(target.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined, filter, wrap });
+			return { content: [text(`${target.name}.iChannel${index} = webcam (live camera; the user is prompted for permission). Its current frame is sampled each frame.`)] };
 		}
 		if (kind === "pass") {
 			const srcName = String(input["source"] ?? "");

@@ -11,6 +11,7 @@ import type { CompileResult } from "../gl/renderer.ts";
 import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersistence, saveSettings, setCurrentProjectId } from "./persist.ts";
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
 import { debounce, uid } from "../util/misc.ts";
+import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
 type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass";
 
@@ -140,10 +141,37 @@ export class Store {
 				return;
 			}
 			try {
-				const img = await loadImage(asset.dataUrl);
+				const img = await loadImageEl(asset.dataUrl);
 				this.renderer.setPassChannelImage(passId, index, img, img.naturalWidth, img.naturalHeight, ch.filter, ch.wrap);
 			} catch {
 				this.renderer.clearPassChannel(passId, index);
+			}
+		} else if (ch.kind === "video" && ch.assetId) {
+			const asset = this.assets.find((a) => a.id === ch.assetId);
+			if (!asset) {
+				this.renderer.clearPassChannel(passId, index);
+				return;
+			}
+			// Idempotent: the renderer keeps the playing clip when the key matches,
+			// so re-applying on an unrelated edit doesn't restart playback.
+			this.renderer.setPassChannelVideo(passId, index, asset.dataUrl, asset.id, ch.filter, ch.wrap);
+		} else if (ch.kind === "webcam") {
+			// Already streaming? Refresh filter/wrap instead of re-acquiring the camera.
+			if (this.renderer.dynamicKey(passId, index) === "webcam") {
+				this.renderer.setPassChannelParams(passId, index, ch.filter, ch.wrap);
+				return;
+			}
+			try {
+				const stream = await requestWebcam();
+				// The binding may have changed while we awaited the permission prompt.
+				const cur = this.passById(passId)?.channels[index];
+				if (!cur || cur.kind !== "webcam") {
+					stopStream(stream);
+					return;
+				}
+				this.renderer.setPassChannelWebcam(passId, index, stream, cur.filter, cur.wrap);
+			} catch {
+				this.renderer.clearPassChannel(passId, index); // permission denied / no camera
 			}
 		} else {
 			this.renderer.clearPassChannel(passId, index);
@@ -209,12 +237,21 @@ export class Store {
 		// Auto-grow the input list so a higher index just adds inputs (no fixed cap).
 		const grew = index >= pass.channels.length;
 		while (pass.channels.length <= index) pass.channels.push(emptyChannel());
-		pass.channels[index] = { ...pass.channels[index], ...patch };
+		const prev = pass.channels[index];
+		const next = { ...prev, ...patch };
+		pass.channels[index] = next;
 		if (grew) {
 			// Channel count changed -> the pass header changes -> recompile.
 			this.applyProjectToRenderer();
 		} else {
-			void this.applyChannel(passId, index);
+			const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin && prev.passId === next.passId;
+			if (sourceSame && next.kind !== "none") {
+				// Only filter/wrap changed -> cheap update (no image reload, no clip
+				// restart, no webcam re-acquire).
+				this.renderer.setPassChannelParams(passId, index, next.filter, next.wrap);
+			} else {
+				void this.applyChannel(passId, index);
+			}
 		}
 		this.emit("project", this.project);
 		this.touch();
@@ -319,10 +356,10 @@ export class Store {
 	deleteAsset(id: string): void {
 		this.assets = this.assets.filter((a) => a.id !== id);
 		void db.deleteAsset(id);
-		// detach from any pass channel using it
+		// detach from any pass channel using it (image or video)
 		for (const p of this.project.passes) {
 			p.channels.forEach((ch, i) => {
-				if (ch.kind === "image" && ch.assetId === id) this.setPassChannel(p.id, i, { kind: "none", assetId: undefined });
+				if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setPassChannel(p.id, i, { kind: "none", assetId: undefined });
 			});
 		}
 		this.emit("assets", this.assets);
@@ -538,13 +575,4 @@ function uniquePassName(passes: Pass[], base: string, exceptId?: string): string
 	let i = 2;
 	while (taken(`${trimmed} ${i}`)) i++;
 	return `${trimmed} ${i}`;
-}
-
-function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-	return new Promise((resolve, reject) => {
-		const img = new Image();
-		img.onload = () => resolve(img);
-		img.onerror = () => reject(new Error("image decode failed"));
-		img.src = dataUrl;
-	});
 }

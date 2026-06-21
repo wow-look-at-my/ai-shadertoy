@@ -8,6 +8,7 @@
 import type { Channel, Pass, PassFormat, Uniform } from "../state/types.ts";
 import { assembleFragment, glslType } from "./wrapper.ts";
 import { builtinPixels } from "./textures.ts";
+import { DynamicTexture } from "./dynamictexture.ts";
 
 export interface CompileResult {
 	ok: boolean;
@@ -43,9 +44,14 @@ interface ChannelSlot {
 	passId?: string;
 	filter: Channel["filter"];
 	wrap: Channel["wrap"];
-	tex: WebGLTexture | null; // owned texture for builtin/image; null for pass/none
+	tex: WebGLTexture | null; // owned texture for builtin/image; null for pass/none/dynamic
 	width: number;
 	height: number;
+	/** video/webcam slots: the live source (owns its own texture, updated per frame). */
+	dyn: DynamicTexture | null;
+	/** Identity of the dynamic source (asset id for video, "webcam") so re-applying
+	 * the same binding doesn't reload the clip / re-acquire the camera. */
+	dynKey?: string;
 }
 
 interface RenderPass {
@@ -63,7 +69,7 @@ interface RenderPass {
 }
 
 function newSlot(): ChannelSlot {
-	return { kind: "none", filter: "linear", wrap: "repeat", tex: null, width: 0, height: 0 };
+	return { kind: "none", filter: "linear", wrap: "repeat", tex: null, width: 0, height: 0, dyn: null };
 }
 
 export class Renderer {
@@ -257,16 +263,32 @@ export class Renderer {
 		if (p.program) gl.deleteProgram(p.program);
 		if (p.a) this.freeTarget(p.a);
 		if (p.b) this.freeTarget(p.b);
-		for (const c of p.channels) if (c.tex) gl.deleteTexture(c.tex);
+		for (const c of p.channels) this.freeSlot(c);
 	}
 
-	/** Grow/shrink a pass's input slots to `count`, freeing dropped textures. */
+	/** Grow/shrink a pass's input slots to `count`, freeing dropped resources. */
 	private reconcileSlots(p: RenderPass, count: number): void {
 		while (p.channels.length < count) p.channels.push(newSlot());
-		while (p.channels.length > count) {
-			const s = p.channels.pop()!;
-			if (s.tex) this.gl.deleteTexture(s.tex);
+		while (p.channels.length > count) this.freeSlot(p.channels.pop()!);
+	}
+
+	/** Release a slot's owned GPU/media resources (static texture and/or live
+	 * video source). Leaves the slot object reusable. */
+	private freeSlot(s: ChannelSlot): void {
+		this.detachDynamic(s);
+		if (s.tex) {
+			this.gl.deleteTexture(s.tex);
+			s.tex = null;
 		}
+	}
+
+	/** Dispose any dynamic (video/webcam) source on a slot, stopping its stream. */
+	private detachDynamic(s: ChannelSlot): void {
+		if (s.dyn) {
+			s.dyn.dispose();
+			s.dyn = null;
+		}
+		s.dynKey = undefined;
 	}
 
 	private loc(p: RenderPass, name: string): WebGLUniformLocation | null {
@@ -365,10 +387,7 @@ export class Renderer {
 	setPassChannelPass(passId: string, index: number, sourcePassId: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
-		if (s.tex) {
-			this.gl.deleteTexture(s.tex);
-			s.tex = null;
-		}
+		this.freeSlot(s);
 		s.kind = "pass";
 		s.passId = sourcePassId;
 		s.filter = filter;
@@ -376,13 +395,68 @@ export class Renderer {
 		this.renderFrame();
 	}
 
+	/** Bind a video clip (data/object URL). `key` identifies the source so a
+	 * re-apply with the same key keeps the playing clip (only updates filter/wrap). */
+	setPassChannelVideo(passId: string, index: number, url: string, key: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const s = this.slot(passId, index);
+		if (!s) return;
+		if (s.kind === "video" && s.dyn && s.dynKey === key) {
+			s.filter = filter;
+			s.wrap = wrap;
+			this.renderFrame();
+			return;
+		}
+		this.freeSlot(s);
+		s.dyn = DynamicTexture.fromUrl(this.gl, url);
+		s.dynKey = key;
+		s.kind = "video";
+		s.passId = undefined;
+		s.filter = filter;
+		s.wrap = wrap;
+		s.width = 0;
+		s.height = 0;
+		if (!this.paused) s.dyn.play();
+		this.renderFrame();
+	}
+
+	/** Bind the live webcam (a MediaStream acquired by the caller). */
+	setPassChannelWebcam(passId: string, index: number, stream: MediaStream, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const s = this.slot(passId, index);
+		if (!s) return;
+		this.freeSlot(s);
+		s.dyn = DynamicTexture.fromStream(this.gl, stream);
+		s.dynKey = "webcam";
+		s.kind = "webcam";
+		s.passId = undefined;
+		s.filter = filter;
+		s.wrap = wrap;
+		s.width = 0;
+		s.height = 0;
+		if (!this.paused) s.dyn.play();
+		this.renderFrame();
+	}
+
+	/** Cheap filter/wrap update for an existing binding (applied per-draw, so no
+	 * re-upload, no clip reload, no webcam re-acquire). */
+	setPassChannelParams(passId: string, index: number, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+		const s = this.slot(passId, index);
+		if (!s) return;
+		s.filter = filter;
+		s.wrap = wrap;
+		this.renderFrame();
+	}
+
+	/** Identity of a slot's live source (asset id for video, "webcam"), or null if
+	 * it isn't currently a dynamic source. Lets the store skip a redundant reload. */
+	dynamicKey(passId: string, index: number): string | null {
+		const s = this.slot(passId, index);
+		return s && s.dyn ? (s.dynKey ?? null) : null;
+	}
+
 	clearPassChannel(passId: string, index: number): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
-		if (s.tex) {
-			this.gl.deleteTexture(s.tex);
-			s.tex = null;
-		}
+		this.freeSlot(s);
 		s.kind = "none";
 		s.passId = undefined;
 		this.renderFrame();
@@ -390,6 +464,7 @@ export class Renderer {
 
 	private uploadSlot(s: ChannelSlot, w: number, h: number, data: Uint8Array | TexImageSource): void {
 		const gl = this.gl;
+		this.detachDynamic(s); // switching from a video/webcam source to a static one
 		if (!s.tex) s.tex = gl.createTexture();
 		gl.bindTexture(gl.TEXTURE_2D, s.tex);
 		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -402,15 +477,21 @@ export class Renderer {
 
 	// ---- playback -----------------------------------------------------------
 
+	private forEachDynamic(fn: (d: DynamicTexture) => void): void {
+		for (const p of this.passes.values()) for (const s of p.channels) if (s.dyn) fn(s.dyn);
+	}
+
 	play(): void {
 		if (!this.paused) return;
 		this.paused = false;
 		this.startTime += performance.now() - this.pausedAt;
+		this.forEachDynamic((d) => d.play());
 	}
 	pause(): void {
 		if (this.paused) return;
 		this.paused = true;
 		this.pausedAt = performance.now();
+		this.forEachDynamic((d) => d.pause());
 	}
 	togglePlay(): void {
 		this.paused ? this.play() : this.pause();
@@ -433,6 +514,7 @@ export class Renderer {
 			}
 		}
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		this.forEachDynamic((d) => d.reset());
 		this.renderFrame();
 	}
 
@@ -478,6 +560,7 @@ export class Renderer {
 		const gl = this.gl;
 		this.resize();
 		this.ensureTargets();
+		this.updateDynamicChannels();
 		const W = this.canvas.width;
 		const H = this.canvas.height;
 
@@ -566,6 +649,19 @@ export class Renderer {
 		gl.drawArrays(gl.TRIANGLES, 0, 3);
 	}
 
+	/** Upload the current frame of every video/webcam channel once per render
+	 * tick, before any pass samples them. */
+	private updateDynamicChannels(): void {
+		for (const p of this.passes.values()) {
+			for (const s of p.channels) {
+				if (!s.dyn) continue;
+				s.dyn.update();
+				s.width = s.dyn.width;
+				s.height = s.dyn.height;
+			}
+		}
+	}
+
 	/** Resolve a channel's bound texture. Pass references read the source's
 	 * current-frame output if it was already rendered this frame (a forward edge),
 	 * otherwise its previous frame (feedback / self-reference). */
@@ -577,6 +673,8 @@ export class Renderer {
 				const tgt = useCurr ? this.curr(src) : this.prev(src);
 				return { tex: tgt.tex, width: src.width, height: src.height, float: src.format === "rgba16f" && this.floatColorBuffer };
 			}
+		} else if ((slot.kind === "video" || slot.kind === "webcam") && slot.dyn) {
+			return { tex: slot.dyn.texture, width: slot.dyn.width, height: slot.dyn.height, float: false };
 		} else if ((slot.kind === "builtin" || slot.kind === "image") && slot.tex) {
 			return { tex: slot.tex, width: slot.width, height: slot.height, float: false };
 		}
@@ -697,6 +795,9 @@ export class Renderer {
 	destroy(): void {
 		cancelAnimationFrame(this.rafId);
 		window.removeEventListener("pointerup", this.onPointerUp);
+		// Release video elements / webcam streams so the camera light goes off.
+		for (const p of this.passes.values()) this.destroyPass(p);
+		this.passes.clear();
 	}
 }
 
