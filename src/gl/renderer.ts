@@ -682,8 +682,8 @@ export class Renderer {
 
 /** Topological render order over the pass dependency graph (a pass depends on
  * every pass it samples). Cycles (feedback) are broken by the input order; those
- * back-edges read the previous frame at draw time. */
-function topoOrder(passes: Pass[]): string[] {
+ * back-edges read the previous frame at draw time. Exported for unit testing. */
+export function topoOrder(passes: Pass[]): string[] {
 	const ids = new Set(passes.map((p) => p.id));
 	const deps = new Map<string, Set<string>>();
 	for (const p of passes) {
