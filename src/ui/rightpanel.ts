@@ -67,6 +67,10 @@ export function createRightPanel(store: Store): HTMLElement {
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 	});
 	store.on("compile", () => codeView.syncLog());
+	// Undo/redo: the "project" handler above already refreshed the other tabs and
+	// ran the focus-guarded code sync; this forces the code box to update too even
+	// when it currently holds focus.
+	store.on("restore", () => codeView.forceSync());
 
 	renderActive();
 	return el("section", { class: "rightpanel" }, tabBar, body);
@@ -74,7 +78,7 @@ export function createRightPanel(store: Store): HTMLElement {
 
 // ---- code editor -----------------------------------------------------------
 
-function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; syncLog: () => void; syncHead: () => void } {
+function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; forceSync: () => void; syncLog: () => void; syncHead: () => void } {
 	const head = el("div", { class: "code-head" });
 	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "soft" } });
 	textarea.value = store.selectedPass().source;
@@ -107,6 +111,21 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; syn
 		if (document.activeElement !== textarea && textarea.value !== src) textarea.value = src;
 		syncLog();
 	};
+	// Undo/redo changed the source: refresh the box even if it has focus (best
+	// effort to keep the caret in range), which the focus-guarded sync() won't do.
+	const forceSync = () => {
+		const src = store.selectedPass().source;
+		if (textarea.value !== src) {
+			const pos = Math.min(textarea.selectionStart, src.length);
+			textarea.value = src;
+			try {
+				textarea.setSelectionRange(pos, pos);
+			} catch {
+				/* detached / unsupported: ignore */
+			}
+		}
+		syncLog();
+	};
 	const syncHead = () => {
 		const pass = store.selectedPass();
 		const isOutput = pass.id === store.project.outputPassId;
@@ -131,7 +150,7 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; syn
 
 	syncHead();
 	syncLog();
-	return { root: el("div", { class: "code-view" }, head, textarea, log), sync, syncLog, syncHead };
+	return { root: el("div", { class: "code-view" }, head, textarea, log), sync, forceSync, syncLog, syncHead };
 }
 
 // ---- passes graph (the object graph) ---------------------------------------

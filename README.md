@@ -19,6 +19,8 @@ also wire up input channels — built-in textures, images, **videos**, the
   OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator
   shows tokens/sec, context use, and cost per turn + per session.
+- **Undo everything.** One unified history covers every change — your manual
+  edits *and* the AI's — so a single undo reverts a whole AI turn.
 
 ## How it works
 
@@ -76,6 +78,25 @@ Hover any message to **edit** or **delete** it. Editing a prompt rewrites it and
 re-runs from that point (everything after is replaced). Deleting removes that
 exchange — a prompt and the reply it produced — and keeps the rest of the
 conversation intact.
+
+### Undo / redo
+
+A single history tracks the whole project — every pass's code, the render graph,
+formats, output pass, custom uniforms (including live slider drags), texture
+bindings, and the shader name. The **Undo / Redo** buttons sit in the top bar
+(their tooltips name the exact action), and the keyboard shortcuts are
+**⌘/Ctrl+Z** and **⇧⌘/Ctrl+Shift+Z** (or **Ctrl+Y**).
+
+What makes it work for an AI tool:
+
+- **An entire AI turn is one undo step.** If the agent makes ten edits, one undo
+  reverts the lot — including a turn you stopped partway through.
+- **Gestures don't flood the stack.** Continuous typing in a pass, or a single
+  slider drag, collapses into one entry.
+- **Inside a text box, your usual per-character undo still works** — the global
+  shortcut only steps in outside text fields, and the buttons always work.
+- History is per-project (switching projects starts fresh) and is paused while
+  the agent is running, so you can't unwind state mid-edit.
 
 ### Built-in uniforms (Shadertoy-compatible)
 
@@ -136,7 +157,9 @@ Requires Node 22+.
 ```sh
 npm install
 npm run typecheck      # tsc --noEmit
+npm run test           # node strip-types unit tests (test/)
 npm run build          # -> dist/index.html (single file)
+npm run check          # all three of the above
 ```
 
 Open `dist/index.html` directly in a browser — it has no external dependencies.
@@ -149,13 +172,14 @@ src/
   main.ts               # bootstrap: renderer + store + UI
   gl/                   # WebGL2 renderer, shader assembly, procedural textures
   ai/                   # provider adapters (Anthropic + OpenAI), agent loop, tools
-  state/                # types, central store, IndexedDB persistence, defaults
+  state/                # types, central store, undo/redo history, IndexedDB persistence
   ui/                   # vanilla-DOM components: chat | (preview stacked over the
                         #   editor: Code / Passes graph / Uniforms / Textures)
   util/                 # DOM helper, tiny markdown renderer, misc
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
+test/                   # plain-Node unit tests (history.test.ts)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

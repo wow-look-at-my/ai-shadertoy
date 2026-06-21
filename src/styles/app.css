@@ -107,6 +107,18 @@ textarea {
 	border-color: var(--accent);
 	color: var(--accent);
 }
+.btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+.btn:disabled:hover {
+	background: var(--bg-2);
+}
+/* Undo/redo pair sits as one segmented control in the top bar. */
+.undo-group {
+	display: inline-flex;
+	gap: 2px;
+}
 /* Inline Material Design Icons: take the current text colour, sit on the text
    baseline's middle when placed alongside a label. */
 .icon-svg {

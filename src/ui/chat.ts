@@ -23,6 +23,19 @@ function authoredShader(messages: Message[]): boolean {
 	return messages.some((m) => m.role === "assistant" && ((m.textTools?.some(isShaderTool) ?? false) || m.blocks.some((b) => b.type === "tool_use" && isShaderTool(b.name))));
 }
 
+// Short label for the undo entry that wraps an agent turn: the text of the latest
+// real user prompt (ignoring text-mode tool-result messages), truncated.
+function turnPromptSummary(messages: Message[]): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "user" || m.toolOutput) continue;
+		const text = m.blocks.find((b): b is TextBlock => b.type === "text")?.text.trim() ?? "";
+		if (text) return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+		break;
+	}
+	return "turn";
+}
+
 export interface ChatDeps {
 	store: Store;
 	openSettings: () => void;
@@ -291,6 +304,11 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		abort = new AbortController();
 		store.setBusy(true);
 		costTurn = 0; // start a fresh per-turn cost tally
+		// Collapse every edit this turn makes into a single undo step, so one
+		// Ctrl+Z reverts "what the AI just did" rather than each tool call. Label it
+		// with the prompt that drove the turn (the latest real user message — works
+		// for both a fresh send and the edit-and-resend flow).
+		store.beginHistoryGroup(`AI: ${turnPromptSummary(store.project.messages)}`);
 		try {
 			await runAgent(
 				store.settings,
@@ -365,6 +383,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
 			list.appendChild(el("div", { class: "msg error" }, el("strong", {}, "Error: "), detail));
 		} finally {
+			store.endHistoryGroup();
 			store.setBusy(false);
 			abort = null;
 			endStream();

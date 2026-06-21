@@ -98,15 +98,28 @@ npm run build         # ts0 build -> dist/index.html
   `Channel` adds `kind:"pass"` (+`passId`) for pass→pass wiring, plus `"video"`
   (an `ImageAsset` with `kind:"video"`) and `"webcam"` for dynamic inputs.
   `src/util/media.ts` holds the file/webcam plumbing (`fileToDataUrl`, `loadVideoMeta`,
-  `requestWebcam`, …). `store.ts` (single
-  owner of state + the renderer + persistence + `applyTool`) tracks `selectedPassId`
-  and exposes pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
-  `setPassSource`/`setPassChannel`/`add`+`removePassChannel`/`movePass`), plus
-  `commitMessages()` which persists in-place edits/deletes the chat UI makes to
-  `project.messages`; `defaults.ts` has `normalizeProject` which migrates legacy
-  single-`shaderSource` projects to one "Image" pass on load/import. `persist.ts`
-  (IndexedDB for projects/assets, localStorage for settings, export/import;
-  normalizes on read).
+  `requestWebcam`, …). `store.ts` (single owner of state + the renderer +
+  persistence + `applyTool` + undo/redo) tracks `selectedPassId` and exposes
+  pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/`setPassSource`/
+  `setPassChannel`/`add`+`removePassChannel`/`movePass`), plus `commitMessages()`
+  which persists in-place edits/deletes the chat UI makes to `project.messages`;
+  `defaults.ts` has `normalizeProject` which migrates legacy single-`shaderSource`
+  projects to one "Image" pass on load/import. `persist.ts` (IndexedDB for
+  projects/assets, localStorage for settings, export/import; normalizes on read).
+  `history.ts` (generic, DOM-free snapshot undo/redo stack).
+- **Undo/redo**: `history.ts` is a generic `History<S>` (two stacks of
+  `{snapshot,label}`, coalescing by tag + time window, reference-counted grouping,
+  a size cap, an `onChange` callback). The store owns a `History<ProjectSnapshot>`
+  over the undoable project slice (`name`, `passes`, `outputPassId`, `uniforms` —
+  NOT messages/ids). Each mutating store method calls `this.commit(label, tag,
+  coalesce?)` after mutating; `applySnapshot` restores + re-renders (it emits a
+  `"restore"` event so the code editor refreshes even while focused). Typing and
+  slider drags coalesce; an **agent turn is one undo step** via
+  `beginHistoryGroup`/`endHistoryGroup` (the chat wraps `runAgent`). History
+  resets on project switch (`adoptProject`) and is gated off while `busy`. The
+  store emits `"history"`; the topbar renders Undo/Redo buttons and `app.ts` binds
+  Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z / Ctrl+Y (deferring to native undo inside text
+  fields). Unit-tested in `test/history.test.ts` (`npm run test`, run by CI).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
   splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
@@ -171,8 +184,8 @@ npm run build         # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml`: build (npm ci, tsc, ts0 build, size gate) then deploy
-— publishes the single file as a **public** per-branch buildhost site via GHA
+`.github/workflows/ci.yml`: build (npm ci, tsc, `npm test`, ts0 build, size gate)
+then deploy — publishes the single file as a **public** per-branch buildhost site via GHA
 OIDC (`X-Public-Site: true`) to `sites.pazer.build/ai-shadertoy/branch/<branch>/`.
 Models the buildhost repo's `buildhost-publish-site` action, inlined through
 `wow-look-at-my/actions@typescript#latest`.

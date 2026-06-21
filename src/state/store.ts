@@ -10,10 +10,25 @@ import { Renderer } from "../gl/renderer.ts";
 import type { CompileResult } from "../gl/renderer.ts";
 import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersistence, saveSettings, setCurrentProjectId } from "./persist.ts";
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
+import { History } from "./history.ts";
 import { debounce, uid } from "../util/misc.ts";
 import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "history" | "restore";
+
+/** The slice of a Project that undo/redo restores: the visible/editable state
+ * (name, render graph, uniforms). The conversation log and identity/timestamps
+ * are intentionally excluded -- you don't "undo" the chat history, and ids must
+ * stay stable. Snapshots are deep-cloned on the way in and out. */
+interface ProjectSnapshot {
+	name: string;
+	passes: Pass[];
+	outputPassId: string;
+	uniforms: Uniform[];
+}
+
+const HISTORY_LIMIT = 200;
+const HISTORY_COALESCE_MS = 1200;
 
 export class Store {
 	settings: Settings = structuredClone(DEFAULT_SETTINGS);
@@ -28,6 +43,9 @@ export class Store {
 	/** Which pass the editor/inspector is focused on. */
 	selectedPassId = "";
 	busy = false;
+	/** Undo/redo over project snapshots. Reset whenever the active project
+	 * changes so history never crosses project boundaries. */
+	history!: History<ProjectSnapshot>;
 
 	private listeners = new Map<EventName, Set<(p: unknown) => void>>();
 	private saveDebounced = debounce(() => void this.saveProjectNow(), 700);
@@ -68,6 +86,8 @@ export class Store {
 		}
 		setCurrentProjectId(this.project.id);
 		this.selectedPassId = this.project.outputPassId;
+		this.history = new History<ProjectSnapshot>(this.snapshot(), (s) => structuredClone(s), { limit: HISTORY_LIMIT, coalesceMs: HISTORY_COALESCE_MS });
+		this.history.setOnChange(() => this.emit("history"));
 		this.refreshProjectList(projects.length ? projects : [this.project]);
 
 		this.applyProjectToRenderer();
@@ -190,6 +210,69 @@ export class Store {
 		await db.saveProject(this.project);
 	}
 
+	// ---- undo / redo --------------------------------------------------------
+
+	/** Live (uncloned) view of the undoable project slice; History clones it. */
+	private snapshot(): ProjectSnapshot {
+		return { name: this.project.name, passes: this.project.passes, outputPassId: this.project.outputPassId, uniforms: this.project.uniforms };
+	}
+
+	/** Record the just-applied mutation into history. Call AFTER mutating
+	 * `this.project`. `tag` groups same-kind edits for coalescing. */
+	private commit(label: string, tag: string, coalesce = false): void {
+		this.history.commit(this.snapshot(), label, tag, coalesce);
+	}
+
+	/** Restore a snapshot (from undo/redo) into the live project + renderer. */
+	private applySnapshot(s: ProjectSnapshot): void {
+		this.project.name = s.name;
+		this.project.passes = structuredClone(s.passes);
+		this.project.outputPassId = s.outputPassId;
+		this.project.uniforms = structuredClone(s.uniforms);
+		if (!this.passById(this.selectedPassId)) this.selectedPassId = this.project.outputPassId;
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.emit("selectedPass", this.selectedPassId);
+		// Source changed out from under the editor: force the code box to refresh
+		// even if it currently has focus (a normal "project" sync won't clobber a
+		// focused textarea, but an undo/redo must always be reflected).
+		this.emit("restore");
+		this.touch();
+	}
+
+	canUndo(): boolean {
+		return !this.busy && this.history.canUndo();
+	}
+	canRedo(): boolean {
+		return !this.busy && this.history.canRedo();
+	}
+	undoLabel(): string | null {
+		return this.history.undoLabel();
+	}
+	redoLabel(): string | null {
+		return this.history.redoLabel();
+	}
+
+	undo(): void {
+		if (this.busy) return; // never unwind while the agent is mid-edit
+		const s = this.history.undo();
+		if (s) this.applySnapshot(s);
+	}
+	redo(): void {
+		if (this.busy) return;
+		const s = this.history.redo();
+		if (s) this.applySnapshot(s);
+	}
+
+	/** Group every project mutation until endHistoryGroup() into one undo step.
+	 * The chat wraps an agent turn in this so a whole turn reverts at once. */
+	beginHistoryGroup(label: string): void {
+		this.history.beginGroup(label);
+	}
+	endHistoryGroup(): void {
+		this.history.endGroup();
+	}
+
 	/** The chat UI edited/deleted entries in `project.messages` in place. Bump the
 	 * timestamp, refresh the project list, and persist immediately. */
 	commitMessages(): void {
@@ -208,6 +291,7 @@ export class Store {
 			this.emit("compile", this.lastCompile);
 		}
 		this.emit("project", this.project);
+		this.commit(`Edit ${pass.name} code`, `code:${passId}`, true);
 		this.touch();
 		return this.passCompiles.get(passId) ?? { ok: true, log: "" };
 	}
@@ -219,6 +303,7 @@ export class Store {
 		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
 		this.emit("project", this.project);
+		this.commit("Edit uniforms", "uniforms");
 		this.touch();
 		return this.lastCompile;
 	}
@@ -228,6 +313,8 @@ export class Store {
 		if (!u) return;
 		u.value = value;
 		this.renderer.setUniformValues(this.project.uniforms);
+		// Coalesce a slider/picker drag into one entry rather than one per tick.
+		this.commit(`Adjust ${name}`, `uval:${name}`, true);
 		this.touch();
 	}
 
@@ -254,6 +341,7 @@ export class Store {
 			}
 		}
 		this.emit("project", this.project);
+		this.commit(`Set ${pass.name} iChannel${index}`, `channel:${passId}:${index}`);
 		this.touch();
 	}
 
@@ -264,6 +352,7 @@ export class Store {
 		pass.channels.push(emptyChannel());
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
+		this.commit(`Add input to ${pass.name}`, `addchannel:${passId}`);
 		this.touch();
 	}
 
@@ -275,6 +364,7 @@ export class Store {
 		pass.channels.splice(index, 1);
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
+		this.commit(`Remove iChannel${index} from ${pass.name}`, `rmchannel:${passId}`);
 		this.touch();
 	}
 
@@ -289,6 +379,7 @@ export class Store {
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedPass", pass.id);
+		this.commit(`Add pass "${pass.name}"`, "addpass");
 		this.touch();
 		return pass;
 	}
@@ -297,6 +388,7 @@ export class Store {
 		if (this.project.passes.length <= 1) return { ok: false, error: "Cannot remove the only pass." };
 		const idx = this.project.passes.findIndex((p) => p.id === passId);
 		if (idx === -1) return { ok: false, error: "No such pass." };
+		const removedName = this.project.passes[idx].name;
 		this.project.passes.splice(idx, 1);
 		// Detach any channel referencing the removed pass.
 		for (const p of this.project.passes) {
@@ -309,6 +401,7 @@ export class Store {
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedPass", this.selectedPassId);
+		this.commit(`Remove pass "${removedName}"`, "removepass");
 		this.touch();
 		return { ok: true };
 	}
@@ -318,6 +411,7 @@ export class Store {
 		if (!pass) return;
 		pass.name = uniquePassName(this.project.passes, name, passId);
 		this.emit("project", this.project);
+		this.commit(`Rename pass to "${pass.name}"`, `renamepass:${passId}`);
 		this.touch();
 	}
 
@@ -326,6 +420,7 @@ export class Store {
 		this.project.outputPassId = passId;
 		this.renderer.setOutputPass(passId);
 		this.emit("project", this.project);
+		this.commit("Set output pass", "output");
 		this.touch();
 	}
 
@@ -335,6 +430,7 @@ export class Store {
 		pass.format = format;
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
+		this.commit(`Set ${pass.name} format`, `format:${passId}`);
 		this.touch();
 	}
 
@@ -344,6 +440,7 @@ export class Store {
 		if (!pass) return;
 		pass.x = x;
 		pass.y = y;
+		this.commit("Move pass", `move:${passId}`, true);
 		this.touch();
 	}
 
@@ -380,6 +477,8 @@ export class Store {
 		this.project = p;
 		this.selectedPassId = p.outputPassId;
 		setCurrentProjectId(p.id);
+		// History is per-project: starting fresh on the adopted project's state.
+		this.history?.reset(this.snapshot());
 	}
 
 	async newProject(defaultShaderSource: string): Promise<void> {
@@ -436,6 +535,7 @@ export class Store {
 	renameProject(name: string): void {
 		this.project.name = name;
 		this.emit("project", this.project);
+		this.commit("Rename shader", "projname");
 		this.touch();
 	}
 

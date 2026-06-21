@@ -1,10 +1,15 @@
 // Top bar: project name + switcher, new/duplicate, import/export, settings.
 
 import { el, render } from "../util/dom.ts";
+import { icon } from "../util/icons.ts";
 import { downloadFile, pickFile } from "../util/misc.ts";
 import { buildExport } from "../state/persist.ts";
 import type { ExportBundle } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
+
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
+const UNDO_SC = IS_MAC ? "⌘Z" : "Ctrl+Z";
+const REDO_SC = IS_MAC ? "⇧⌘Z" : "Ctrl+Shift+Z";
 
 export interface TopbarDeps {
 	store: Store;
@@ -45,10 +50,25 @@ export function createTopbar(deps: TopbarDeps): HTMLElement {
 	busyDot.hidden = true;
 	store.on("busy", (b) => (busyDot.hidden = !b));
 
+	const undoBtn = el("button", { class: "btn icon", on: { click: () => store.undo() } }, icon("undo"));
+	const redoBtn = el("button", { class: "btn icon", on: { click: () => store.redo() } }, icon("redo"));
+	const refreshHistory = (): void => {
+		const u = store.undoLabel();
+		const r = store.redoLabel();
+		undoBtn.disabled = !store.canUndo();
+		redoBtn.disabled = !store.canRedo();
+		undoBtn.title = store.canUndo() ? `Undo ${u} (${UNDO_SC})` : `Nothing to undo (${UNDO_SC})`;
+		redoBtn.title = store.canRedo() ? `Redo ${r} (${REDO_SC})` : `Nothing to redo (${REDO_SC})`;
+	};
+	store.on("history", refreshHistory);
+	store.on("busy", refreshHistory); // undo/redo are disabled while the agent runs
+	refreshHistory();
+
 	const bar = el(
 		"header",
 		{ class: "topbar" },
 		el("span", { class: "brand" }, el("strong", {}, "AI Shadertoy"), busyDot),
+		el("div", { class: "undo-group" }, undoBtn, redoBtn),
 		nameInput,
 		switcher,
 		el("button", { class: "btn", title: "New project", on: { click: () => void store.newProject(deps.defaultShader()) } }, "+ New"),
