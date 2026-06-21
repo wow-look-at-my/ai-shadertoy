@@ -4,6 +4,7 @@
 // Everything is exportable/importable as a single JSON bundle.
 
 import type { ExportBundle, ImageAsset, Project, Settings } from "./types.ts";
+import { normalizeProject } from "./types.ts";
 
 const DB_NAME = "ai-shadertoy";
 const DB_VERSION = 1;
@@ -47,7 +48,7 @@ function getAll<T>(store: string): Promise<T[]> {
 
 export const db = {
 	saveProject: (p: Project) => tx(STORE_PROJECTS, "readwrite", (s) => s.put(p)),
-	loadProjects: () => getAll<Project>(STORE_PROJECTS),
+	loadProjects: () => getAll<Project>(STORE_PROJECTS).then((ps) => ps.map(normalizeProject)),
 	deleteProject: (id: string) => tx(STORE_PROJECTS, "readwrite", (s) => s.delete(id)),
 	saveAsset: (a: ImageAsset) => tx(STORE_ASSETS, "readwrite", (s) => s.put(a)),
 	loadAssets: () => getAll<ImageAsset>(STORE_ASSETS),

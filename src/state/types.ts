@@ -143,3 +143,13 @@ export function defaultChannels(): [Channel, Channel, Channel, Channel] {
 	const none = (): Channel => ({ kind: "none", filter: "linear", wrap: "repeat" });
 	return [none(), none(), none(), none()];
 }
+
+/** Repair a persisted/imported project so the app can't be white-screened by one
+ * malformed record (missing channels/uniforms/messages from a legacy or corrupt
+ * entry). Mutates and returns the project. */
+export function normalizeProject(p: Project): Project {
+	if (!Array.isArray(p.channels) || p.channels.length !== 4) p.channels = defaultChannels();
+	if (!Array.isArray(p.uniforms)) p.uniforms = [];
+	if (!Array.isArray(p.messages)) p.messages = [];
+	return p;
+}
