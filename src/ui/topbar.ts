@@ -72,6 +72,7 @@ export function createTopbar(deps: TopbarDeps): HTMLElement {
 		nameInput,
 		switcher,
 		el("button", { class: "btn", title: "New project", on: { click: () => void store.newProject(deps.defaultShader()) } }, "+ New"),
+		el("button", { class: "btn", title: "Duplicate current project", on: { click: () => void store.duplicateProject() } }, "Duplicate"),
 		el("button", {
 			class: "btn",
 			title: "Delete current project",
