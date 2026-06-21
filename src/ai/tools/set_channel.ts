@@ -13,11 +13,11 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.setChannel,
 		description:
-			"Wire one input channel (iChannel0-3) of a pass. kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass into this channel (this is how you build the graph, e.g. a blur pass sampling the effect pass); kind=none clears it. Targets the output pass by default; set `pass` to wire a different pass's input. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for uploaded/generated images.",
+			"Wire one input channel (iChannel0, iChannel1, ...) of a pass. A pass can have as many inputs as it needs (not capped at 4) -- setting an index at or beyond the current count adds inputs. kind=builtin binds a procedural texture; kind=pass feeds the OUTPUT texture of another pass into this channel (this is how you build the graph, e.g. a blur pass sampling the effect pass); kind=none clears it. Targets the output pass by default; set `pass` to wire a different pass's input. A channel may reference a pass's own previous frame for feedback. Use set_channel_asset for uploaded/generated images.",
 		parameters: {
 			type: "object",
 			properties: {
-				index: { type: "integer", description: "Channel index 0-3." },
+				index: { type: "integer", description: "Channel index (0-based). Using an index at/above the current input count adds inputs." },
 				kind: { type: "string", enum: ["none", "builtin", "pass"] },
 				builtin: { type: "string", enum: ["rgbaNoise", "grayNoise", "blue", "checker", "gradient"], description: "Required when kind=builtin." },
 				source: { type: "string", description: "Source pass name whose output feeds this channel. Required when kind=pass (may be the same pass for feedback)." },
@@ -30,7 +30,7 @@ registerTool({
 	},
 	execute: (ctx, input) => {
 		const index = Number(input["index"]);
-		if (!(index >= 0 && index <= 3)) return { content: [text("index must be 0-3.")], isError: true };
+		if (!(index >= 0 && index < ctx.renderer.maxInputs())) return { content: [text(`index must be 0..${ctx.renderer.maxInputs() - 1}.`)], isError: true };
 		const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
 		if (!target) return { content: [text(`No pass named "${String(input["pass"])}". Use list_passes.`)], isError: true };
 		const filter = (input["filter"] as TexFilter) ?? "linear";

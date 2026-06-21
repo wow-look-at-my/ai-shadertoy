@@ -77,15 +77,22 @@ export interface Channel {
 // EXT_color_buffer_float, falling back to rgba8 otherwise.
 export type PassFormat = "rgba8" | "rgba16f";
 
+/** Upper bound on inputs per pass. WebGL2 guarantees at least 16 fragment
+ * texture units (MAX_TEXTURE_IMAGE_UNITS); the renderer clamps to the actual
+ * device limit, which is >= this. (Shadertoy's fixed 4 is not a limit we keep.) */
+export const MAX_INPUTS = 16;
+
 /** One node in the render graph: a fragment shader that renders to its own
- * offscreen texture, with four input channels that can sample built-in
- * textures, image assets, or the output of OTHER passes (the graph edges). The
- * project's `outputPassId` pass is the one shown on screen. */
+ * offscreen texture, with a variable-length list of input channels that can
+ * each sample a built-in texture, an image asset, or the output of ANOTHER pass
+ * (the graph edges) -- including this pass's own previous frame (feedback).
+ * Inputs are addressed as iChannel0..iChannel{N-1} in the shader. The project's
+ * `outputPassId` pass is the one shown on screen. */
 export interface Pass {
 	id: string;
 	name: string;
 	source: string; // GLSL ES 3.00 body defining mainImage()
-	channels: [Channel, Channel, Channel, Channel];
+	channels: Channel[]; // 0..MAX_INPUTS; named iChannel0..iChannel{N-1}
 	format: PassFormat;
 	x: number; // node position in the graph editor
 	y: number;
@@ -161,14 +168,19 @@ export interface ExportBundle {
 	settings?: Settings; // optional; API keys excluded unless includeKeys
 }
 
-export function defaultChannels(): [Channel, Channel, Channel, Channel] {
-	const none = (): Channel => ({ kind: "none", filter: "linear", wrap: "repeat" });
-	return [none(), none(), none(), none()];
+export function emptyChannel(): Channel {
+	return { kind: "none", filter: "linear", wrap: "repeat" };
+}
+
+/** A default input list. New passes start with 4 (the familiar iChannel0..3),
+ * but inputs can be added/removed freely up to MAX_INPUTS. */
+export function defaultChannels(n = 4): Channel[] {
+	return Array.from({ length: n }, emptyChannel);
 }
 
 let passCounter = 0;
 /** Build a fresh pass. `id` is unique within a session; pass ids are persisted. */
-export function makePass(name: string, source: string, channels?: [Channel, Channel, Channel, Channel], x = 40, y = 40): Pass {
+export function makePass(name: string, source: string, channels?: Channel[], x = 40, y = 40): Pass {
 	passCounter++;
 	return {
 		id: `pass_${Date.now().toString(36)}_${passCounter}`,
