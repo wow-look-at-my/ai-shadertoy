@@ -25,7 +25,9 @@ registerTool({
 	execute: (ctx, input) => {
 		const source = String(input["source"] ?? "");
 		if (!source.trim()) return { content: [text("init_shader requires non-empty source.")], isError: true };
-		ctx.setShaderSource(source, true);
+		const pass = ctx.resolvePass(); // the output ("Image") pass
+		if (!pass) return { content: [text("No output pass to initialize.")], isError: true };
+		ctx.setPassSource(pass.id, source, true);
 		const note = input["note"] ? ` (${String(input["note"])})` : "";
 		return ctx.shaderResult(`Initialized shader${note}.`, input["screenshot"] === true);
 	},

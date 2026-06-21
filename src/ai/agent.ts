@@ -24,7 +24,17 @@ export type { ToolResult } from "./tools/index.ts";
 
 // Tools that change what's on screen. After any of these run, the model is
 // shown a forced render when it tries to stop, so it always verifies its work.
-const RENDER_TOOLS = new Set<string>([TOOL_NAMES.initShader, TOOL_NAMES.editShader, TOOL_NAMES.setUniforms, TOOL_NAMES.setChannel, TOOL_NAMES.setChannelAsset, TOOL_NAMES.generateTexture]);
+const RENDER_TOOLS = new Set<string>([
+	TOOL_NAMES.initShader,
+	TOOL_NAMES.editShader,
+	TOOL_NAMES.setUniforms,
+	TOOL_NAMES.setChannel,
+	TOOL_NAMES.setChannelAsset,
+	TOOL_NAMES.generateTexture,
+	TOOL_NAMES.addPass,
+	TOOL_NAMES.removePass,
+	TOOL_NAMES.setOutputPass,
+]);
 
 /** A pending tool call awaiting the user's approval (see requiresPermission). */
 export interface PermissionRequest {

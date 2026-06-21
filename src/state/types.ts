@@ -53,7 +53,7 @@ export interface Uniform {
 	label?: string;
 }
 
-export type ChannelKind = "none" | "image" | "builtin";
+export type ChannelKind = "none" | "image" | "builtin" | "pass";
 export type BuiltinTexture = "rgbaNoise" | "grayNoise" | "checker" | "gradient" | "blue";
 export type TexFilter = "linear" | "nearest";
 export type TexWrap = "repeat" | "clamp" | "mirror";
@@ -62,8 +62,28 @@ export interface Channel {
 	kind: ChannelKind;
 	assetId?: string; // when kind === "image"
 	builtin?: BuiltinTexture; // when kind === "builtin"
+	passId?: string; // when kind === "pass": the pass whose output feeds this channel
 	filter: TexFilter;
 	wrap: TexWrap;
+}
+
+// Render-target pixel format for a pass. rgba8 is universal; rgba16f keeps HDR
+// values (needed for bloom/blur of bright sources) when the GPU supports
+// EXT_color_buffer_float, falling back to rgba8 otherwise.
+export type PassFormat = "rgba8" | "rgba16f";
+
+/** One node in the render graph: a fragment shader that renders to its own
+ * offscreen texture, with four input channels that can sample built-in
+ * textures, image assets, or the output of OTHER passes (the graph edges). The
+ * project's `outputPassId` pass is the one shown on screen. */
+export interface Pass {
+	id: string;
+	name: string;
+	source: string; // GLSL ES 3.00 body defining mainImage()
+	channels: [Channel, Channel, Channel, Channel];
+	format: PassFormat;
+	x: number; // node position in the graph editor
+	y: number;
 }
 
 export interface ImageAsset {
@@ -80,9 +100,12 @@ export interface ImageAsset {
 export interface Project {
 	id: string;
 	name: string;
-	shaderSource: string;
+	/** The render graph: one or more passes. Single-pass projects have exactly
+	 * one pass (the output). Custom uniforms are shared across all passes. */
+	passes: Pass[];
+	/** Which pass is composited to the screen (the visible result). */
+	outputPassId: string;
 	uniforms: Uniform[];
-	channels: [Channel, Channel, Channel, Channel];
 	messages: Message[];
 	createdAt: number;
 	updatedAt: number;
@@ -136,4 +159,19 @@ export interface ExportBundle {
 export function defaultChannels(): [Channel, Channel, Channel, Channel] {
 	const none = (): Channel => ({ kind: "none", filter: "linear", wrap: "repeat" });
 	return [none(), none(), none(), none()];
+}
+
+let passCounter = 0;
+/** Build a fresh pass. `id` is unique within a session; pass ids are persisted. */
+export function makePass(name: string, source: string, channels?: [Channel, Channel, Channel, Channel], x = 40, y = 40): Pass {
+	passCounter++;
+	return {
+		id: `pass_${Date.now().toString(36)}_${passCounter}`,
+		name,
+		source,
+		channels: channels ?? defaultChannels(),
+		format: "rgba8",
+		x,
+		y,
+	};
 }
