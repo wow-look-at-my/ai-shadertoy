@@ -16,7 +16,7 @@ import { History } from "./history.ts";
 import { debounce, uid } from "../util/misc.ts";
 import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "selectedLayer" | "history" | "restore";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "selectedLayer" | "selectedShape" | "history" | "restore";
 
 /** The slice of a Project that undo/redo restores: the visible/editable state
  * (name, layer stack, uniforms). The conversation log and identity/timestamps
@@ -45,6 +45,9 @@ export class Store {
 	selectedLayerId = "";
 	/** Which pass (within the active layer) the editor/inspector is focused on. */
 	selectedPassId = "";
+	/** Which shape (in the active layer) is selected for direct manipulation on the
+	 * canvas, or "" for none. Cleared when the active layer changes. */
+	selectedShapeId = "";
 	busy = false;
 	/** Undo/redo over project snapshots. Reset whenever the active project
 	 * changes so history never crosses project boundaries. */
@@ -144,6 +147,12 @@ export class Store {
 		const layer = this.project.layers[this.project.layers.length - 1];
 		this.selectedLayerId = layer?.id ?? "";
 		this.selectedPassId = layer?.outputPassId ?? "";
+		this.selectedShapeId = "";
+	}
+
+	/** True if a shape with the given id exists in the active layer. */
+	private shapeInActiveLayer(shapeId: string): boolean {
+		return this.activeLayer()?.shapes.some((s) => s.id === shapeId) ?? false;
 	}
 
 	selectLayer(id: string): void {
@@ -151,8 +160,21 @@ export class Store {
 		if (!layer || id === this.selectedLayerId) return;
 		this.selectedLayerId = id;
 		this.selectedPassId = layer.outputPassId;
+		this.clearShapeSelection();
 		this.emit("selectedLayer", id);
 		this.emit("selectedPass", this.selectedPassId);
+	}
+
+	/** Select a shape (in the active layer) for canvas direct-manipulation. */
+	selectShape(shapeId: string): void {
+		if (this.selectedShapeId === shapeId) return;
+		this.selectedShapeId = shapeId;
+		this.emit("selectedShape", shapeId);
+	}
+	clearShapeSelection(): void {
+		if (!this.selectedShapeId) return;
+		this.selectedShapeId = "";
+		this.emit("selectedShape", "");
 	}
 
 	selectPass(id: string): void {
@@ -278,10 +300,12 @@ export class Store {
 		this.project.layers = structuredClone(s.layers);
 		this.project.uniforms = structuredClone(s.uniforms);
 		if (!this.layerById(this.selectedLayerId) || !this.passById(this.selectedPassId)) this.resetSelection();
+		if (this.selectedShapeId && !this.shapeInActiveLayer(this.selectedShapeId)) this.selectedShapeId = "";
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedLayer", this.selectedLayerId);
 		this.emit("selectedPass", this.selectedPassId);
+		this.emit("selectedShape", this.selectedShapeId);
 		// Source changed out from under the editor: force the code box to refresh
 		// even if it currently has focus (a normal "project" sync won't clobber a
 		// focused textarea, but an undo/redo must always be reflected).
@@ -584,7 +608,11 @@ export class Store {
 		const shape = makeShape(kind, { ...(shapeDef(kind)?.defaults ?? {}), ...patch });
 		layer.shapes.push(shape);
 		this.renderer.setLayerShapes(layerId, layer.shapes);
+		// Auto-select the new shape so its canvas handles appear immediately (only
+		// when it lands in the active layer; otherwise selection would be invalid).
+		if (layerId === this.activeLayer().id) this.selectedShapeId = shape.id;
 		this.emit("project", this.project);
+		this.emit("selectedShape", this.selectedShapeId);
 		this.commit(`Add ${kind} to "${layer.name}"`, "addshape");
 		this.touch();
 		return shape;
@@ -610,8 +638,10 @@ export class Store {
 		const idx = layer.shapes.findIndex((s) => s.id === shapeId);
 		if (idx === -1) return;
 		layer.shapes.splice(idx, 1);
+		if (this.selectedShapeId === shapeId) this.selectedShapeId = "";
 		this.renderer.setLayerShapes(layerId, layer.shapes);
 		this.emit("project", this.project);
+		this.emit("selectedShape", this.selectedShapeId);
 		this.commit(`Remove shape from "${layer.name}"`, "removeshape");
 		this.touch();
 	}

@@ -71,6 +71,11 @@ export function createRightPanel(store: Store): HTMLElement {
 	};
 	store.on("selectedPass", onSelectionChange);
 	store.on("selectedLayer", onSelectionChange);
+	// Shape selection (from the canvas gizmo or a row click) only re-skins the
+	// Layers tab; no need to rebuild the other tabs.
+	store.on("selectedShape", () => {
+		if (active === "Layers") renderLayers(store, layersView);
+	});
 	store.on("assets", () => {
 		if (active === "Textures") renderTextures(store, texturesView);
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
@@ -714,8 +719,10 @@ function shapeRow(store: Store, layer: Layer, shape: Shape, index: number): HTML
 	}
 
 	const del = el("button", { class: "btn icon tiny", title: "Delete shape", on: { click: () => store.removeShape(layer.id, shape.id) } }, icon("trash", { size: 14 }));
-	const head = el("div", { class: "shape-head" }, el("span", { class: "shape-kind" }, `[${index}] ${SHAPE_LABELS[shape.kind]}`), el("span", { class: "spacer" }), del);
-	return el("div", { class: "shape-row" }, head, fields, style);
+	const kindLabel = el("span", { class: "shape-kind", title: "Select on canvas", on: { click: () => store.selectShape(shape.id) } }, `[${index}] ${SHAPE_LABELS[shape.kind]}`);
+	const head = el("div", { class: "shape-head" }, kindLabel, el("span", { class: "spacer" }), del);
+	const selected = store.selectedShapeId === shape.id;
+	return el("div", { class: `shape-row${selected ? " selected" : ""}` }, head, fields, style);
 }
 
 function shapeNum(value: number, step: number, onChange: (v: number) => void): HTMLInputElement {

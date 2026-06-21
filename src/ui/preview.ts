@@ -3,6 +3,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { downloadFile } from "../util/misc.ts";
+import { createShapeGizmo } from "./shapegizmo.ts";
 import type { Store } from "../state/store.ts";
 import type { RenderStats } from "../gl/renderer.ts";
 
@@ -67,6 +68,7 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 
 	const canvasWrap = el("div", { class: "canvas-wrap" });
 	canvasWrap.appendChild(canvas);
+	canvasWrap.appendChild(createShapeGizmo(store, canvas));
 
 	return el("section", { class: "preview" }, toolbar, canvasWrap, el("div", { class: "statbar" }, stats));
 }
