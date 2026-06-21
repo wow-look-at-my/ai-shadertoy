@@ -60,7 +60,11 @@ export interface Uniform {
 
 // "video"/"webcam" are DYNAMIC: a live video element whose current frame is
 // uploaded to the channel texture every render tick (see gl/dynamictexture.ts).
-export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam";
+// "under"/"geometry" are LAYER-AMBIENT inputs the renderer provides per layer:
+// "under" = the composite of every layer below this one (transparent for the
+// bottom layer); "geometry" = this layer's shapes rasterized (premultiplied
+// rgba). Neither needs an asset/builtin/pass reference.
+export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam" | "under" | "geometry";
 export type BuiltinTexture = "rgbaNoise" | "grayNoise" | "checker" | "gradient" | "blue";
 export type TexFilter = "linear" | "nearest";
 export type TexWrap = "repeat" | "clamp" | "mirror";
@@ -100,6 +104,48 @@ export interface Pass {
 	y: number;
 }
 
+// ---- layers + geometry -----------------------------------------------------
+
+/** Geometry primitive kind. This is a plain string union so a new shape is one
+ * entry here plus one entry in the shape registry (gl/shapes.ts) -- the geometry
+ * shader, the UI pickers, and the AI tools all enumerate from that registry. */
+export type ShapeKind = "quad" | "circle";
+
+/** One drawable primitive in a layer, rasterized as a real instanced mesh (a
+ * unit quad shaded by the kind's signed-distance function). Coordinates are
+ * normalized to the canvas: center (x,y) in 0..1 (x right, y UP -- origin
+ * bottom-left, matching fragCoord), size (w,h) as a fraction of canvas width and
+ * height. Rotation is rigid (applied in pixel space so aspect never shears it).
+ * Shapes within a layer paint back-to-front in array order. */
+export interface Shape {
+	id: string;
+	kind: ShapeKind;
+	x: number; // center X, 0..1 of width
+	y: number; // center Y, 0..1 of height (origin bottom-left)
+	w: number; // full width, fraction of canvas width
+	h: number; // full height, fraction of canvas height
+	rotation: number; // radians
+	color: [number, number, number, number]; // RGBA 0..1 (straight; rasterized premultiplied)
+	cornerRadius: number; // 0..1 of the smaller half-extent (rounded corners; quad)
+	feather: number; // edge softness in pixels (>= 0; on top of 1px AA)
+}
+
+/** One layer in the document's back-to-front stack. A layer is its own node
+ * graph (`passes` + `outputPassId`, exactly like the old top-level project) plus
+ * a list of geometry `shapes`. Its passes can wire two layer-ambient inputs:
+ * kind:"under" (the composite of the layers below) and kind:"geometry" (this
+ * layer's rasterized shapes); the layer's output pass produces the new
+ * composite. Blending is therefore whatever the graph computes. */
+export interface Layer {
+	id: string;
+	name: string;
+	visible: boolean;
+	opacity: number; // 0..1, scales this layer's geometry contribution
+	passes: Pass[]; // the layer's render graph
+	outputPassId: string; // the pass whose output is this layer's composite
+	shapes: Shape[];
+}
+
 // A bindable media asset: a still image or (kind === "video") a clip sampled per
 // frame. Both are stored inline as a data URL so they persist/export with the
 // project. The webcam is a live channel with no asset.
@@ -119,11 +165,12 @@ export interface ImageAsset {
 export interface Project {
 	id: string;
 	name: string;
-	/** The render graph: one or more passes. Single-pass projects have exactly
-	 * one pass (the output). Custom uniforms are shared across all passes. */
-	passes: Pass[];
-	/** Which pass is composited to the screen (the visible result). */
-	outputPassId: string;
+	/** The document: an ordered stack of layers drawn BACK TO FRONT. layers[0] is
+	 * the bottom layer (drawn first); the last entry is on top. Each layer is its
+	 * own render graph; the previous layers' composite feeds the next as "under".
+	 * The topmost visible layer's composite is shown on screen. */
+	layers: Layer[];
+	/** Custom uniforms are shared across every pass in every layer. */
 	uniforms: Uniform[];
 	messages: Message[];
 	createdAt: number;
@@ -198,4 +245,66 @@ export function makePass(name: string, source: string, channels?: Channel[], x =
 		x,
 		y,
 	};
+}
+
+let shapeCounter = 0;
+/** Build a fresh shape. Per-kind defaults (size, corner radius, ...) are filled
+ * in by the caller from the shape registry; this just centers a medium primitive. */
+export function makeShape(kind: ShapeKind, patch: Partial<Shape> = {}): Shape {
+	shapeCounter++;
+	return {
+		id: `shape_${Date.now().toString(36)}_${shapeCounter}`,
+		kind,
+		x: 0.5,
+		y: 0.5,
+		w: 0.4,
+		h: 0.4,
+		rotation: 0,
+		color: [0.9, 0.3, 0.4, 1],
+		cornerRadius: 0,
+		feather: 0,
+		...patch,
+	};
+}
+
+// The default graph for a NEW layer: one pass that composites this layer's
+// geometry over the layers below ("source-over", premultiplied alpha). Both
+// inputs are premultiplied, so a single mad does the blend. Rewrite this shader
+// (or add passes) to get any other blend mode -- that is the whole point: the
+// node graph controls the blending.
+export const LAYER_COMPOSITE_SOURCE = `// Composite this layer's geometry over the layers below it.
+// iChannel0 = under (everything below, premultiplied); iChannel1 = this layer's geometry.
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+	vec2 uv = fragCoord / iResolution.xy;
+	vec4 under = texture(iChannel0, uv);
+	vec4 geo = texture(iChannel1, uv);
+	// "over": premultiplied src + dst * (1 - src.a).
+	fragColor = geo + under * (1.0 - geo.a);
+}
+`;
+
+let layerCounter = 0;
+/** Build a fresh layer wrapping an explicit set of passes (its render graph). */
+export function makeLayer(name: string, passes: Pass[], outputPassId: string, shapes: Shape[] = [], opts: Partial<Pick<Layer, "visible" | "opacity">> = {}): Layer {
+	layerCounter++;
+	return {
+		id: `layer_${Date.now().toString(36)}_${layerCounter}`,
+		name,
+		visible: opts.visible ?? true,
+		opacity: opts.opacity ?? 1,
+		passes,
+		outputPassId,
+		shapes,
+	};
+}
+
+/** A ready-to-use geometry layer: one "Composite" pass wired under->iChannel0,
+ * geometry->iChannel1, doing source-over. Used when the AI/UI adds a new layer. */
+export function makeCompositeLayer(name: string, shapes: Shape[] = []): Layer {
+	const channels: Channel[] = [
+		{ kind: "under", filter: "linear", wrap: "clamp" },
+		{ kind: "geometry", filter: "linear", wrap: "clamp" },
+	];
+	const pass = makePass("Composite", LAYER_COMPOSITE_SOURCE, channels, 320, 60);
+	return makeLayer(name, [pass], pass.id, shapes);
 }

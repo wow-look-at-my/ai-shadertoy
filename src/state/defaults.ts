@@ -1,7 +1,8 @@
 // Default settings and project factories.
 
-import type { Channel, Pass, ProviderId, Project, Settings, Uniform } from "./types.ts";
-import { defaultChannels, emptyChannel, makePass, MAX_INPUTS } from "./types.ts";
+import type { Channel, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
+import { defaultChannels, emptyChannel, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
+import { isShapeKind } from "../gl/shapes.ts";
 import { uid } from "../util/misc.ts";
 
 // Model presets per provider. Free-text entry is still allowed in Settings; these
@@ -51,14 +52,17 @@ export function mergeSettings(partial: Partial<Settings> | null): Settings {
 
 export const STARTER_UNIFORMS: Uniform[] = [];
 
+/** A fresh project: one "Base" layer wrapping a single "Image" pass (no
+ * geometry), matching the classic single-shader starting point. New layers are
+ * stacked on top of this. */
 export function makeProject(name: string, shaderSource: string): Project {
 	const now = Date.now();
 	const output = makePass("Image", shaderSource, defaultChannels(), 320, 60);
+	const base = makeLayer("Base", [output], output.id, []);
 	return {
 		id: uid("p_"),
 		name,
-		passes: [output],
-		outputPassId: output.id,
+		layers: [base],
 		uniforms: [],
 		messages: [],
 		createdAt: now,
@@ -71,14 +75,20 @@ export function makeProject(name: string, shaderSource: string): Project {
 interface LegacyProject {
 	id?: string;
 	name?: string;
-	shaderSource?: string;
-	channels?: [Channel, Channel, Channel, Channel];
+	shaderSource?: string; // very old: a single shader
+	channels?: unknown; // very old: that shader's four channels
 	uniforms?: Uniform[];
 	messages?: Project["messages"];
 	createdAt?: number;
 	updatedAt?: number;
-	passes?: unknown;
+	passes?: unknown; // mid-era: a flat render graph (one implicit layer)
 	outputPassId?: string;
+	layers?: unknown; // current: a stack of layers
+}
+
+function clampNum(v: unknown, lo: number, hi: number, d: number): number {
+	const n = Number(v);
+	return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
 }
 
 function normalizeChannels(raw: unknown): Channel[] {
@@ -108,28 +118,62 @@ function normalizePass(raw: unknown, i: number): Pass {
 	};
 }
 
-/** Coerce a persisted/imported record into a current-shape Project. Legacy
- * projects stored a single `shaderSource` + `channels`; those become a single
- * "Image" output pass. Forward-compatible: already-migrated projects pass
- * through with their fields validated. */
+function normalizeShape(raw: unknown): Shape {
+	const r = (raw ?? {}) as Partial<Shape>;
+	const kind: ShapeKind = typeof r.kind === "string" && isShapeKind(r.kind) ? r.kind : "quad";
+	const color = Array.isArray(r.color) ? r.color : [];
+	const c = (idx: number, d: number) => clampNum(color[idx], 0, 1, d);
+	const s = makeShape(kind, {
+		x: clampNum(r.x, -2, 3, 0.5),
+		y: clampNum(r.y, -2, 3, 0.5),
+		w: clampNum(r.w, 0, 4, 0.4),
+		h: clampNum(r.h, 0, 4, 0.4),
+		rotation: Number.isFinite(Number(r.rotation)) ? Number(r.rotation) : 0,
+		color: [c(0, 0.9), c(1, 0.3), c(2, 0.4), c(3, 1)],
+		cornerRadius: clampNum(r.cornerRadius, 0, 1, 0),
+		feather: clampNum(r.feather, 0, 500, 0),
+	});
+	if (typeof r.id === "string" && r.id) s.id = r.id;
+	return s;
+}
+
+function normalizeLayer(raw: unknown, i: number): Layer {
+	const r = (raw ?? {}) as Partial<Layer>;
+	const passesRaw = Array.isArray(r.passes) && r.passes.length ? r.passes : [{ name: "Image", source: "" }];
+	const passes = passesRaw.map((p, j) => normalizePass(p, j));
+	const outputPassId = passes.some((p) => p.id === r.outputPassId) ? r.outputPassId! : passes[passes.length - 1].id;
+	const shapes = Array.isArray(r.shapes) ? r.shapes.map(normalizeShape) : [];
+	return {
+		id: typeof r.id === "string" && r.id ? r.id : uid("layer_"),
+		name: typeof r.name === "string" && r.name ? r.name : `Layer ${i + 1}`,
+		visible: r.visible !== false,
+		opacity: clampNum(r.opacity, 0, 1, 1),
+		passes,
+		outputPassId,
+		shapes,
+	};
+}
+
+/** Coerce a persisted/imported record into a current-shape Project. Three eras:
+ * `layers` (current) pass through normalized; a flat `passes`/`outputPassId`
+ * graph becomes one "Base" layer; the oldest single `shaderSource` becomes one
+ * "Base" layer with one "Image" pass. */
 export function normalizeProject(raw: unknown): Project {
 	const r = (raw ?? {}) as LegacyProject;
 	const now = Date.now();
-	let passes: Pass[];
-	let outputPassId: string;
-	if (Array.isArray(r.passes) && r.passes.length) {
-		passes = r.passes.map((p, i) => normalizePass(p, i));
-		outputPassId = passes.some((p) => p.id === r.outputPassId) ? r.outputPassId! : passes[passes.length - 1].id;
+	let layers: Layer[];
+	if (Array.isArray(r.layers) && r.layers.length) {
+		layers = r.layers.map((l, i) => normalizeLayer(l, i));
+	} else if (Array.isArray(r.passes) && r.passes.length) {
+		layers = [normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0)];
 	} else {
 		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels), 320, 60);
-		passes = [output];
-		outputPassId = output.id;
+		layers = [makeLayer("Base", [output], output.id, [])];
 	}
 	return {
 		id: r.id ?? uid("p_"),
 		name: r.name ?? "Untitled shader",
-		passes,
-		outputPassId,
+		layers,
 		uniforms: Array.isArray(r.uniforms) ? r.uniforms : [],
 		messages: Array.isArray(r.messages) ? r.messages : [],
 		createdAt: typeof r.createdAt === "number" ? r.createdAt : now,
