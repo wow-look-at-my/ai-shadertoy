@@ -62,6 +62,11 @@ Models without native function calling still work: switch **Settings → Tool
 calling** to **Text tags** and the model drives the same tools via forgiving XML
 in its reply.
 
+Hover any message to **edit** or **delete** it. Editing a prompt rewrites it and
+re-runs from that point (everything after is replaced). Deleting removes that
+exchange — a prompt and the reply it produced — and keeps the rest of the
+conversation intact.
+
 ### Undo / redo
 
 A single history tracks the whole project — every pass's code, the render graph,
