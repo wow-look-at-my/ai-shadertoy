@@ -1106,7 +1106,7 @@ textarea.code {
 .shape-fields {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 6px 10px;
+	gap: 6px 8px;
 }
 .shape-field {
 	display: flex;
@@ -1120,7 +1120,8 @@ textarea.code {
 	color: var(--muted);
 }
 .shape-num {
-	width: 56px;
+	width: 68px;
+	box-sizing: border-box;
 }
 .shape-style {
 	display: flex;
