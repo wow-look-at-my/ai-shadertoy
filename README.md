@@ -104,8 +104,10 @@ for Claude models, and tokens-only (no dollar figure) for unrecognized endpoints
 
 Projects, conversations, and image assets are stored in **IndexedDB**; settings in
 `localStorage`. The app requests persistent storage so the browser won't evict it.
-Use **Export** / **Import** (top bar) to move everything as a single JSON file
-(API keys excluded by default).
+The top bar manages projects: create a **New** one, **Duplicate** the current one
+(a full independent copy of its passes, uniforms, and conversation — handy for
+forking an experiment), switch between them, or **Delete**. Use **Export** /
+**Import** to move everything as a single JSON file (API keys excluded by default).
 
 ## Develop
 
