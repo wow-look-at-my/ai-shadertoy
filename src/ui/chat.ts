@@ -44,6 +44,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	let abort: AbortController | null = null;
 	let streamingText: HTMLElement | null = null;
+	let pending = ""; // assistant text received but not yet painted
+	let pumpId = 0; // rAF id for the typewriter pump (0 = idle)
 	let shownProjectId = store.project.id;
 
 	store.on("busy", (b) => {
@@ -74,6 +76,32 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	function scroll(): void {
 		requestAnimationFrame(() => (list.scrollTop = list.scrollHeight));
+	}
+
+	// Anthropic streams text in coarse chunks (~2-5 deltas/sec for Opus), so
+	// painting each chunk on arrival looks choppy. Buffer incoming text and drain
+	// a slice per animation frame, typing each chunk in smoothly. The /12 divisor
+	// keeps what's shown within ~200ms of what's arrived; appending a text node
+	// (vs reassigning textContent) keeps it O(n). onMessage renders the full
+	// markdown at the end, so any text still in the buffer is never lost.
+	function pumpStream(): void {
+		pumpId = 0;
+		if (!streamingText || !pending) return;
+		const step = Math.max(2, Math.ceil(pending.length / 12));
+		streamingText.appendChild(document.createTextNode(pending.slice(0, step)));
+		pending = pending.slice(step);
+		list.scrollTop = list.scrollHeight;
+		if (pending) pumpId = requestAnimationFrame(pumpStream);
+	}
+	function feedStream(t: string): void {
+		pending += t;
+		if (!pumpId) pumpId = requestAnimationFrame(pumpStream);
+	}
+	function endStream(): void {
+		if (pumpId) cancelAnimationFrame(pumpId);
+		pumpId = 0;
+		pending = "";
+		streamingText = null;
 	}
 
 	// Surface an approve/deny card for a permission-gated tool call and resolve
@@ -152,15 +180,15 @@ export function createChat(deps: ChatDeps): HTMLElement {
 					signal: abort.signal,
 					requestPermission,
 					onTurnStart: () => {
+						if (pumpId) cancelAnimationFrame(pumpId);
+						pumpId = 0;
+						pending = "";
 						streamingText = el("div", { class: "md streaming" });
 						list.appendChild(el("div", { class: "msg assistant" }, streamingText));
 						scroll();
 					},
 					onAssistantDelta: (t) => {
-						if (streamingText) {
-							streamingText.textContent = (streamingText.textContent ?? "") + t;
-							scroll();
-						}
+						if (streamingText) feedStream(t);
 					},
 					onToolActivity: (toolName, phase) => {
 						if (phase === "start") {
@@ -174,7 +202,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 						void store.saveProjectNow();
 						if (msg.role === "assistant" && streamingText) {
 							const bubble = streamingText.parentElement;
-							streamingText = null;
+							endStream();
 							if (bubble) {
 								clear(bubble);
 								append(bubble, assistantContent(msg));
@@ -192,7 +220,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		} finally {
 			store.setBusy(false);
 			abort = null;
-			streamingText = null;
+			endStream();
 			await store.saveProjectNow();
 			scroll();
 		}
