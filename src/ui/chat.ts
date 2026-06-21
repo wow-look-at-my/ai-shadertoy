@@ -45,6 +45,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	let abort: AbortController | null = null;
 	let streamingText: HTMLElement | null = null;
+	let thinkingEl: HTMLElement | null = null; // live extended-thinking block for the turn
 	let pending = ""; // assistant text received but not yet painted
 	let pumpId = 0; // rAF id for the typewriter pump (0 = idle)
 	let shownProjectId = store.project.id;
@@ -134,6 +135,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		pumpId = 0;
 		pending = "";
 		streamingText = null;
+		thinkingEl = null;
 	}
 
 	// Surface an approve/deny card for a permission-gated tool call and resolve
@@ -231,12 +233,21 @@ export function createChat(deps: ChatDeps): HTMLElement {
 						if (pumpId) cancelAnimationFrame(pumpId);
 						pumpId = 0;
 						pending = "";
+						thinkingEl = el("details", { class: "thinking", attrs: { open: "" } }, el("summary", {}, "Thinking"));
+						thinkingEl.hidden = true; // revealed once the first thinking delta arrives
 						streamingText = el("div", { class: "md streaming" });
-						list.appendChild(el("div", { class: "msg assistant" }, streamingText));
+						list.appendChild(el("div", { class: "msg assistant" }, thinkingEl, streamingText));
 						scroll();
 					},
 					onAssistantDelta: (t) => {
 						if (streamingText) feedStream(t);
+					},
+					onThinkingDelta: (t) => {
+						if (thinkingEl) {
+							thinkingEl.hidden = false;
+							thinkingEl.appendChild(document.createTextNode(t));
+							list.scrollTop = list.scrollHeight;
+						}
 					},
 					onToolActivity: (toolName, phase) => {
 						if (phase === "start") {
@@ -317,7 +328,8 @@ function assistantContent(m: Message): HTMLElement[] {
 		return out;
 	}
 	for (const b of m.blocks) {
-		if (b.type === "text" && b.text.trim()) out.push(renderMarkdown(b.text));
+		if (b.type === "thinking" && b.thinking.trim()) out.push(el("details", { class: "thinking" }, el("summary", {}, "Thinking"), renderMarkdown(b.thinking)));
+		else if (b.type === "text" && b.text.trim()) out.push(renderMarkdown(b.text));
 		else if (b.type === "tool_use") out.push(toolUseEl(b));
 	}
 	if (!out.length) out.push(el("div", { class: "muted small" }, "(no text)"));

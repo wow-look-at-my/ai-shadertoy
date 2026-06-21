@@ -267,6 +267,29 @@ textarea:focus {
 .streaming {
 	white-space: pre-wrap;
 }
+.thinking {
+	margin: 0 0 8px;
+	padding: 3px 0 3px 10px;
+	border-left: 2px solid var(--line);
+	color: var(--muted);
+	font-size: 12.5px;
+	white-space: pre-wrap;
+}
+.thinking > summary {
+	cursor: pointer;
+	font-style: italic;
+	color: var(--fg-dim);
+	list-style: none;
+}
+.thinking > summary::-webkit-details-marker {
+	display: none;
+}
+.thinking[open] > summary {
+	margin-bottom: 5px;
+}
+.thinking .md {
+	color: var(--muted);
+}
 .tool-chip {
 	font-size: 12px;
 	color: var(--fg-dim);

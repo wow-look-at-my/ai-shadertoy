@@ -46,6 +46,7 @@ export interface PermissionRequest {
 export interface AgentCallbacks {
 	onTurnStart(): void;
 	onAssistantDelta(text: string): void;
+	onThinkingDelta(text: string): void;
 	onToolActivity(name: string, phase: "start" | "done", detail?: string): void;
 	onMessage(msg: Message): void; // a finalized message; caller persists + renders
 	/** Ask the user to approve a permission-gated tool call. Resolves true to run
@@ -78,6 +79,7 @@ export async function runAgent(
 			signal: cb.signal,
 			onEvent: (ev) => {
 				if (ev.type === "text") cb.onAssistantDelta(ev.delta);
+				else if (ev.type === "thinking") cb.onThinkingDelta(ev.delta);
 				else if (ev.type === "tool_start") cb.onToolActivity(ev.name, "start");
 			},
 		});
@@ -85,13 +87,16 @@ export async function runAgent(
 
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : turn.toolCalls;
 
+		// Thinking blocks ride at the front of the assistant turn; Anthropic requires
+		// them replayed unchanged or tool-use continuations 400.
+		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
 		const assistantMsg: Message = {
 			id: uid("m_"),
 			role: "assistant",
 			ts: Date.now(),
 			blocks: textMode
-				? [{ type: "text", text: turn.text } as TextBlock]
-				: [...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []), ...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
+				? [...thinkingBlocks, { type: "text", text: turn.text } as TextBlock]
+				: [...thinkingBlocks, ...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []), ...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
 			...(textMode ? { textTools: calls.map((c) => c.name) } : {}),
 		};
 		messages.push(assistantMsg);

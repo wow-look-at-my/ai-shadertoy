@@ -19,13 +19,18 @@ export interface ToolUseBlock {
 	name: string;
 	input: unknown;
 }
+export interface ThinkingBlock {
+	type: "thinking";
+	thinking: string; // summarized reasoning text (may be empty if display omitted)
+	signature: string; // opaque signature; must be replayed unchanged on the same model
+}
 export interface ToolResultBlock {
 	type: "tool_result";
 	toolUseId: string;
 	content: Array<TextBlock | ImageBlock>;
 	isError?: boolean;
 }
-export type Block = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
+export type Block = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock;
 
 export interface Message {
 	id: string;
