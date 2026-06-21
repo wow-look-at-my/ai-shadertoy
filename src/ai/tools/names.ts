@@ -12,6 +12,10 @@ export const TOOL_NAMES = {
 	listAssets: "list_assets",
 	generateTexture: "generate_texture",
 	screenshot: "capture_screenshot",
+	addPass: "add_pass",
+	removePass: "remove_pass",
+	listPasses: "list_passes",
+	setOutputPass: "set_output_pass",
 } as const;
 
 export type ToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];

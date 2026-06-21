@@ -5,14 +5,6 @@
 
 import type { Uniform, UniformType } from "../state/types.ts";
 
-export const VERTEX_SHADER = `#version 300 es
-// Full-screen triangle; no attributes needed.
-void main() {
-	vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-	gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}
-`;
-
 export function glslType(t: UniformType): string {
 	switch (t) {
 		case "float":
