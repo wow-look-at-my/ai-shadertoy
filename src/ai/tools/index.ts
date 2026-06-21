@@ -22,6 +22,8 @@ import "./remove_layer.ts";
 import "./reorder_layer.ts";
 import "./set_layer.ts";
 import "./select_layer.ts";
+import "./add_mask.ts";
+import "./remove_mask.ts";
 import "./list_shapes.ts";
 import "./add_shape.ts";
 import "./edit_shape.ts";

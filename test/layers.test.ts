@@ -4,7 +4,7 @@
 //   node --experimental-strip-types test/layers.test.ts
 
 import { makeProject, normalizeProject } from "../src/state/defaults.ts";
-import { makeCompositeLayer, makeShape } from "../src/state/types.ts";
+import { makeCompositeLayer, makeMaskLayer, makeShape } from "../src/state/types.ts";
 import { isShapeKind, shapeKindIndex, SHAPE_KINDS } from "../src/gl/shapes.ts";
 import { parseShapePatch } from "../src/ai/tools/geometry_util.ts";
 
@@ -126,6 +126,39 @@ function near(a: number, b: number, msg: string): void {
 	near(patch.color?.[3] ?? -1, 1, "missing alpha defaults to 1");
 	const empty = parseShapePatch({});
 	eq(Object.keys(empty).length, 0, "no fields -> empty patch");
+}
+
+// ---- layer masks -----------------------------------------------------------
+{
+	const mask = makeMaskLayer([makeShape("circle", { falloff: 1 })]);
+	eq(mask.passes.length, 1, "mask layer has one pass");
+	eq(mask.passes[0].channels[0].kind, "geometry", "mask pass samples geometry");
+	eq(mask.outputPassId, mask.passes[0].id, "mask output is its pass");
+	eq(mask.shapes.length, 1, "mask seeded with a shape");
+
+	// Migration preserves + normalizes a nested mask.
+	const raw = {
+		layers: [
+			{
+				name: "Tex",
+				passes: [{ id: "p", name: "Composite", source: "// c", channels: [{ kind: "under" }, { kind: "geometry" }] }],
+				outputPassId: "p",
+				shapes: [],
+				mask: {
+					name: "Mask",
+					passes: [{ id: "m", name: "Mask", source: "// m", channels: [{ kind: "geometry" }] }],
+					outputPassId: "m",
+					shapes: [{ kind: "circle", falloff: 1 }],
+				},
+			},
+		],
+	};
+	const p = normalizeProject(raw);
+	eq(p.layers.length, 1, "one stack layer after migration");
+	check(!!p.layers[0].mask, "mask carried through migration");
+	eq(p.layers[0].mask!.passes[0].channels[0].kind, "geometry", "mask channel preserved");
+	eq(p.layers[0].mask!.shapes.length, 1, "mask shape preserved");
+	near(p.layers[0].mask!.shapes[0].falloff, 1, "mask shape falloff preserved");
 }
 
 console.log(`ok - ${passed} assertions passed`);

@@ -52,7 +52,7 @@ function shapesLine(layer: Layer): string {
 function documentSummary(p: Project, activeLayerId: string): string {
 	return p.layers
 		.map((layer, i) => {
-			const flags = [layer.visible ? null : "hidden", layer.opacity < 1 ? `opacity ${layer.opacity.toFixed(2)}` : null, layer.id === activeLayerId ? "ACTIVE" : null].filter(Boolean).join(", ");
+			const flags = [layer.visible ? null : "hidden", layer.opacity < 1 ? `opacity ${layer.opacity.toFixed(2)}` : null, layer.mask ? "masked" : null, layer.id === activeLayerId ? "ACTIVE" : null].filter(Boolean).join(", ");
 			const head = `  [${i}] Layer "${layer.name}"${flags ? ` (${flags})` : ""}`;
 			const passes = layer.passes.map((pass) => passLine(pass, layer)).join("\n");
 			return `${head}${shapesLine(layer)}\n${passes}`;
@@ -87,6 +87,7 @@ export function buildSystemPrompt(): string {
   Because the blend is just shader math in the layer's output pass, THE NODE GRAPH CONTROLS THE BLENDING. A fresh layer (add_layer) comes pre-wired iChannel0=under, iChannel1=geometry doing source-over: fragColor = geo + under*(1.0 - geo.a). Rewrite that to multiply, screen, add, displace by geometry, mask, etc.
 - Geometry is REAL instanced shapes you place as data, not SDF code you write. Manage it with add_shape / edit_shape / remove_shape / list_shapes. Shapes use normalized coords: centre (x,y) in 0..1 (origin bottom-left), size (w,h) as a fraction of the canvas; plus rotation (degrees), rgba colour, cornerRadius (quad), feather. Available kinds: ${Object.values(SHAPE_LABELS).join(", ")}.
 - Manage the stack with add_layer (adds on top, becomes ACTIVE), remove_layer, reorder_layer, set_layer (name/visible/opacity), list_layers. The pass/geometry tools act on the ACTIVE layer -- call select_layer first to work on a different one (add_layer/add_shape already target the right layer).
+- LAYER MASKS: a layer can have a MASK (another layer, rendered standalone). The mask's output ALPHA is the masked layer's per-pixel opacity -- result = mix(under, layerComposite, mask.alpha). This is THE clean way to reveal a layer (e.g. a texture) through a shape: add_mask seeds a soft circle and makes the MASK active, so add_shape/edit_shape build the mask (an ellipse with falloff = a radial-gradient mask); select_layer returns to the stack. remove_mask drops it.
 - Typical build: keep a background in the Base layer; add_layer "Shapes"; add_shape circle/quad to it; it composites over the background automatically. For a glow, add a layer, add a bright shape, then add blur passes inside that layer sampling geometry, and have its output composite the blurred glow over under.
 
 # Multi-pass render graph WITHIN a layer (beyond Shadertoy's fixed buffers)
@@ -168,6 +169,8 @@ const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.reorderLayer]: '<reorder_layer>{"layer":"Shapes","move":"top"}</reorder_layer>   (move: up | down | top | bottom, or {"to": index})',
 	[TOOL_NAMES.setLayer]: '<set_layer>{"layer":"Shapes","opacity":0.6,"visible":true}</set_layer>',
 	[TOOL_NAMES.selectLayer]: '<select_layer>{"layer":"Shapes"}</select_layer>   (make a layer active so pass/geometry tools target it)',
+	[TOOL_NAMES.addMask]: '<add_mask>{"layer":"Glow"}</add_mask>   (mask a layer by another layer\'s alpha; seeds a soft circle and makes the MASK active to edit -- e.g. an ellipse with falloff = a radial-gradient mask)',
+	[TOOL_NAMES.removeMask]: '<remove_mask>{"layer":"Glow"}</remove_mask>',
 	[TOOL_NAMES.listShapes]: '<list_shapes>{"layer":"Shapes"}</list_shapes>',
 	[TOOL_NAMES.addShape]: '<add_shape>{"kind":"quad","x":0.5,"y":0.5,"w":0.4,"h":0.25,"rotation":15,"color":[0.2,0.6,1,1],"cornerRadius":0.3}</add_shape>   (x,y centre & w,h size are 0..1 of the canvas; rotation in degrees)',
 	[TOOL_NAMES.editShape]: '<edit_shape>{"index":0,"x":0.4,"color":[1,0,0,1]}</edit_shape>   (index = shape position from list_shapes)',

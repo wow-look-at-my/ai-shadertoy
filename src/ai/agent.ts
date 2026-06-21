@@ -41,6 +41,8 @@ const RENDER_TOOLS = new Set<string>([
 	TOOL_NAMES.addShape,
 	TOOL_NAMES.editShape,
 	TOOL_NAMES.removeShape,
+	TOOL_NAMES.addMask,
+	TOOL_NAMES.removeMask,
 ]);
 
 /** A pending tool call awaiting the user's approval (see requiresPermission). */

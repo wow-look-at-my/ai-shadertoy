@@ -36,6 +36,10 @@ export interface ToolContext {
 	reorderLayer(layerId: string, toIndex: number): void;
 	setLayerVisible(layerId: string, visible: boolean): void;
 	setLayerOpacity(layerId: string, opacity: number): void;
+	/** Add (or focus) a layer's mask and make it the active layer for editing;
+	 * returns the mask layer. The mask's alpha attenuates the layer per-pixel. */
+	addMask(layerId: string): Layer | null;
+	removeMask(layerId: string): void;
 	/** Make a layer active so the pass-scoped methods below target its graph. */
 	selectLayer(layerId: string): void;
 	// ---- geometry ----

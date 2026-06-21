@@ -144,7 +144,7 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 	const passes = passesRaw.map((p, j) => normalizePass(p, j));
 	const outputPassId = passes.some((p) => p.id === r.outputPassId) ? r.outputPassId! : passes[passes.length - 1].id;
 	const shapes = Array.isArray(r.shapes) ? r.shapes.map(normalizeShape) : [];
-	return {
+	const layer: Layer = {
 		id: typeof r.id === "string" && r.id ? r.id : uid("layer_"),
 		name: typeof r.name === "string" && r.name ? r.name : `Layer ${i + 1}`,
 		visible: r.visible !== false,
@@ -153,6 +153,8 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 		outputPassId,
 		shapes,
 	};
+	if (r.mask && typeof r.mask === "object") layer.mask = normalizeLayer(r.mask, 0);
+	return layer;
 }
 
 /** Coerce a persisted/imported record into a current-shape Project. Three eras:

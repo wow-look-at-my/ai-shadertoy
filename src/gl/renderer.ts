@@ -19,6 +19,7 @@ export interface RendererShaders {
 	present: string;
 	shapeVert: string;
 	shapeFrag: string;
+	maskComposite: string;
 }
 
 export interface CompileResult {
@@ -92,6 +93,8 @@ interface RenderLayer {
 	geom: Target | null; // single (not ping-ponged) premultiplied geometry texture
 	geomDirty: boolean;
 	underTex: WebGLTexture; // set each frame: composite of the layers below
+	mask: RenderLayer | null; // optional mask layer (rendered standalone)
+	maskTarget: Target | null; // holds mix(under, composite, mask.a) for a masked layer
 }
 
 function newSlot(): ChannelSlot {
@@ -104,6 +107,7 @@ export class Renderer {
 	private vao: WebGLVertexArrayObject;
 	private vert: WebGLShader;
 	private presentProgram: WebGLProgram;
+	private maskProgram: WebGLProgram;
 	private fallbackTex: WebGLTexture;
 	private transparentTex: WebGLTexture;
 	private geometry: GeometryBatch;
@@ -153,6 +157,7 @@ export class Renderer {
 		this.vao = gl.createVertexArray()!;
 		this.vert = this.compileShader(gl.VERTEX_SHADER, shaders.fullscreenVert) ?? this.fail("vertex shader failed");
 		this.presentProgram = this.linkProgram(this.compileShader(gl.FRAGMENT_SHADER, shaders.present) ?? this.fail("present shader failed")) ?? this.fail("present link failed");
+		this.maskProgram = this.linkProgram(this.compileShader(gl.FRAGMENT_SHADER, shaders.maskComposite) ?? this.fail("mask shader failed")) ?? this.fail("mask link failed");
 		this.fallbackTex = this.makeSolidTexture(0, 0, 0, 255);
 		this.transparentTex = this.makeSolidTexture(0, 0, 0, 0);
 		this.geometry = new GeometryBatch(gl, shaders.shapeVert, shaders.shapeFrag);
@@ -236,9 +241,15 @@ export class Renderer {
 	setDocument(layers: Layer[], uniforms: Uniform[]): Map<string, CompileResult> {
 		this.uniforms = uniforms;
 
+		// Keep-sets cover the stack layers AND their masks (recursively).
 		const keepPasses = new Set<string>();
-		for (const layer of layers) for (const p of layer.passes) keepPasses.add(p.id);
-		const keepLayers = new Set(layers.map((l) => l.id));
+		const keepLayers = new Set<string>();
+		const walk = (l: Layer): void => {
+			keepLayers.add(l.id);
+			for (const p of l.passes) keepPasses.add(p.id);
+			if (l.mask) walk(l.mask);
+		};
+		for (const l of layers) walk(l);
 
 		// Drop passes / layers that no longer exist.
 		for (const [id, p] of [...this.allPasses]) {
@@ -250,50 +261,64 @@ export class Renderer {
 		for (const [id, l] of [...this.layersById]) {
 			if (!keepLayers.has(id)) {
 				if (l.geom) this.freeTarget(l.geom);
+				if (l.maskTarget) this.freeTarget(l.maskTarget);
 				this.layersById.delete(id);
 			}
 		}
 
 		const results = new Map<string, CompileResult>();
-		this.layers = [];
-		for (const spec of layers) {
-			let rl = this.layersById.get(spec.id);
-			if (!rl) {
-				rl = { id: spec.id, visible: spec.visible, opacity: spec.opacity, passes: new Map(), order: [], outputPassId: spec.outputPassId, shapes: spec.shapes, geom: null, geomDirty: true, underTex: this.transparentTex };
-				this.layersById.set(spec.id, rl);
-			}
-			rl.visible = spec.visible;
-			rl.opacity = spec.opacity;
-			rl.outputPassId = spec.outputPassId;
-			rl.shapes = spec.shapes;
-			rl.geomDirty = true;
-			if (this.allocW > 0 && !rl.geom) rl.geom = this.allocTarget(this.allocW, this.allocH, "rgba8");
-
-			rl.passes = new Map();
-			for (const pSpec of spec.passes) {
-				const count = Math.min(pSpec.channels.length, this.maxTextureUnits);
-				let rp = this.allPasses.get(pSpec.id);
-				if (!rp) {
-					rp = { id: pSpec.id, name: pSpec.name, format: pSpec.format, program: null, locCache: new Map(), channels: Array.from({ length: count }, newSlot), a: null, b: null, cur: 0, width: 0, height: 0, layer: rl };
-					this.allPasses.set(pSpec.id, rp);
-					if (this.allocW > 0) this.allocPassTargets(rp, this.allocW, this.allocH);
-				}
-				rp.name = pSpec.name;
-				rp.layer = rl;
-				this.reconcileSlots(rp, count);
-				if (rp.format !== pSpec.format) {
-					rp.format = pSpec.format;
-					if (this.allocW > 0) this.allocPassTargets(rp, this.allocW, this.allocH);
-				}
-				results.set(pSpec.id, this.compilePass(rp, pSpec.source));
-				rl.passes.set(pSpec.id, rp);
-			}
-			rl.order = topoOrder(spec.passes).map((id) => rl!.passes.get(id)!).filter(Boolean);
-			this.layers.push(rl);
-		}
+		this.layers = layers.map((spec) => this.reconcileLayer(spec, results));
 
 		this.renderFrame();
 		return results;
+	}
+
+	/** Reconcile one layer (and its mask, recursively): create/update its
+	 * RenderLayer + RenderPasses, compile, (re)allocate geometry + mask targets,
+	 * and compute the topological order. Returns the RenderLayer. */
+	private reconcileLayer(spec: Layer, results: Map<string, CompileResult>): RenderLayer {
+		let rl = this.layersById.get(spec.id);
+		if (!rl) {
+			rl = { id: spec.id, visible: spec.visible, opacity: spec.opacity, passes: new Map(), order: [], outputPassId: spec.outputPassId, shapes: spec.shapes, geom: null, geomDirty: true, underTex: this.transparentTex, mask: null, maskTarget: null };
+			this.layersById.set(spec.id, rl);
+		}
+		rl.visible = spec.visible;
+		rl.opacity = spec.opacity;
+		rl.outputPassId = spec.outputPassId;
+		rl.shapes = spec.shapes;
+		rl.geomDirty = true;
+		if (this.allocW > 0 && !rl.geom) rl.geom = this.allocTarget(this.allocW, this.allocH, "rgba8");
+
+		rl.passes = new Map();
+		for (const pSpec of spec.passes) {
+			const count = Math.min(pSpec.channels.length, this.maxTextureUnits);
+			let rp = this.allPasses.get(pSpec.id);
+			if (!rp) {
+				rp = { id: pSpec.id, name: pSpec.name, format: pSpec.format, program: null, locCache: new Map(), channels: Array.from({ length: count }, newSlot), a: null, b: null, cur: 0, width: 0, height: 0, layer: rl };
+				this.allPasses.set(pSpec.id, rp);
+				if (this.allocW > 0) this.allocPassTargets(rp, this.allocW, this.allocH);
+			}
+			rp.name = pSpec.name;
+			rp.layer = rl;
+			this.reconcileSlots(rp, count);
+			if (rp.format !== pSpec.format) {
+				rp.format = pSpec.format;
+				if (this.allocW > 0) this.allocPassTargets(rp, this.allocW, this.allocH);
+			}
+			results.set(pSpec.id, this.compilePass(rp, pSpec.source));
+			rl.passes.set(pSpec.id, rp);
+		}
+		rl.order = topoOrder(spec.passes).map((id) => rl!.passes.get(id)!).filter(Boolean);
+
+		// Mask layer (rendered standalone) + the target that holds the masked result.
+		rl.mask = spec.mask ? this.reconcileLayer(spec.mask, results) : null;
+		if (rl.mask) {
+			if (this.allocW > 0 && !rl.maskTarget) rl.maskTarget = this.allocTarget(this.allocW, this.allocH, "rgba8");
+		} else if (rl.maskTarget) {
+			this.freeTarget(rl.maskTarget);
+			rl.maskTarget = null;
+		}
+		return rl;
 	}
 
 	setUniformValues(uniforms: Uniform[]): void {
@@ -636,10 +661,16 @@ export class Renderer {
 		this.allocW = w;
 		this.allocH = h;
 		for (const p of this.allPasses.values()) this.allocPassTargets(p, w, h);
-		for (const l of this.layers) {
+		// Geometry (every layer incl. masks) + mask targets depend on resolution.
+		for (const l of this.layersById.values()) {
 			if (l.geom) this.freeTarget(l.geom);
 			l.geom = this.allocTarget(w, h, "rgba8");
-			l.geomDirty = true; // pixel coverage depends on resolution
+			l.geomDirty = true;
+			if (l.mask && !l.maskTarget) l.maskTarget = this.allocTarget(w, h, "rgba8");
+			else if (l.maskTarget) {
+				this.freeTarget(l.maskTarget);
+				l.maskTarget = this.allocTarget(w, h, "rgba8");
+			}
 		}
 	}
 
@@ -667,33 +698,36 @@ export class Renderer {
 
 		gl.bindVertexArray(this.vao);
 		const rendered = new Set<string>();
-		let finalComposite: RenderPass | null = null;
+		let finalTex: WebGLTexture | null = null;
 		let underTex = this.transparentTex;
 
 		for (const layer of this.layers) {
 			if (!layer.visible) continue;
 			layer.underTex = underTex;
-			if (layer.geomDirty && layer.geom) {
-				this.geometry.draw(layer.shapes, layer.geom.fbo, W, H, layer.opacity);
-				layer.geomDirty = false;
-				gl.bindVertexArray(this.vao); // geometry batch rebinds VAO/program
-			}
-			let out: RenderPass | null = null;
-			for (const p of layer.order) {
-				if (!p.program || !p.a) continue;
-				this.drawPass(p, t, H, rendered);
-				rendered.add(p.id);
-			}
-			out = layer.passes.get(layer.outputPassId) ?? layer.order[layer.order.length - 1] ?? null;
-			if (out && out.a) {
-				finalComposite = out;
-				underTex = this.curr(out).tex; // becomes the next layer's "under"
+			this.rasterizeGeom(layer, W, H);
+			this.renderLayerPasses(layer, t, H, rendered);
+			const comp = this.layerOutputTex(layer);
+			if (!comp) continue; // layer produced nothing this frame
+
+			if (layer.mask && layer.maskTarget) {
+				// Render the mask standalone (it never sees `under`), then attenuate
+				// this layer by it: mix(under, composite, mask.a) -- a per-pixel opacity.
+				layer.mask.underTex = this.transparentTex;
+				this.rasterizeGeom(layer.mask, W, H);
+				this.renderLayerPasses(layer.mask, t, H, rendered);
+				const maskTex = this.layerOutputTex(layer.mask) ?? this.transparentTex;
+				this.maskComposite(underTex, comp, maskTex, layer.maskTarget, W, H);
+				finalTex = layer.maskTarget.tex;
+				underTex = layer.maskTarget.tex;
+			} else {
+				finalTex = comp;
+				underTex = comp; // becomes the next layer's "under"
 			}
 		}
 
 		// Present the topmost visible layer's composite (or clear if nothing drew).
-		if (finalComposite) {
-			this.present(W, H, finalComposite);
+		if (finalTex) {
+			this.present(W, H, finalTex);
 		} else {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 			gl.viewport(0, 0, W, H);
@@ -705,6 +739,55 @@ export class Renderer {
 		for (const p of this.allPasses.values()) if (rendered.has(p.id)) p.cur = (p.cur === 0 ? 1 : 0) as 0 | 1;
 
 		if (fromLoop && this.onStats) this.onStats(this.stats());
+	}
+
+	/** Re-rasterize a layer's geometry into its geom target if dirty. */
+	private rasterizeGeom(layer: RenderLayer, W: number, H: number): void {
+		if (layer.geomDirty && layer.geom) {
+			this.geometry.draw(layer.shapes, layer.geom.fbo, W, H, layer.opacity);
+			layer.geomDirty = false;
+			this.gl.bindVertexArray(this.vao); // geometry batch rebinds VAO/program
+		}
+	}
+
+	/** Draw a layer's passes in topological order. */
+	private renderLayerPasses(layer: RenderLayer, t: number, H: number, rendered: Set<string>): void {
+		for (const p of layer.order) {
+			if (!p.program || !p.a) continue;
+			this.drawPass(p, t, H, rendered);
+			rendered.add(p.id);
+		}
+	}
+
+	/** The current-frame texture of a layer's output pass (or null if it has none). */
+	private layerOutputTex(layer: RenderLayer): WebGLTexture | null {
+		const out = layer.passes.get(layer.outputPassId) ?? layer.order[layer.order.length - 1] ?? null;
+		return out && out.a ? this.curr(out).tex : null;
+	}
+
+	/** maskTarget = mix(under, composite, mask.a). All premultiplied, so the mix is
+	 * a straight linear blend. The mask's alpha is this layer's per-pixel opacity. */
+	private maskComposite(under: WebGLTexture, comp: WebGLTexture, mask: WebGLTexture, target: Target, W: number, H: number): void {
+		const gl = this.gl;
+		gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+		gl.viewport(0, 0, W, H);
+		gl.useProgram(this.maskProgram);
+		gl.bindVertexArray(this.vao);
+		const bind = (unit: number, tex: WebGLTexture, name: string): void => {
+			gl.activeTexture(gl.TEXTURE0 + unit);
+			gl.bindTexture(gl.TEXTURE_2D, tex);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+			const l = gl.getUniformLocation(this.maskProgram, name);
+			if (l) gl.uniform1i(l, unit);
+		};
+		bind(0, under, "uUnder");
+		bind(1, comp, "uComposite");
+		bind(2, mask, "uMask");
+		const lr = gl.getUniformLocation(this.maskProgram, "uResolution");
+		if (lr) gl.uniform2f(lr, W, H);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 	}
 
 	private drawPass(p: RenderPass, t: number, H: number, rendered: Set<string>): void {
@@ -795,14 +878,14 @@ export class Renderer {
 		return { tex: this.fallbackTex, width: 0, height: 0, float: false };
 	}
 
-	private present(W: number, H: number, out: RenderPass): void {
+	private present(W: number, H: number, tex: WebGLTexture): void {
 		const gl = this.gl;
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 		gl.viewport(0, 0, W, H);
 		gl.useProgram(this.presentProgram);
 		gl.bindVertexArray(this.vao);
 		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, out.a ? this.curr(out).tex : this.fallbackTex);
+		gl.bindTexture(gl.TEXTURE_2D, tex);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 		const lt = gl.getUniformLocation(this.presentProgram, "uTex");
@@ -911,7 +994,10 @@ export class Renderer {
 		window.removeEventListener("pointerup", this.onPointerUp);
 		// Release video elements / webcam streams so the camera light goes off.
 		for (const p of this.allPasses.values()) this.destroyPass(p);
-		for (const l of this.layers) if (l.geom) this.freeTarget(l.geom);
+		for (const l of this.layersById.values()) {
+			if (l.geom) this.freeTarget(l.geom);
+			if (l.maskTarget) this.freeTarget(l.maskTarget);
+		}
 		this.geometry.dispose();
 		this.allPasses.clear();
 		this.layersById.clear();

@@ -624,7 +624,9 @@ function hexToRgb(hex: string): number[] {
 
 function renderLayers(store: Store, container: HTMLElement): void {
 	const layers = store.project.layers;
-	const activeId = store.activeLayer().id;
+	const active = store.activeLayer();
+	const activeId = active.id;
+	const maskOwner = store.maskOwner(activeId); // set when we're editing a layer's mask
 
 	const addBtn = el("button", { class: "btn tiny", title: "Add a layer on top", on: { click: () => store.addLayer("Layer") } }, "+ Add layer");
 
@@ -632,17 +634,31 @@ function renderLayers(store: Store, container: HTMLElement): void {
 	const rows: HTMLElement[] = [];
 	for (let i = layers.length - 1; i >= 0; i--) rows.push(layerRow(store, layers[i], i, layers.length, activeId));
 
+	const banner = maskOwner
+		? el(
+				"div",
+				{ class: "mask-banner" },
+				icon("mask", { size: 14 }),
+				el("span", {}, `Editing the MASK of "${maskOwner.name}"`),
+				el("span", { class: "spacer" }),
+				el("button", { class: "btn tiny", title: "Stop editing the mask", on: { click: () => store.selectLayer(maskOwner.id) } }, "Back to layer"),
+				el("button", { class: "btn tiny", title: "Remove this mask", on: { click: () => store.removeMask(maskOwner.id) } }, "Remove mask"),
+			)
+		: null;
+
 	render(
 		container,
 		el("div", { class: "layers-head" }, el("span", { class: "field-label" }, "Layers"), el("span", { class: "spacer" }), addBtn),
-		el("p", { class: "muted small" }, "Drawn back to front (top of the list = front). Each layer composites over the layers below it; what its graph does to the 'under' input is the blend."),
+		el("p", { class: "muted small" }, "Drawn back to front (top of the list = front). Each layer composites over the layers below it; what its graph does to the 'under' input is the blend. The mask button sets a per-pixel opacity mask."),
+		banner,
 		layers.length ? el("div", { class: "layer-list" }, ...rows) : el("p", { class: "muted" }, "No layers."),
-		shapesEditor(store, store.activeLayer()),
+		shapesEditor(store, active),
 	);
 }
 
 function layerRow(store: Store, layer: Layer, index: number, total: number, activeId: string): HTMLElement {
 	const isActive = layer.id === activeId;
+	const editingMask = !!layer.mask && layer.mask.id === activeId;
 	const stop = (e: Event) => e.stopPropagation();
 
 	const eyeBtn = el("button", { class: "btn icon tiny", title: layer.visible ? "Hide layer" : "Show layer", on: { click: (e) => { stop(e); store.setLayerVisible(layer.id, !layer.visible); } } }, icon(layer.visible ? "eye" : "eyeOff", { size: 15 }));
@@ -654,11 +670,15 @@ function layerRow(store: Store, layer: Layer, index: number, total: number, acti
 	opacity.addEventListener("input", () => store.setLayerOpacity(layer.id, Number(opacity.value), true));
 	opacity.addEventListener("pointerdown", stop);
 
+	const maskBtn = layer.mask
+		? el("button", { class: `btn icon tiny mask-btn${editingMask ? " on" : ""}`, title: editingMask ? "Editing this mask" : "Edit mask", on: { click: (e) => { stop(e); store.selectLayer(layer.mask!.id); } } }, icon("mask", { size: 15 }))
+		: el("button", { class: "btn icon tiny mask-add", title: "Add a mask", on: { click: (e) => { stop(e); store.addMask(layer.id); } } }, icon("mask", { size: 15 }));
+
 	const up = el("button", { class: "btn icon tiny", title: "Move toward front", disabled: index === total - 1, on: { click: (e) => { stop(e); store.reorderLayer(layer.id, index + 1); } } }, icon("chevronUp", { size: 15 }));
 	const down = el("button", { class: "btn icon tiny", title: "Move toward back", disabled: index === 0, on: { click: (e) => { stop(e); store.reorderLayer(layer.id, index - 1); } } }, icon("chevronDown", { size: 15 }));
 	const del = el("button", { class: "btn icon tiny", title: "Delete layer", on: { click: (e) => { stop(e); const r = store.removeLayer(layer.id); if (!r.ok && r.error) alert(r.error); } } }, icon("trash", { size: 15 }));
 
-	const row = el("div", { class: `layer-row${isActive ? " active" : ""}${layer.visible ? "" : " is-hidden"}` }, eyeBtn, el("div", { class: "layer-id" }, nameEl, meta), el("span", { class: "spacer" }), opacity, up, down, del);
+	const row = el("div", { class: `layer-row${isActive ? " active" : ""}${editingMask ? " mask-owner" : ""}${layer.visible ? "" : " is-hidden"}` }, eyeBtn, el("div", { class: "layer-id" }, nameEl, meta), el("span", { class: "spacer" }), opacity, maskBtn, up, down, del);
 	row.addEventListener("click", () => store.selectLayer(layer.id));
 	return row;
 }

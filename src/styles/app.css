@@ -1041,6 +1041,30 @@ textarea.code {
 .layer-row.is-hidden .layer-id {
 	opacity: 0.5;
 }
+.layer-row.mask-owner {
+	border-left-color: var(--accent);
+	background: var(--bg-2);
+}
+.mask-add {
+	opacity: 0.4;
+}
+.mask-add:hover {
+	opacity: 1;
+}
+.mask-btn.on {
+	color: var(--accent);
+}
+.mask-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 9px;
+	background: var(--bg-2);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius);
+	font-size: 12px;
+	color: var(--fg);
+}
 .layer-id {
 	display: flex;
 	flex-direction: column;

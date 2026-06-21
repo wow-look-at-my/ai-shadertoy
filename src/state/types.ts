@@ -148,6 +148,11 @@ export interface Layer {
 	passes: Pass[]; // the layer's render graph
 	outputPassId: string; // the pass whose output is this layer's composite
 	shapes: Shape[];
+	/** Optional layer MASK: another layer (rendered standalone, no `under`) whose
+	 * output ALPHA attenuates this layer per-pixel. The masked result is
+	 * mix(under, thisComposite, mask.a) -- i.e. the mask is this layer's per-pixel
+	 * opacity. Used e.g. to reveal a texture through a radial-gradient shape. */
+	mask?: Layer;
 }
 
 // A bindable media asset: a still image or (kind === "video") a clip sampled per
@@ -312,4 +317,21 @@ export function makeCompositeLayer(name: string, shapes: Shape[] = []): Layer {
 	];
 	const pass = makePass("Composite", LAYER_COMPOSITE_SOURCE, channels, 320, 60);
 	return makeLayer(name, [pass], pass.id, shapes);
+}
+
+// A mask layer's default graph: output its own geometry directly (so the mask's
+// alpha = the shapes' coverage / radial gradient). It's a full layer, so it can
+// be edited or made procedural like any other; it just doesn't sample `under`.
+export const MASK_SOURCE = `// Mask: output this layer's geometry; its alpha is the mask coverage.
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+	fragColor = texture(iChannel0, fragCoord / iResolution.xy);
+}
+`;
+
+/** A ready-to-use mask layer: one "Mask" pass that outputs its geometry. Seed it
+ * with shapes (e.g. an ellipse with falloff) to get a soft mask. */
+export function makeMaskLayer(shapes: Shape[] = []): Layer {
+	const channels: Channel[] = [{ kind: "geometry", filter: "linear", wrap: "clamp" }];
+	const pass = makePass("Mask", MASK_SOURCE, channels, 320, 60);
+	return makeLayer("Mask", [pass], pass.id, shapes);
 }

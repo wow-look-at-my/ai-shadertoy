@@ -22,6 +22,8 @@ export const TOOL_NAMES = {
 	reorderLayer: "reorder_layer",
 	setLayer: "set_layer",
 	selectLayer: "select_layer",
+	addMask: "add_mask",
+	removeMask: "remove_mask",
 	addShape: "add_shape",
 	editShape: "edit_shape",
 	removeShape: "remove_shape",

@@ -4,7 +4,7 @@
 // Also implements tool execution for the agent.
 
 import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
-import { emptyChannel, makeCompositeLayer, makePass, makeShape } from "./types.ts";
+import { emptyChannel, makeCompositeLayer, makeMaskLayer, makePass, makeShape } from "./types.ts";
 import { shapeDef } from "../gl/shapes.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
@@ -114,22 +114,43 @@ export class Store {
 	get layers(): Layer[] {
 		return this.project.layers;
 	}
+	/** Visit every layer in the document, recursing into masks. */
+	private eachLayer(fn: (l: Layer) => void): void {
+		const walk = (l: Layer): void => {
+			fn(l);
+			if (l.mask) walk(l.mask);
+		};
+		for (const l of this.project.layers) walk(l);
+	}
 	layerById(id: string): Layer | undefined {
-		return this.project.layers.find((l) => l.id === id);
+		let found: Layer | undefined;
+		this.eachLayer((l) => {
+			if (l.id === id) found = l;
+		});
+		return found;
+	}
+	/** The stack layer that owns `layerId` as its mask, if any. */
+	maskOwner(layerId: string): Layer | undefined {
+		return this.project.layers.find((l) => l.mask?.id === layerId);
 	}
 	/** The layer whose graph is currently being edited (top layer by default). */
 	activeLayer(): Layer {
 		return this.layerById(this.selectedLayerId) ?? this.project.layers[this.project.layers.length - 1];
 	}
 	layerOfPass(passId: string): Layer | undefined {
-		return this.project.layers.find((l) => l.passes.some((p) => p.id === passId));
+		let found: Layer | undefined;
+		this.eachLayer((l) => {
+			if (l.passes.some((p) => p.id === passId)) found = l;
+		});
+		return found;
 	}
 	passById(id: string): Pass | undefined {
-		for (const l of this.project.layers) {
+		let found: Pass | undefined;
+		this.eachLayer((l) => {
 			const p = l.passes.find((x) => x.id === id);
-			if (p) return p;
-		}
-		return undefined;
+			if (p) found = p;
+		});
+		return found;
 	}
 	/** Find a pass by name within a layer (pass names are unique per layer). */
 	passByNameIn(layer: Layer, name: string): Pass | undefined {
@@ -194,17 +215,19 @@ export class Store {
 		this.passCompiles = this.renderer.setDocument(this.project.layers, this.project.uniforms);
 		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
-		for (const layer of this.project.layers) for (const pass of layer.passes) for (let i = 0; i < pass.channels.length; i++) void this.applyChannel(pass.id, i);
+		this.eachLayer((layer) => {
+			for (const pass of layer.passes) for (let i = 0; i < pass.channels.length; i++) void this.applyChannel(pass.id, i);
+		});
 	}
 
 	private aggregateCompile(): CompileResult {
 		const fails: string[] = [];
-		for (const layer of this.project.layers) {
+		this.eachLayer((layer) => {
 			for (const pass of layer.passes) {
 				const c = this.passCompiles.get(pass.id);
 				if (c && !c.ok) fails.push(`[${layer.name}/${pass.name}]\n${c.log}`);
 			}
-		}
+		});
 		return fails.length ? { ok: false, log: fails.join("\n\n") } : { ok: true, log: "" };
 	}
 
@@ -600,6 +623,49 @@ export class Store {
 		this.touch();
 	}
 
+	// ---- layer masks --------------------------------------------------------
+
+	/** Add a mask to a layer (or focus the existing one) and make it active for
+	 * editing. The mask is seeded with a soft radial circle so it does something
+	 * visible immediately. */
+	addMask(layerId: string): Layer | null {
+		const layer = this.layerById(layerId);
+		if (!layer) return null;
+		if (!layer.mask) layer.mask = makeMaskLayer([makeShape("circle", { w: 0.6, h: 0.6, falloff: 1 })]);
+		const mask = layer.mask;
+		this.applyProjectToRenderer();
+		// Edit the mask: make it the active layer + select its first shape.
+		this.selectedLayerId = mask.id;
+		this.selectedPassId = mask.outputPassId;
+		this.selectedShapeId = mask.shapes[0]?.id ?? "";
+		this.emit("project", this.project);
+		this.emit("selectedLayer", mask.id);
+		this.emit("selectedShape", this.selectedShapeId);
+		this.commit(`Add mask to "${layer.name}"`, "addmask");
+		this.touch();
+		return mask;
+	}
+
+	removeMask(layerId: string): void {
+		// Accept either the masked layer or the mask itself.
+		const layer = this.maskOwner(layerId) ?? this.layerById(layerId);
+		if (!layer || !layer.mask) return;
+		layer.mask = undefined;
+		// If we were editing the now-removed mask, fall back to the owner layer.
+		if (!this.layerById(this.selectedLayerId)) {
+			this.selectedLayerId = layer.id;
+			this.selectedPassId = layer.outputPassId;
+			this.selectedShapeId = "";
+		}
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.emit("selectedLayer", this.selectedLayerId);
+		this.emit("selectedPass", this.selectedPassId);
+		this.emit("selectedShape", this.selectedShapeId);
+		this.commit(`Remove mask from "${layer.name}"`, "removemask");
+		this.touch();
+	}
+
 	// ---- shape (geometry) mutations ----------------------------------------
 
 	addShape(layerId: string, kind: ShapeKind, patch: Partial<Shape> = {}): Shape | null {
@@ -824,6 +890,8 @@ export class Store {
 			reorderLayer: (id, to) => this.reorderLayer(id, to),
 			setLayerVisible: (id, v) => this.setLayerVisible(id, v),
 			setLayerOpacity: (id, o) => this.setLayerOpacity(id, o),
+			addMask: (id) => this.addMask(id),
+			removeMask: (id) => this.removeMask(id),
 			selectLayer: (id) => this.selectLayer(id),
 			addShape: (layerId, kind, patch) => this.addShape(layerId, kind, patch),
 			updateShape: (layerId, shapeId, patch) => this.updateShape(layerId, shapeId, patch),
@@ -871,24 +939,27 @@ export class Store {
 /** Deep-clone a project into a brand-new one: fresh project + layer + pass + shape
  * ids (with all outputPassId / channel passId references remapped onto the new
  * pass ids), fresh timestamps, and the given name. */
+function remapLayerIds(layer: Layer): void {
+	layer.id = uid("layer_");
+	const idMap = new Map<string, string>();
+	for (const pass of layer.passes) {
+		const fresh = uid("pass_");
+		idMap.set(pass.id, fresh);
+		pass.id = fresh;
+	}
+	for (const pass of layer.passes) {
+		for (const ch of pass.channels) {
+			if (ch.kind === "pass" && ch.passId) ch.passId = idMap.get(ch.passId) ?? ch.passId;
+		}
+	}
+	layer.outputPassId = idMap.get(layer.outputPassId) ?? layer.passes[layer.passes.length - 1].id;
+	for (const shape of layer.shapes) shape.id = uid("shape_");
+	if (layer.mask) remapLayerIds(layer.mask);
+}
+
 function cloneProjectAsNew(src: Project, name: string): Project {
 	const clone = structuredClone(src);
-	for (const layer of clone.layers) {
-		layer.id = uid("layer_");
-		const idMap = new Map<string, string>();
-		for (const pass of layer.passes) {
-			const fresh = uid("pass_");
-			idMap.set(pass.id, fresh);
-			pass.id = fresh;
-		}
-		for (const pass of layer.passes) {
-			for (const ch of pass.channels) {
-				if (ch.kind === "pass" && ch.passId) ch.passId = idMap.get(ch.passId) ?? ch.passId;
-			}
-		}
-		layer.outputPassId = idMap.get(layer.outputPassId) ?? layer.passes[layer.passes.length - 1].id;
-		for (const shape of layer.shapes) shape.id = uid("shape_");
-	}
+	for (const layer of clone.layers) remapLayerIds(layer);
 	const now = Date.now();
 	return { ...clone, id: uid("p_"), name, createdAt: now, updatedAt: now };
 }
