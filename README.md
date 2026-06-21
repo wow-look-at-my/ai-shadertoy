@@ -68,6 +68,14 @@ controls the blending** — source-over by default, but rewrite the pass for
 multiply, screen, add, displacement, masking, glow, whatever. A new layer comes
 pre-wired `iChannel0 = under`, `iChannel1 = geometry`, doing source-over.
 
+**Layer masks.** Any layer can have a **mask** — another layer (rendered
+standalone) whose output *alpha* becomes the masked layer's per-pixel opacity:
+`result = mix(under, thisComposite, mask.alpha)`. This is the clean way to reveal a
+layer (say a texture) through a shape — e.g. a circle with full falloff makes a
+soft radial-gradient mask. The mask button on a layer row adds one (seeded with a
+soft circle) and lets you edit its geometry like any layer; the AI uses `add_mask`
+/ `remove_mask`.
+
 The **Layers** tab is the stack: reorder (front/back), show/hide, set opacity, add
 layers, and edit each layer's shapes (position, size, rotation, colour, rounded
 corners). You can also **manipulate shapes directly on the canvas** — click a shape

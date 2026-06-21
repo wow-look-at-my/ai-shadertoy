@@ -42,7 +42,12 @@ npm run build         # ts0 build -> dist/index.html
   layer below as its **`under`** input and its own rasterized geometry as its
   **`geometry`** input (two channel `kind`s resolved per-layer, NOT graph edges);
   the layer's output pass is the new composite, and the topmost visible layer's
-  composite is blitted to the screen by an internal present shader. `setDocument()`
+  composite is blitted to the screen by an internal present shader. A layer may
+  carry a **mask** (`Layer.mask`, itself a layer rendered standalone with no
+  `under`): its output alpha attenuates the layer per-pixel via a `mask.frag.glsl`
+  mix pass (`maskComposite`: `mix(under, composite, mask.a)`), written to the
+  layer's `maskTarget`. `reconcileLayer` reconciles stack layers AND their masks
+  (recursively); `present` takes a texture. `setDocument()`
   ((re)compiles + reconciles every layer/pass, returns a per-pass `CompileResult`)
   replaces the old `setPasses`; `setLayerShapes`/`setLayerProps` are cheap
   per-layer updates (no recompile). **Geometry is real instanced meshes**:
@@ -84,7 +89,9 @@ npm run build         # ts0 build -> dist/index.html
   (`ctx.resolvePass`/`ctx.passes()` are active-layer-scoped; `select_layer`
   switches it). Layer stack: `add_layer` (adds on top, becomes active, pre-wired
   under+geometry "over"), `remove_layer`, `list_layers`, `reorder_layer` (the draw
-  order), `set_layer` (name/visible/opacity), `select_layer`. Geometry:
+  order), `set_layer` (name/visible/opacity), `select_layer`, `add_mask` /
+  `remove_mask` (mask a layer by another layer's alpha; `add_mask` seeds a soft
+  circle and makes the MASK the active layer to edit). Geometry:
   `add_shape` / `edit_shape` / `remove_shape` / `list_shapes` (kinds from the
   `shapes.ts` registry; `geometry_util.ts` parses shape fields — degrees→radians,
   rgba). Within a layer: `init_shader`, `edit_shader` (forgiving exact-snippet
@@ -115,13 +122,18 @@ npm run build         # ts0 build -> dist/index.html
   `MAX_INPUTS`), `format`, and graph-editor `x`/`y`; a `Channel` `kind` is
   `none|under|geometry|builtin|pass|video|webcam` (`under`/`geometry` are
   layer-ambient — no extra fields; `pass`+`passId` is a same-layer edge). A `Shape`
-  is `{kind, x, y, w, h, rotation, color, cornerRadius, feather}` in normalized 0..1
-  canvas coords. `makeCompositeLayer` builds a ready "over" layer; `LAYER_COMPOSITE_SOURCE`
-  is the default blend. `src/util/media.ts` holds the file/webcam plumbing.
+  is `{kind, x, y, w, h, rotation, color, cornerRadius, feather, falloff}` in
+  normalized 0..1 canvas coords (`falloff` 0..1 ramps alpha centre->edge = a radial
+  gradient). A layer also has an optional `mask?: Layer` (an owned layer used as a
+  per-pixel opacity mask). `makeCompositeLayer` builds a ready "over" layer,
+  `makeMaskLayer` a geometry-passthrough mask; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`
+  are their default shaders. `src/util/media.ts` holds the file/webcam plumbing.
   `store.ts` (single owner of state + the renderer + persistence + `applyTool` +
-  undo/redo) tracks `selectedLayerId` + `selectedPassId` (pass within the active
-  layer) and exposes layer mutations (`addLayer`/`removeLayer`/`reorderLayer`/
-  `setLayerVisible`/`setLayerOpacity`/`renameLayer`/`selectLayer`), shape mutations
+  undo/redo) tracks `selectedLayerId` + `selectedPassId` + `selectedShapeId` (the
+  active layer can be a layer's mask — `layerById`/`passById`/`eachLayer` recurse
+  into masks) and exposes layer mutations (`addLayer`/`removeLayer`/`reorderLayer`/
+  `setLayerVisible`/`setLayerOpacity`/`renameLayer`/`selectLayer`/`addMask`/
+  `removeMask`), shape mutations
   (`addShape`/`updateShape`/`removeShape` — cheap via `renderer.setLayerShapes`),
   and the per-layer pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
   `setPassSource`/`setPassChannel`/…, all resolving the pass's owning layer), plus
@@ -145,9 +157,10 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
   splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
-  has five tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, add
-  layers, and a per-layer geometry editor: add quad/circle + edit position/size/
-  rotation/colour/corner), **Code** (the selected pass in the active layer),
+  has five tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, a
+  per-row mask button + an "editing mask" banner, add layers, and a per-layer
+  geometry editor: add quad/circle + edit position/size/rotation/colour/corner/
+  falloff), **Code** (the selected pass in the active layer),
   **Passes** (the active layer's object graph — draggable pass nodes wired by their
   inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
   selected pass's inputs). The Code/Passes/Textures tabs are scoped to the active
@@ -172,9 +185,10 @@ npm run build         # ts0 build -> dist/index.html
   triangle, shared by every pass), `present.frag.glsl` (output blit), and the
   instanced-geometry pair `shape.vert.glsl` + `shape.frag.glsl` (the per-kind SDF
   `case` switch lives in `shape.frag.glsl`, kept in lockstep with the `shapes.ts`
-  registry order). All embedded into the single-file bundle by ts0's fetch
-  interceptor and loaded at runtime via `fetch(new URL(...))` (the four shader
-  sources are passed into the `Renderer` constructor as a `RendererShaders` object).
+  registry order), and `mask.frag.glsl` (the layer-mask mix). All embedded into the
+  single-file bundle by ts0's fetch interceptor and loaded at runtime via
+  `fetch(new URL(...))` (the shader sources are passed into the `Renderer`
+  constructor as a `RendererShaders` object).
 
 ## Provider gotchas (verified against the claude-api skill)
 
