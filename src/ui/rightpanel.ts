@@ -47,7 +47,7 @@ export function createRightPanel(store: Store): HTMLElement {
 // ---- code editor -----------------------------------------------------------
 
 function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; syncLog: () => void } {
-	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "off" } });
+	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "soft" } });
 	textarea.value = store.project.shaderSource;
 
 	const apply = debounce(() => store.setShaderSource(textarea.value, true), 350);
