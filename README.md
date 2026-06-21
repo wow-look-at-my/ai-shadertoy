@@ -70,9 +70,12 @@ pre-wired `iChannel0 = under`, `iChannel1 = geometry`, doing source-over.
 
 The **Layers** tab is the stack: reorder (front/back), show/hide, set opacity, add
 layers, and edit each layer's shapes (position, size, rotation, colour, rounded
-corners) — or let the AI drive it (`add_layer`, `add_shape`, `reorder_layer`, …).
-Existing single-shader projects load as one "Base" layer, so nothing changes until
-you add more.
+corners). You can also **manipulate shapes directly on the canvas** — click a shape
+in the active layer to select it, then drag the body to move it, the corner
+handles to resize, or the top handle to rotate (the shader's `iMouse` keeps
+working on layers that have no geometry). Or let the AI drive it (`add_layer`,
+`add_shape`, `edit_shape`, `reorder_layer`, …). Existing single-shader projects
+load as one "Base" layer, so nothing changes until you add more.
 
 ### Multi-pass render graph (within a layer)
 

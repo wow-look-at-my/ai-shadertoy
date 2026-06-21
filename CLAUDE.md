@@ -151,7 +151,13 @@ npm run build         # ts0 build -> dist/index.html
   **Passes** (the active layer's object graph — draggable pass nodes wired by their
   inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
   selected pass's inputs). The Code/Passes/Textures tabs are scoped to the active
-  layer (the Layers tab selects it). UI glyphs come from `src/util/icons.ts` —
+  layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
+  canvas: an overlay that (in "edit mode" = active layer has shapes) hit-tests the
+  active layer's shapes and draws a selection box + corner resize handles + a
+  rotate handle, writing through `store.updateShape` (coalesced; rotation-aware
+  CSS<->normalized math, y-flip). `store.selectedShapeId` (+ `selectShape`/
+  `clearShapeSelection`/`"selectedShape"`) is the shared selection; the gizmo and
+  the Layers-tab shape rows stay in sync. UI glyphs come from `src/util/icons.ts` —
   `icon(name)` builds an inline `<svg>` (Material Design Icons path data,
   `fill: currentColor`); no emoji, no icon font, no network request. Add a new glyph
   by inlining its `@mdi/js` path. The chat (`chat.ts`) shows hover **edit/delete**
