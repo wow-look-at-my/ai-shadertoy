@@ -7,7 +7,8 @@ import { icon } from "../util/icons.ts";
 import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
-import { buildSystemPrompt } from "../ai/system-prompt.ts";
+import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
+import { hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
 import { ProviderError } from "../ai/providers.ts";
@@ -44,7 +45,40 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	let abort: AbortController | null = null;
 	let streamingText: HTMLElement | null = null;
+	let pending = ""; // assistant text received but not yet painted
+	let pumpId = 0; // rAF id for the typewriter pump (0 = idle)
 	let shownProjectId = store.project.id;
+
+	// usage / cost indicator: tokens/sec + context % (every model), and cost this
+	// turn + this session (when the model's pricing is known). Fed by onUsage.
+	const statsBar = el("div", { class: "chat-stats", hidden: true });
+	let costTotal = 0;
+	let costTurn = 0;
+	let lastTps = 0;
+	let lastCtxPct = 0;
+	let haveStats = false;
+
+	function fmtCost(c: number): string {
+		if (c >= 1) return `$${c.toFixed(2)}`;
+		if (c >= 0.01) return `$${c.toFixed(3)}`;
+		return `$${c.toFixed(4)}`;
+	}
+	function renderStats(): void {
+		if (!haveStats) {
+			statsBar.hidden = true;
+			return;
+		}
+		const sep = (): HTMLElement => el("span", { class: "cs-sep" }, "·");
+		const item = (label: string, title: string): HTMLElement => el("span", { class: "cs-item", title }, label);
+		const ctxLabel = `${lastCtxPct < 10 ? lastCtxPct.toFixed(1) : lastCtxPct.toFixed(0)}% ctx`;
+		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), item(ctxLabel, "Share of the model's context window used (last request)")];
+		if (hasPricing(store.settings.chat.model)) {
+			parts.push(sep(), item(`${fmtCost(costTurn)} turn`, "Cost of the current / last turn"), sep(), item(`${fmtCost(costTotal)} total`, "Total cost this session"));
+		}
+		clear(statsBar);
+		append(statsBar, parts);
+		statsBar.hidden = false;
+	}
 
 	store.on("busy", (b) => {
 		stopBtn.hidden = !b;
@@ -74,6 +108,32 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	function scroll(): void {
 		requestAnimationFrame(() => (list.scrollTop = list.scrollHeight));
+	}
+
+	// Anthropic streams text in coarse chunks (~2-5 deltas/sec for Opus), so
+	// painting each chunk on arrival looks choppy. Buffer incoming text and drain
+	// a slice per animation frame, typing each chunk in smoothly. The /12 divisor
+	// keeps what's shown within ~200ms of what's arrived; appending a text node
+	// (vs reassigning textContent) keeps it O(n). onMessage renders the full
+	// markdown at the end, so any text still in the buffer is never lost.
+	function pumpStream(): void {
+		pumpId = 0;
+		if (!streamingText || !pending) return;
+		const step = Math.max(2, Math.ceil(pending.length / 12));
+		streamingText.appendChild(document.createTextNode(pending.slice(0, step)));
+		pending = pending.slice(step);
+		list.scrollTop = list.scrollHeight;
+		if (pending) pumpId = requestAnimationFrame(pumpStream);
+	}
+	function feedStream(t: string): void {
+		pending += t;
+		if (!pumpId) pumpId = requestAnimationFrame(pumpStream);
+	}
+	function endStream(): void {
+		if (pumpId) cancelAnimationFrame(pumpId);
+		pumpId = 0;
+		pending = "";
+		streamingText = null;
 	}
 
 	// Surface an approve/deny card for a permission-gated tool call and resolve
@@ -141,26 +201,42 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 		abort = new AbortController();
 		store.setBusy(true);
+		costTurn = 0; // start a fresh per-turn cost tally
 		try {
 			await runAgent(
 				store.settings,
-				() => buildSystemPrompt({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
+				() => buildSystemPrompt(),
+				() => buildProjectState({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
 				store.project.messages,
 				() => toolDefs({ imageGen: store.settings.imageGen.enabled, allowInitShader: !authoredShader(store.project.messages) }),
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,
 					requestPermission,
+					onUsage: (usage, durationMs) => {
+						const model = store.settings.chat.model;
+						const c = messageCost(model, usage);
+						if (c != null) {
+							costTurn += c;
+							costTotal += c;
+						}
+						const totalIn = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+						const ctx = modelContextWindow(model);
+						if (ctx > 0) lastCtxPct = (totalIn / ctx) * 100;
+						if (usage.outputTokens > 0 && durationMs > 0) lastTps = (usage.outputTokens / durationMs) * 1000;
+						haveStats = true;
+						renderStats();
+					},
 					onTurnStart: () => {
+						if (pumpId) cancelAnimationFrame(pumpId);
+						pumpId = 0;
+						pending = "";
 						streamingText = el("div", { class: "md streaming" });
 						list.appendChild(el("div", { class: "msg assistant" }, streamingText));
 						scroll();
 					},
 					onAssistantDelta: (t) => {
-						if (streamingText) {
-							streamingText.textContent = (streamingText.textContent ?? "") + t;
-							scroll();
-						}
+						if (streamingText) feedStream(t);
 					},
 					onToolActivity: (toolName, phase) => {
 						if (phase === "start") {
@@ -174,7 +250,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 						void store.saveProjectNow();
 						if (msg.role === "assistant" && streamingText) {
 							const bubble = streamingText.parentElement;
-							streamingText = null;
+							endStream();
 							if (bubble) {
 								clear(bubble);
 								append(bubble, assistantContent(msg));
@@ -192,7 +268,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		} finally {
 			store.setBusy(false);
 			abort = null;
-			streamingText = null;
+			endStream();
 			await store.saveProjectNow();
 			scroll();
 		}
@@ -210,6 +286,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		"section",
 		{ class: "chat" },
 		list,
+		statsBar,
 		el("div", { class: "chat-bar" }, attachBtn, input, el("div", { class: "chat-actions" }, sendBtn, stopBtn)),
 	);
 }

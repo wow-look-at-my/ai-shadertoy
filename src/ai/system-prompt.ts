@@ -36,9 +36,11 @@ function passSummary(p: Project): string {
 		.join("\n");
 }
 
-export function buildSystemPrompt(ctx: PromptContext): string {
-	const p = ctx.project;
-	const uniforms = p.uniforms.length ? p.uniforms.map((u) => `  ${u.type} ${u.name} = [${u.value.join(", ")}] (min ${u.min}, max ${u.max})`).join("\n") : "  (none)";
+// The stable system prompt. Deliberately free of any per-request / per-edit
+// state so it forms a byte-identical cache prefix across requests (see
+// providers.ts -- it is sent with a `cache_control` breakpoint). The volatile
+// project state lives in buildProjectState() and rides as a trailing message.
+export function buildSystemPrompt(): string {
 	const builtins = Object.entries(BUILTIN_LABELS)
 		.map(([k, v]) => `${k} (${v})`)
 		.join(", ");
@@ -82,6 +84,19 @@ Custom uniforms (set_uniforms) are SHARED across all passes. Built-in procedural
 - ALWAYS verify your work visually before you finish. To keep your context lean you are NOT shown a screenshot after every edit by default -- pass screenshot:true (or call capture_screenshot) when you want to see the render mid-task. When you end your turn you are ALWAYS shown the final render and asked to confirm it: check colours, scale, and composition against the request and keep editing if anything is off. A black render usually means out-of-range values, fragColor.alpha left at 0, or the wrong pass set as output.
 - If compilation fails, READ the log (line numbers are relative to each pass's source, prefixed with [pass name]) and fix it with another edit. Keep iterating until it both compiles and looks right.
 - Only ask a clarifying question when the request is genuinely ambiguous; otherwise make a reasonable choice and show a result.
+
+The editor sends the current project state (loaded shader, uniforms, channels, assets, last compile error) as an automatic status message each turn; treat it as ground truth for what currently exists.`;
+}
+
+// The volatile project state. Kept OUT of the cached system prompt and delivered
+// as a trailing message each request, so editing the shader (which changes the
+// line count, uniforms, channels, compile error, ...) never invalidates the
+// cached system + conversation prefix. See providers.ts / shared prompt-caching.
+export function buildProjectState(ctx: PromptContext): string {
+	const p = ctx.project;
+	const uniforms = p.uniforms.length ? p.uniforms.map((u) => `  ${u.type} ${u.name} = [${u.value.join(", ")}] (min ${u.min}, max ${u.max})`).join("\n") : "  (none)";
+
+	return `The following is the live project state from the editor (provided automatically -- it is not a message from the user):
 
 # Current project state
 Render graph (${p.passes.length} pass${p.passes.length === 1 ? "" : "es"}):

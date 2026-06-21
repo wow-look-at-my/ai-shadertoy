@@ -66,7 +66,7 @@ export function createRightPanel(store: Store): HTMLElement {
 
 function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; syncLog: () => void; syncHead: () => void } {
 	const head = el("div", { class: "code-head" });
-	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "off" } });
+	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "soft" } });
 	textarea.value = store.selectedPass().source;
 
 	const apply = debounce(() => store.setPassSource(store.selectedPassId, textarea.value, true), 350);
