@@ -40,10 +40,12 @@ void main() {
 	float d = shapeDistance(v_kind, v_local, v_half, v_radius);
 	float cov;
 	if (v_falloff > 0.0) {
-		// Radial gradient: alpha ramps 1 at the centre -> 0 at the edge, over the
-		// inner `falloff` fraction of the half-extent. Makes the shape a soft mask.
-		float minHalf = min(v_half.x, v_half.y);
-		cov = clamp(-d / max(v_falloff * minHalf, 1e-4), 0.0, 1.0);
+		// Radial gradient in NORMALIZED shape space (aspect-independent): q = 0 at
+		// the centre, 1 at the edge. Alpha ramps to 0 over the outer `falloff`
+		// fraction of the radius (falloff = 1 -> full centre->edge gradient), which
+		// turns the shape into a soft radial mask.
+		float q = (v_kind == 1) ? length(v_local / v_half) : max(abs(v_local.x) / v_half.x, abs(v_local.y) / v_half.y);
+		cov = clamp((1.0 - q) / v_falloff, 0.0, 1.0);
 	} else {
 		// Solid fill with a crisp / feathered anti-aliased edge.
 		float aa = fwidth(d) + 2.0 * v_feather + 1e-4;
