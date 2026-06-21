@@ -41,9 +41,6 @@ async function boot(): Promise<void> {
 	const store = new Store();
 	await store.init(renderer, defaultShader);
 
-	// TEMP DEBUG HOOK (remove): expose internals for live inspection.
-	(window as unknown as Record<string, unknown>).__shadertoy = { store, renderer };
-
 	mount.appendChild(createApp(store, canvas, () => defaultShader));
 }
 

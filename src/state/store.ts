@@ -3,7 +3,7 @@
 // mutates state + persists it. Also implements tool execution for the agent.
 
 import type { Channel, ImageAsset, Pass, PassFormat, Project, Settings, Uniform } from "./types.ts";
-import { makePass } from "./types.ts";
+import { emptyChannel, makePass } from "./types.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
@@ -126,7 +126,7 @@ export class Store {
 		this.passCompiles = this.renderer.setPasses(this.project.passes, this.project.outputPassId, this.project.uniforms);
 		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
-		for (const pass of this.project.passes) for (let i = 0; i < 4; i++) void this.applyChannel(pass.id, i);
+		for (const pass of this.project.passes) for (let i = 0; i < pass.channels.length; i++) void this.applyChannel(pass.id, i);
 	}
 
 	private aggregateCompile(): CompileResult {
@@ -285,11 +285,42 @@ export class Store {
 
 	setPassChannel(passId: string, index: number, patch: Partial<Channel>): void {
 		const pass = this.passById(passId);
-		if (!pass) return;
+		if (!pass || index < 0 || index >= this.renderer.maxInputs()) return;
+		// Auto-grow the input list so a higher index just adds inputs (no fixed cap).
+		const grew = index >= pass.channels.length;
+		while (pass.channels.length <= index) pass.channels.push(emptyChannel());
 		pass.channels[index] = { ...pass.channels[index], ...patch };
-		void this.applyChannel(passId, index);
+		if (grew) {
+			// Channel count changed -> the pass header changes -> recompile.
+			this.applyProjectToRenderer();
+		} else {
+			void this.applyChannel(passId, index);
+		}
 		this.emit("project", this.project);
 		this.commit(`Set ${pass.name} iChannel${index}`, `channel:${passId}:${index}`);
+		this.touch();
+	}
+
+	/** Append one empty input to a pass (up to the hardware limit). */
+	addPassChannel(passId: string): void {
+		const pass = this.passById(passId);
+		if (!pass || pass.channels.length >= this.renderer.maxInputs()) return;
+		pass.channels.push(emptyChannel());
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.commit(`Add input to ${pass.name}`, `addchannel:${passId}`);
+		this.touch();
+	}
+
+	/** Remove one input from a pass. Subsequent inputs shift down (iChannelN is
+	 * positional), so references in the shader may need updating. */
+	removePassChannel(passId: string, index: number): void {
+		const pass = this.passById(passId);
+		if (!pass || index < 0 || index >= pass.channels.length) return;
+		pass.channels.splice(index, 1);
+		this.applyProjectToRenderer();
+		this.emit("project", this.project);
+		this.commit(`Remove iChannel${index} from ${pass.name}`, `rmchannel:${passId}`);
 		this.touch();
 	}
 

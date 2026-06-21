@@ -14,8 +14,17 @@ import type { Store } from "../state/store.ts";
 const TABS = ["Code", "Passes", "Uniforms", "Textures"] as const;
 type Tab = (typeof TABS)[number];
 
+/** Pan/zoom of the Passes graph viewport. Persisted across re-renders so wiring
+ * a channel or selecting a pass doesn't reset the user's view. */
+interface GraphView {
+	x: number;
+	y: number;
+	zoom: number;
+}
+
 export function createRightPanel(store: Store): HTMLElement {
 	let active: Tab = "Code";
+	const graphView: GraphView = { x: 0, y: 0, zoom: 1 };
 
 	const tabBar = el("div", { class: "tabbar" });
 	const body = el("div", { class: "panel-body" });
@@ -29,7 +38,7 @@ export function createRightPanel(store: Store): HTMLElement {
 		render(tabBar, ...TABS.map((t) => el("button", { class: `tab${t === active ? " active" : ""}`, on: { click: () => select(t) } }, t)));
 		render(body, active === "Code" ? codeView.root : active === "Passes" ? passesView : active === "Uniforms" ? uniformsView : texturesView);
 		if (active === "Code") codeView.syncHead();
-		if (active === "Passes") renderGraph(store, passesView, select);
+		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Uniforms") renderUniforms(store, uniformsView);
 		if (active === "Textures") renderTextures(store, texturesView);
 	};
@@ -41,7 +50,7 @@ export function createRightPanel(store: Store): HTMLElement {
 	store.on("project", () => {
 		codeView.sync();
 		codeView.syncHead();
-		if (active === "Passes") renderGraph(store, passesView, select);
+		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Uniforms") renderUniforms(store, uniformsView);
 		if (active === "Textures") renderTextures(store, texturesView);
 	});
@@ -49,12 +58,12 @@ export function createRightPanel(store: Store): HTMLElement {
 		codeView.sync();
 		codeView.syncHead();
 		codeView.syncLog();
-		if (active === "Passes") renderGraph(store, passesView, select);
+		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Textures") renderTextures(store, texturesView);
 	});
 	store.on("assets", () => {
 		if (active === "Textures") renderTextures(store, texturesView);
-		if (active === "Passes") renderGraph(store, passesView, select);
+		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 	});
 	store.on("compile", () => codeView.syncLog());
 	// Undo/redo: the "project" handler above already refreshed the other tabs and
@@ -148,24 +157,60 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 const NODE_W = 196;
 const HEADER_H = 30;
 const ROW_H = 26;
-const IN_Y0 = HEADER_H + ROW_H / 2;
-const OUT_Y = HEADER_H + 2 * ROW_H;
-const NODE_H = HEADER_H + 4 * ROW_H + 6;
+const ADDROW_H = 24;
 
-function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => void): void {
+// Per-node geometry (input count varies, so heights/ports are computed).
+const inPortY = (i: number): number => HEADER_H + ROW_H / 2 + i * ROW_H;
+const outPortY = (pass: Pass): number => HEADER_H + (Math.max(pass.channels.length, 1) * ROW_H) / 2;
+const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + ADDROW_H + 6;
+
+const ZOOM_MIN = 0.2;
+const ZOOM_MAX = 2.5;
+const clampZoom = (z: number): number => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+
+/** Multiply zoom by `factor`, keeping the graph point under (cx,cy) (container
+ * coordinates) fixed -- zoom-to-cursor. */
+function zoomAt(view: GraphView, cx: number, cy: number, factor: number): void {
+	const nz = clampZoom(view.zoom * factor);
+	const f = nz / view.zoom;
+	view.x = cx - (cx - view.x) * f;
+	view.y = cy - (cy - view.y) * f;
+	view.zoom = nz;
+}
+
+/** Frame all nodes within the container. */
+function fitView(view: GraphView, passes: Pass[], graph: HTMLElement): void {
+	if (!passes.length) return;
+	let minX = Infinity,
+		minY = Infinity,
+		maxX = -Infinity,
+		maxY = -Infinity;
+	for (const p of passes) {
+		minX = Math.min(minX, p.x);
+		minY = Math.min(minY, p.y);
+		maxX = Math.max(maxX, p.x + NODE_W);
+		maxY = Math.max(maxY, p.y + nodeHeight(p));
+	}
+	const pad = 36;
+	const cw = graph.clientWidth || 600;
+	const ch = graph.clientHeight || 400;
+	view.zoom = clampZoom(Math.min(cw / (maxX - minX + pad * 2), ch / (maxY - minY + pad * 2)));
+	view.x = (cw - (minX + maxX) * view.zoom) / 2;
+	view.y = (ch - (minY + maxY) * view.zoom) / 2;
+}
+
+function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => void, view: GraphView): void {
 	const passes = store.project.passes;
-	const canvas = el("div", { class: "graph-canvas" });
+	const viewport = el("div", { class: "graph-viewport" });
 
-	// Edges (SVG) behind the nodes.
+	// Edges (SVG) behind the nodes, inside the transformed viewport.
 	const w = Math.max(640, ...passes.map((p) => p.x + NODE_W + 60));
-	const h = Math.max(360, ...passes.map((p) => p.y + NODE_H + 60));
+	const h = Math.max(360, ...passes.map((p) => p.y + nodeHeight(p) + 60));
 	const svgNS = "http://www.w3.org/2000/svg";
 	const svg = document.createElementNS(svgNS, "svg");
 	svg.setAttribute("class", "graph-edges");
 	svg.setAttribute("width", String(w));
 	svg.setAttribute("height", String(h));
-	canvas.style.width = `${w}px`;
-	canvas.style.height = `${h}px`;
 
 	const byId = new Map(passes.map((p) => [p.id, p]));
 	const drawEdges = (): void => {
@@ -176,9 +221,9 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 				const src = byId.get(c.passId);
 				if (!src) return;
 				const sx = src.x + NODE_W;
-				const sy = src.y + OUT_Y;
+				const sy = src.y + outPortY(src);
 				const tx = tgt.x;
-				const ty = tgt.y + IN_Y0 + i * ROW_H;
+				const ty = tgt.y + inPortY(i);
 				const path = document.createElementNS(svgNS, "path");
 				const dx = Math.max(40, Math.abs(tx - sx) * 0.5);
 				path.setAttribute("d", `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`);
@@ -188,26 +233,79 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		}
 	};
 
-	const nodeEls = new Map<string, HTMLElement>();
-	for (const pass of passes) {
-		const node = buildNode(store, pass, select, () => drawEdges());
-		nodeEls.set(pass.id, node);
-		canvas.appendChild(node);
-	}
-	canvas.insertBefore(svg, canvas.firstChild);
+	for (const pass of passes) viewport.appendChild(buildNode(store, pass, select, () => drawEdges(), view));
+	viewport.insertBefore(svg, viewport.firstChild);
 	drawEdges();
 
+	const graph = el("div", { class: "graph" }, viewport);
+	const zoomLabel = el("span", { class: "zoom-label" }, "100%");
+	const applyTransform = (): void => {
+		viewport.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
+		zoomLabel.textContent = `${Math.round(view.zoom * 100)}%`;
+	};
+	applyTransform();
+
+	// Wheel: ctrl/cmd (incl. trackpad pinch, which browsers report as ctrl+wheel)
+	// zooms to the cursor; a plain wheel / two-finger scroll pans. Non-passive so
+	// preventDefault stops the browser's page zoom/scroll.
+	graph.addEventListener(
+		"wheel",
+		(e) => {
+			e.preventDefault();
+			const rect = graph.getBoundingClientRect();
+			if (e.ctrlKey || e.metaKey) {
+				const dy = Math.max(-80, Math.min(80, e.deltaY));
+				zoomAt(view, e.clientX - rect.left, e.clientY - rect.top, Math.exp(-dy * 0.0125));
+			} else {
+				const k = e.deltaMode === 1 ? 16 : 1; // line vs pixel deltas
+				view.x -= e.deltaX * k;
+				view.y -= e.deltaY * k;
+			}
+			applyTransform();
+		},
+		{ passive: false },
+	);
+
+	// Drag the empty background to pan (node/button/select interactions are skipped).
+	graph.addEventListener("pointerdown", (e) => {
+		if ((e.target as HTMLElement).closest(".graph-node")) return;
+		e.preventDefault();
+		const sx = e.clientX;
+		const sy = e.clientY;
+		const bx = view.x;
+		const by = view.y;
+		graph.classList.add("panning");
+		const move = (ev: PointerEvent): void => {
+			view.x = bx + (ev.clientX - sx);
+			view.y = by + (ev.clientY - sy);
+			applyTransform();
+		};
+		const up = (): void => {
+			window.removeEventListener("pointermove", move);
+			window.removeEventListener("pointerup", up);
+			graph.classList.remove("panning");
+		};
+		window.addEventListener("pointermove", move);
+		window.addEventListener("pointerup", up);
+	});
+
+	const zoomBtn = (label: string, title: string, fn: () => void): HTMLElement => el("button", { class: "btn icon tiny", title, on: { click: () => { fn(); applyTransform(); } } }, label);
 	const toolbar = el(
 		"div",
 		{ class: "graph-toolbar" },
-		el("button", { class: "btn tiny", on: { click: () => { store.addPass("Pass", ""); } } }, "+ Add pass"),
-		el("span", { class: "muted small" }, "Drag node headers to arrange. Wire a channel to a pass output to chain effects; point a channel at its own pass for feedback."),
+		el("button", { class: "btn tiny", on: { click: () => store.addPass("Pass", "") } }, "+ Add pass"),
+		el("span", { class: "muted small graph-hint" }, "scroll = pan · ctrl/⌘+scroll or pinch = zoom · drag background = pan"),
+		el("span", { class: "spacer" }),
+		zoomBtn("−", "Zoom out", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1 / 1.2)),
+		zoomLabel,
+		zoomBtn("+", "Zoom in", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1.2)),
+		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, graph); applyTransform(); } } }, "Fit"),
 	);
 
-	render(container, toolbar, el("div", { class: "graph" }, canvas));
+	render(container, toolbar, graph);
 }
 
-function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireChange: () => void): HTMLElement {
+function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireChange: () => void, view: GraphView): HTMLElement {
 	const isOutput = pass.id === store.project.outputPassId;
 	const selected = pass.id === store.selectedPassId;
 	const node = el("div", { class: `graph-node${selected ? " selected" : ""}${isOutput ? " output" : ""}` });
@@ -220,21 +318,26 @@ function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireCha
 	const delBtn = el("button", { class: "btn icon tiny", title: "Delete pass", on: { click: () => { const r = store.removePass(pass.id); if (!r.ok && r.error) alert(r.error); } } }, icon("close", { size: 14 }));
 
 	const header = el("div", { class: "gn-head" }, nameEl, el("span", { class: "spacer" }), editBtn, outBtn, delBtn);
-	header.addEventListener("pointerdown", (e) => startDrag(store, pass, node, e, onWireChange));
+	header.addEventListener("pointerdown", (e) => startDrag(store, pass, node, e, onWireChange, view));
 	// Rename inline on double-click.
 	nameEl.addEventListener("dblclick", () => beginRename(store, pass, nameEl));
 	header.addEventListener("click", (e) => {
 		if (e.target === nameEl || e.target === header) store.selectPass(pass.id);
 	});
 
-	const rows = [0, 1, 2, 3].map((i) => {
+	const rows = pass.channels.map((_c, i) => {
 		const sel = channelSelect(store, pass, i, true);
-		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel);
+		const rm = el("button", { class: "btn icon tiny gn-rm", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 12 }));
+		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel, rm);
 	});
+	const atMax = pass.channels.length >= store.renderer.maxInputs();
+	const addRow = el("div", { class: "gn-addrow" }, el("button", { class: "btn tiny", attrs: { disabled: atMax ? "" : undefined }, title: atMax ? "Input limit reached" : "Add an input channel", on: { click: () => store.addPassChannel(pass.id) } }, `+ input (iChannel${pass.channels.length})`));
 
 	node.appendChild(header);
-	node.appendChild(el("div", { class: "gn-body" }, ...rows));
-	node.appendChild(el("span", { class: "gn-port out", title: "Output (sampled by other passes)" }));
+	node.appendChild(el("div", { class: "gn-body" }, ...rows, addRow));
+	const out = el("span", { class: "gn-port out", title: "Output (sampled by other passes)" });
+	out.style.top = `${outPortY(pass)}px`;
+	node.appendChild(out);
 	return node;
 }
 
@@ -255,7 +358,7 @@ function beginRename(store: Store, pass: Pass, nameEl: HTMLElement): void {
 	input.addEventListener("blur", commit);
 }
 
-function startDrag(store: Store, pass: Pass, node: HTMLElement, e: PointerEvent, onMove: () => void): void {
+function startDrag(store: Store, pass: Pass, node: HTMLElement, e: PointerEvent, onMove: () => void, view: GraphView): void {
 	if ((e.target as HTMLElement).closest("button, select, input")) return;
 	e.preventDefault();
 	const startX = e.clientX;
@@ -265,8 +368,9 @@ function startDrag(store: Store, pass: Pass, node: HTMLElement, e: PointerEvent,
 	let curX = baseX;
 	let curY = baseY;
 	const move = (ev: PointerEvent): void => {
-		curX = Math.max(0, baseX + (ev.clientX - startX));
-		curY = Math.max(0, baseY + (ev.clientY - startY));
+		// Screen deltas are in zoomed pixels; convert to graph units.
+		curX = Math.max(0, baseX + (ev.clientX - startX) / view.zoom);
+		curY = Math.max(0, baseY + (ev.clientY - startY) / view.zoom);
 		node.style.left = `${curX}px`;
 		node.style.top = `${curY}px`;
 		pass.x = curX;
@@ -407,19 +511,23 @@ function renderTextures(store: Store, container: HTMLElement): void {
 	);
 	passSel.addEventListener("change", () => store.selectPass(passSel.value));
 
-	const rows = [0, 1, 2, 3].map((i) => {
-		const ch = pass.channels[i];
+	const rows = pass.channels.map((ch, i) => {
 		const sel = channelSelect(store, pass, i, false);
 		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.setPassChannel(pass.id, i, { filter: val as "linear" | "nearest" }));
 		const wrapSel = selectFrom(["repeat", "clamp", "mirror"], ch.wrap, (val) => store.setPassChannel(pass.id, i, { wrap: val as "repeat" | "clamp" | "mirror" }));
-		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel);
+		const rm = el("button", { class: "btn icon tiny", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 14 }));
+		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel, rm);
 	});
+
+	const atMax = pass.channels.length >= store.renderer.maxInputs();
+	const addBtn = el("button", { class: "btn", attrs: { disabled: atMax ? "" : undefined }, on: { click: () => store.addPassChannel(pass.id) } }, atMax ? `Max inputs (${store.renderer.maxInputs()})` : `+ Add input (iChannel${pass.channels.length})`);
 
 	render(
 		container,
 		el("div", { class: "tex-head" }, el("span", { class: "field-label" }, "Inputs for pass"), passSel),
-		el("div", { class: "ch-list" }, ...rows),
-		el("p", { class: "muted small" }, "Bind a built-in texture, an image, or another pass's output (kind=pass) — including this pass's own previous frame for feedback."),
+		pass.channels.length ? el("div", { class: "ch-list" }, ...rows) : el("p", { class: "muted small" }, "This pass has no inputs yet."),
+		addBtn,
+		el("p", { class: "muted small" }, "Bind a built-in texture, an image, or another pass's output (kind=pass) — including this pass's own previous frame for feedback. A pass can have as many inputs as the GPU allows (≥16), not just 4."),
 	);
 }
 
