@@ -23,7 +23,14 @@ export function glslType(t: UniformType): string {
 const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // iChannelN (any N) is a reserved input sampler name; the count is dynamic.
 const CHANNEL_NAME = /^iChannel\d+$/;
-const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*;[ \t]*$/gm;
+// One custom-uniform declaration on its own line. Tolerates an optional precision
+// qualifier (highp/mediump/lowp) and an optional `= <default>` initializer so the
+// AI can bake a default value right into the declaration -- group 1 = type, group
+// 2 = name, group 3 = the initializer expression (without the `=`), if any. The
+// SAME regex drives both extraction and stripping, so whatever we surface as a
+// control is exactly what we remove from the user body (the header re-declares it,
+// without the initializer, which GLSL ES requires).
+const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=[ \t]*([^;\n]*?))?[ \t]*;[ \t]*$/gm;
 
 export function isValidUniformName(name: string): boolean {
 	if (!VALID_NAME.test(name)) return false;
@@ -32,14 +39,73 @@ export function isValidUniformName(name: string): boolean {
 	return !BUILTIN_NAMES.has(name);
 }
 
+function componentCount(type: UniformType): number {
+	return type === "float" ? 1 : type === "vec2" ? 2 : type === "vec3" ? 3 : 4;
+}
+
+/** Parse a GLSL initializer expression into component values, or null if it isn't
+ * a plain numeric literal / vecN(...) constructor we can evaluate. Single-argument
+ * vector constructors splat (vec3(0.5) -> [0.5,0.5,0.5]); too-few args pad with 0. */
+function parseInitializer(type: UniformType, expr: string | undefined): number[] | null {
+	if (!expr) return null;
+	const n = componentCount(type);
+	const e = expr.trim();
+	if (type === "float") {
+		const v = Number(e);
+		return Number.isFinite(v) ? [v] : null;
+	}
+	const m = e.match(/^vec[234][ \t]*\(([^)]*)\)$/);
+	if (!m) return null;
+	const args = m[1].split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	if (args.length === 0) return null;
+	const nums = args.map(Number);
+	if (nums.some((x) => !Number.isFinite(x))) return null;
+	if (nums.length === 1) return new Array(n).fill(nums[0]);
+	return Array.from({ length: n }, (_, i) => nums[i] ?? 0);
+}
+
+/** Round v UP to a "nice" 1/2/5 * 10^k bound (>= 1) so a baked default lands
+ * comfortably inside the slider range rather than pinned at the very end. */
+function niceCeil(v: number): number {
+	if (v <= 1) return 1;
+	const pow = Math.pow(10, Math.floor(Math.log10(v)));
+	const n = v / pow;
+	const mult = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+	return mult * pow;
+}
+
+function niceStep(range: number): number {
+	const raw = range / 100;
+	const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+	const n = raw / pow;
+	const mult = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+	return Number((mult * pow).toPrecision(2));
+}
+
+/** Pick a slider range that contains every component value. Values already inside
+ * 0..1 keep the canonical 0..1 / 0.01 range (unchanged from before); a baked
+ * default outside it widens the range (symmetric when any component is negative). */
+function rangeForValues(values: number[]): { min: number; max: number; step: number } {
+	let lo = 0;
+	let hi = 1;
+	for (const v of values) {
+		if (v < lo) lo = v;
+		if (v > hi) hi = v;
+	}
+	if (lo >= 0 && hi <= 1) return { min: 0, max: 1, step: 0.01 };
+	const bound = niceCeil(Math.max(1, Math.abs(lo), Math.abs(hi)));
+	const min = lo < 0 ? -bound : 0;
+	return { min, max: bound, step: niceStep(bound - min) };
+}
+
 export function extractUniformDeclarations(source: string): Uniform[] {
 	const out: Uniform[] = [];
 	for (const m of source.matchAll(CUSTOM_UNIFORM_RE)) {
 		const type = m[1] as UniformType;
 		const name = m[2];
 		if (!isValidUniformName(name)) continue;
-		const n = type === "float" ? 1 : type === "vec2" ? 2 : type === "vec3" ? 3 : 4;
-		out.push({ name, type, value: new Array(n).fill(0), min: 0, max: 1, step: 0.01 });
+		const value = parseInitializer(type, m[3]) ?? new Array(componentCount(type)).fill(0);
+		out.push({ name, type, value, ...rangeForValues(value) });
 	}
 	return out;
 }

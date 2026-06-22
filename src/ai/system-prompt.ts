@@ -77,7 +77,7 @@ export function buildSystemPrompt(): string {
 - You write GLSL ES 3.00 and each pass MUST define:
       void mainImage(out vec4 fragColor, in vec2 fragCoord) { ... }
   fragCoord is in pixels (origin bottom-left). Write the final colour to fragColor (RGBA, 0..1).
-- DO NOT include "#version", "precision", "out vec4", "void main()", or built-in uniform declarations (iTime, iResolution, iChannel samplers, etc.). The harness prepends all of that. Just provide your helper functions and mainImage. You MAY declare custom controls with \`uniform float/vec2/vec3/vec4 u_name;\`; those declarations automatically become live UI inputs. (You may add extra helper functions and #define macros above mainImage.)
+- DO NOT include "#version", "precision", "out vec4", "void main()", or built-in uniform declarations (iTime, iResolution, iChannel samplers, etc.). The harness prepends all of that. Just provide your helper functions and mainImage. You MAY declare custom controls with \`uniform float/vec2/vec3/vec4 u_name;\`; those declarations automatically become live UI inputs. Add an optional initializer to bake in a starting value, e.g. \`uniform float u_speed = 1.5;\` or \`uniform vec3 u_tint = vec3(1.0, 0.5, 0.2);\` (it becomes the control's default and the range adjusts to fit). (You may add extra helper functions and #define macros above mainImage.)
 - It is GLSL ES 3.00: use texture(...) not texture2D, no gl_FragColor. Integer/float types are strict (write 1.0 not 1 for floats).
 
 # Layers (a node-graph "Photoshop")
@@ -112,7 +112,7 @@ export function buildSystemPrompt(): string {
   vec3  iChannelResolution[N]           // N = this pass's input count
 Only the iChannelK inputs this pass actually has are declared -- don't sample an input you haven't wired.
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
-Custom uniforms are SHARED across all passes in all layers. Declare them in shader source as \`uniform float/vec2/vec3/vec4 u_name;\`; the editor extracts them into live controls automatically. Use set_uniforms only to adjust their defaults/ranges/labels. Built-in procedural textures you can bind to channels: ${builtins}.
+Custom uniforms are SHARED across all passes in all layers. Declare them in shader source as \`uniform float/vec2/vec3/vec4 u_name;\` (optionally with a default, e.g. \`= 1.5\` or \`= vec3(1.0, 0.5, 0.2)\`); the editor extracts them into live controls automatically. Use set_uniforms only to adjust their defaults/ranges/labels. Built-in procedural textures you can bind to channels: ${builtins}.
 
 # Working style
 - Prefer doing over describing: use your tools to change the shader rather than pasting code into chat. Keep chat replies short -- a sentence or two about what you did or what you need.
