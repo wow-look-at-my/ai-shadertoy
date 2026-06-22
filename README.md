@@ -115,6 +115,13 @@ source's size). Each input has its own filter (linear/nearest) and wrap
 (repeat/clamp/mirror). Webcam use prompts the browser for camera permission;
 nothing is uploaded anywhere — the frames stay on your GPU.
 
+Upload media to the shared **Assets** tab — a library of images and videos that
+lives across all your shaders, independent of any channel. Drop a file in there
+and the AI can see it (`list_assets`) and bind it to a pass input on its own
+(`connect_pins from=asset:<name>`); rename an asset to give the AI a clear handle,
+or delete it to remove it everywhere it's used. (You can still upload straight
+into a channel from the Textures tab — that file lands in the same library.)
+
 Some tools require your approval before they take effect. When the AI calls one
 (currently `rename_shader`), the chat shows an **Approve / Deny** prompt and the
 action only runs if you approve; a denial is reported back to the model.
@@ -232,12 +239,12 @@ src/
   ai/                   # provider adapters (Anthropic + OpenAI), agent loop, tools
   state/                # types, central store, undo/redo history, IndexedDB persistence
   ui/                   # vanilla-DOM components: chat | (preview stacked over the
-                        #   editor: Code / Passes graph / Uniforms / Textures)
+                        #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets)
   util/                 # DOM helper, tiny markdown renderer, misc
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history.test.ts)
+test/                   # plain-Node unit tests (history / layers / cache / uniforms)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

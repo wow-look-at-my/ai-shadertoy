@@ -1003,6 +1003,80 @@ textarea.code {
 	padding: 4px 6px;
 }
 
+/* ---- assets (shared media library) ---- */
+.assets {
+	flex: 1;
+	overflow-y: auto;
+	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.asset-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+	gap: 10px;
+}
+.asset-card {
+	background: var(--bg-1);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+.asset-thumb-wrap {
+	position: relative;
+	aspect-ratio: 1 / 1;
+	background: #0c0c0c;
+}
+.asset-thumb {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	display: block;
+}
+.asset-badge {
+	position: absolute;
+	bottom: 4px;
+	right: 4px;
+	font-size: 10px;
+	line-height: 1;
+	padding: 2px 5px;
+	border-radius: 4px;
+	background: rgba(0, 0, 0, 0.6);
+	color: #fff;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+.asset-info {
+	padding: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.asset-head {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+}
+.asset-name {
+	flex: 1;
+	min-width: 0;
+	font-size: 12px;
+}
+.asset-meta {
+	font-size: 11px;
+	color: var(--fg-dim);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.asset-actions {
+	display: flex;
+	gap: 8px;
+}
+
 /* ---- layers panel ---- */
 .layers-panel {
 	flex: 1;
