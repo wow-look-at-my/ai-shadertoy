@@ -11,6 +11,7 @@ function chan(c: Channel, ctx: ToolContext): string | null {
 	if (c.kind === "none") return null;
 	if (c.kind === "under") return "under";
 	if (c.kind === "geometry") return "geometry";
+	if (c.kind === "mask") return "mask";
 	if (c.kind === "builtin") return `builtin:${c.builtin}`;
 	if (c.kind === "pass") return `pass:${ctx.passes().find((p) => p.id === c.passId)?.name ?? c.passId}`;
 	if (c.kind === "webcam") return "webcam";

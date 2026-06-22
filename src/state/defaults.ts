@@ -1,7 +1,7 @@
 // Default settings and project factories.
 
 import type { Channel, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
-import { defaultChannels, emptyChannel, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
+import { channelsForSource, emptyChannel, ensureMaskCompositePass, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
 import { isShapeKind } from "../gl/shapes.ts";
 import { uid } from "../util/misc.ts";
 
@@ -57,7 +57,7 @@ export const STARTER_UNIFORMS: Uniform[] = [];
  * stacked on top of this. */
 export function makeProject(name: string, shaderSource: string): Project {
 	const now = Date.now();
-	const output = makePass("Image", shaderSource, defaultChannels(), 320, 60);
+	const output = makePass("Image", shaderSource, channelsForSource(shaderSource), 320, 60);
 	const base = makeLayer("Base", [output], output.id, []);
 	return {
 		id: uid("p_"),
@@ -91,10 +91,10 @@ function clampNum(v: unknown, lo: number, hi: number, d: number): number {
 	return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
 }
 
-function normalizeChannels(raw: unknown): Channel[] {
-	// Variable-length input list (0..MAX_INPUTS). Legacy projects stored exactly
-	// four; those are preserved as four. A missing list defaults to four.
-	if (!Array.isArray(raw)) return defaultChannels(4);
+function normalizeChannels(raw: unknown, source = ""): Channel[] {
+	// Variable-length input list (0..MAX_INPUTS). Explicit legacy arrays are
+	// preserved; missing arrays are inferred from the shader's iChannel references.
+	if (!Array.isArray(raw)) return channelsForSource(source).slice(0, MAX_INPUTS);
 	const n = Math.min(raw.length, MAX_INPUTS);
 	const out: Channel[] = [];
 	for (let i = 0; i < n; i++) {
@@ -106,12 +106,12 @@ function normalizeChannels(raw: unknown): Channel[] {
 
 function normalizePass(raw: unknown, i: number): Pass {
 	const r = (raw ?? {}) as Partial<Pass>;
-	const fallback = makePass(r.name ?? `Pass ${i + 1}`, r.source ?? "", normalizeChannels(r.channels), 40 + i * 240, 60);
+	const fallback = makePass(r.name ?? `Pass ${i + 1}`, r.source ?? "", normalizeChannels(r.channels, r.source ?? ""), 40 + i * 240, 60);
 	return {
 		id: typeof r.id === "string" && r.id ? r.id : fallback.id,
 		name: r.name ?? fallback.name,
 		source: r.source ?? "",
-		channels: normalizeChannels(r.channels),
+		channels: normalizeChannels(r.channels, r.source ?? ""),
 		format: r.format === "rgba16f" ? "rgba16f" : "rgba8",
 		x: typeof r.x === "number" ? r.x : fallback.x,
 		y: typeof r.y === "number" ? r.y : fallback.y,
@@ -153,7 +153,10 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 		outputPassId,
 		shapes,
 	};
-	if (r.mask && typeof r.mask === "object") layer.mask = normalizeLayer(r.mask, 0);
+	if (r.mask && typeof r.mask === "object") {
+		layer.mask = normalizeLayer(r.mask, 0);
+		ensureMaskCompositePass(layer);
+	}
 	return layer;
 }
 

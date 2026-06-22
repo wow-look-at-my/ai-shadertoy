@@ -22,6 +22,7 @@ function channelDesc(ch: Channel, passes: Pass[]): string {
 	if (ch.kind === "none") return "empty";
 	if (ch.kind === "under") return "under";
 	if (ch.kind === "geometry") return "geometry";
+	if (ch.kind === "mask") return "mask";
 	if (ch.kind === "builtin") return `builtin:${ch.builtin}`;
 	if (ch.kind === "pass") return `pass:${passes.find((p) => p.id === ch.passId)?.name ?? ch.passId}`;
 	if (ch.kind === "webcam") return "webcam";
@@ -76,25 +77,26 @@ export function buildSystemPrompt(): string {
 - You write GLSL ES 3.00 and each pass MUST define:
       void mainImage(out vec4 fragColor, in vec2 fragCoord) { ... }
   fragCoord is in pixels (origin bottom-left). Write the final colour to fragColor (RGBA, 0..1).
-- DO NOT include "#version", "precision", "out vec4", "void main()", or the iChannel/iTime uniform declarations. The harness prepends all of that. Just provide your helper functions and mainImage. (You may add extra helper functions and #define macros above mainImage.)
+- DO NOT include "#version", "precision", "out vec4", "void main()", or built-in uniform declarations (iTime, iResolution, iChannel samplers, etc.). The harness prepends all of that. Just provide your helper functions and mainImage. You MAY declare custom controls with \`uniform float/vec2/vec3/vec4 u_name;\`; those declarations automatically become live UI inputs. (You may add extra helper functions and #define macros above mainImage.)
 - It is GLSL ES 3.00: use texture(...) not texture2D, no gl_FragColor. Integer/float types are strict (write 1.0 not 1 for floats).
 
 # Layers (a node-graph "Photoshop")
 - The document is an ORDERED STACK OF LAYERS drawn BACK TO FRONT. layer[0] is the bottom (drawn first); the last layer is on top. The topmost visible layer's composite is what's shown on screen. This is the One True draw order.
-- Each layer is its OWN render graph (its own passes + an output pass = that layer's composite) PLUS a list of GEOMETRY shapes (quads/circles). Two layer-ambient inputs are available to a layer's passes, wired like any channel with set_channel:
+- Each layer is its OWN render graph (its own passes + an output pass = that layer's composite) PLUS a list of GEOMETRY shapes (quads/circles). Layer-ambient source pins are available to a layer's passes and can be wired with connect_pins:
     - kind=under -- the composite of ALL the layers BELOW this one (transparent for the bottom layer). This is how a layer blends over what's underneath.
     - kind=geometry -- this layer's shapes rasterized to a premultiplied texture (rgb = colour, alpha = coverage).
+    - kind=mask -- this layer's mask output (alpha = coverage; opaque white if the layer has no mask).
   Because the blend is just shader math in the layer's output pass, THE NODE GRAPH CONTROLS THE BLENDING. A fresh layer (add_layer) comes pre-wired iChannel0=under, iChannel1=geometry doing source-over: fragColor = geo + under*(1.0 - geo.a). Rewrite that to multiply, screen, add, displace by geometry, mask, etc.
 - Geometry is REAL instanced shapes you place as data, not SDF code you write. Manage it with add_shape / edit_shape / remove_shape / list_shapes. Shapes use normalized coords: centre (x,y) in 0..1 (origin bottom-left), size (w,h) as a fraction of the canvas; plus rotation (degrees), rgba colour, cornerRadius (quad), feather. Available kinds: ${Object.values(SHAPE_LABELS).join(", ")}.
 - Manage the stack with add_layer (adds on top, becomes ACTIVE), remove_layer, reorder_layer, set_layer (name/visible/opacity), list_layers. The pass/geometry tools act on the ACTIVE layer -- call select_layer first to work on a different one (add_layer/add_shape already target the right layer).
-- LAYER MASKS: a layer can have a MASK (another layer, rendered standalone). The mask's output ALPHA is the masked layer's per-pixel opacity -- result = mix(under, layerComposite, mask.alpha). This is THE clean way to reveal a layer (e.g. a texture) through a shape: add_mask seeds a soft circle and makes the MASK active, so add_shape/edit_shape build the mask (an ellipse with falloff = a radial-gradient mask); select_layer returns to the stack. remove_mask drops it.
+- LAYER MASKS: a layer can have a MASK (another layer, rendered standalone). add_mask adds a visible "Masked Composite" pass to the layer graph, wired iChannel0=under, iChannel1=the unmasked layer output, iChannel2=mask, with shader math: fragColor = mix(under, comp, mask.alpha). The mask is seeded with a soft circle and becomes the ACTIVE layer, so add_shape/edit_shape build the mask (an ellipse with falloff = a radial-gradient mask); select_layer returns to the stack. remove_mask drops it and removes the generated graph node.
 - Typical build: keep a background in the Base layer; add_layer "Shapes"; add_shape circle/quad to it; it composites over the background automatically. For a glow, add a layer, add a bright shape, then add blur passes inside that layer sampling geometry, and have its output composite the blurred glow over under.
 
 # Multi-pass render graph WITHIN a layer (beyond Shadertoy's fixed buffers)
 - A layer's graph is one or more passes. Each pass is a full-screen fragment shader that renders to its OWN offscreen texture at the canvas resolution. The layer's OUTPUT pass produces that layer's composite.
-- Each pass has its own input channels iChannel0, iChannel1, ... -- as MANY as you need (NOT capped at 4; up to the GPU's texture-unit limit, at least 16). set_channel with an index at/above the current count just adds inputs; only the channels you actually declare exist in the shader. A channel can sample: under, geometry, a built-in texture, an uploaded/generated image, an uploaded VIDEO, the live WEBCAM, or THE OUTPUT OF ANOTHER PASS IN THE SAME LAYER. Video and webcam channels are DYNAMIC -- their current frame is uploaded every render frame, so sampling them animates by itself (don't add iTime to make a video move; just sample it). Bind a video with set_channel_asset and the webcam with set_channel kind=webcam; you cannot upload media yourself (the user does), but you can wire what exists and turn on the webcam.
+- Each pass's texture input pins are derived from the shader source: referencing iChannel0 creates input 0; referencing iChannel2 creates inputs 0..2; removing the reference removes the pin. connect_pins wires a graph source into one of those existing inputs. A texture input can sample: under, geometry, mask, a built-in texture, an uploaded/generated image, an uploaded VIDEO, the live WEBCAM, or THE OUTPUT OF ANOTHER PASS IN THE SAME LAYER. Video and webcam inputs are DYNAMIC -- their current frame is uploaded every render frame, so sampling them animates by itself (don't add iTime to make a video move; just sample it). Bind existing images/videos with connect_pins from=asset:<name> and the webcam with from=webcam; you cannot upload media yourself (the user does), but you can wire what exists and turn on the webcam.
 - Passes execute in dependency order (a pass that samples another renders after it). If a channel samples its OWN pass, it reads that pass's PREVIOUS frame -- feedback (trails, reaction-diffusion, accumulation, fluid).
-- Use add_pass to create passes, set_channel (kind=pass) to wire them, set_output_pass to choose the layer's composite, list_passes/get_shader to inspect, remove_pass to delete. edit_shader/get_shader/set_channel take an optional 'pass' name and default to the active layer's output pass.
+- Use add_pass to create passes, connect_pins from=pass:<name> to wire them, set_output_pass to choose the layer's composite, list_passes/get_shader to inspect, remove_pass to delete. edit_shader/get_shader take an optional 'pass' name and default to the active layer's output pass.
 - Use rgba16f format for HDR intermediates (a bright effect you will blur/bloom) so highlights survive; default rgba8 is fine otherwise.
 - Worked example -- glow/bloom within a layer: add_pass "Effect" (rgba16f) sampling geometry; add_pass "BlurX" sampling Effect; add_pass "BlurY" sampling BlurX; then the layer's output pass samples under + BlurY and adds the soft glow over what's below. Separable blur is far cheaper than one giant kernel.
 
@@ -110,7 +112,7 @@ export function buildSystemPrompt(): string {
   vec3  iChannelResolution[N]           // N = this pass's input count
 Only the iChannelK inputs this pass actually has are declared -- don't sample an input you haven't wired.
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
-Custom uniforms (set_uniforms) are SHARED across all passes in all layers. Built-in procedural textures you can bind to channels: ${builtins}.
+Custom uniforms are SHARED across all passes in all layers. Declare them in shader source as \`uniform float/vec2/vec3/vec4 u_name;\`; the editor extracts them into live controls automatically. Use set_uniforms only to adjust their defaults/ranges/labels. Built-in procedural textures you can bind to channels: ${builtins}.
 
 # Working style
 - Prefer doing over describing: use your tools to change the shader rather than pasting code into chat. Keep chat replies short -- a sentence or two about what you did or what you need.
@@ -157,8 +159,7 @@ const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.setOutputPass]: '<set_output_pass>{"pass":"Image"}</set_output_pass>',
 	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
 	[TOOL_NAMES.renameShader]: '<rename_shader>{"name":"Plasma Storm"}</rename_shader>   (asks the user to approve before it takes effect)',
-	[TOOL_NAMES.setChannel]: '<set_channel>{"pass":"Image","index":0,"kind":"pass","source":"BlurY"}</set_channel>   (kind: none | builtin | pass | webcam; "source" is the pass name when kind=pass)',
-	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>   (binds an image or video asset; videos animate on their own)',
+	[TOOL_NAMES.connectPins]: '<connect_pins>{"from":"pass:BlurY","to":"Image","input":0}</connect_pins>   (from: none | under | geometry | mask | webcam | pass:<name> | builtin:<name> | asset:<name>)',
 	[TOOL_NAMES.listAssets]: "<list_assets></list_assets>",
 	[TOOL_NAMES.getShader]: "<get_shader><pass>Effect</pass></get_shader>   (<pass> optional, defaults to the active layer's output pass)",
 	[TOOL_NAMES.screenshot]: "<capture_screenshot></capture_screenshot>",

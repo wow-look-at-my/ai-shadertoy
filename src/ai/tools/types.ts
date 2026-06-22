@@ -62,7 +62,7 @@ export interface ToolContext {
 	setPassFormat(passId: string, format: PassFormat): void;
 	selectPass(passId: string): void;
 	setUniforms(uniforms: Uniform[]): CompileResult;
-	setPassChannel(passId: string, index: number, patch: Partial<Channel>): void;
+	connectPin(passId: string, index: number, patch: Partial<Channel>): void;
 	/** Rename the current shader (the project name shown in the top bar). */
 	renameProject(name: string): void;
 	addAsset(asset: ImageAsset): void;

@@ -19,7 +19,6 @@ export interface RendererShaders {
 	present: string;
 	shapeVert: string;
 	shapeFrag: string;
-	maskComposite: string;
 }
 
 export interface CompileResult {
@@ -57,7 +56,7 @@ interface ChannelSlot {
 	passId?: string;
 	filter: Channel["filter"];
 	wrap: Channel["wrap"];
-	tex: WebGLTexture | null; // owned texture for builtin/image; null for pass/none/dynamic/under/geometry
+	tex: WebGLTexture | null; // owned texture for builtin/image; null for pass/none/dynamic/under/geometry/mask
 	width: number;
 	height: number;
 	/** video/webcam slots: the live source (owns its own texture, updated per frame). */
@@ -94,7 +93,6 @@ interface RenderLayer {
 	geomDirty: boolean;
 	underTex: WebGLTexture; // set each frame: composite of the layers below
 	mask: RenderLayer | null; // optional mask layer (rendered standalone)
-	maskTarget: Target | null; // holds mix(under, composite, mask.a) for a masked layer
 }
 
 function newSlot(): ChannelSlot {
@@ -107,9 +105,9 @@ export class Renderer {
 	private vao: WebGLVertexArrayObject;
 	private vert: WebGLShader;
 	private presentProgram: WebGLProgram;
-	private maskProgram: WebGLProgram;
 	private fallbackTex: WebGLTexture;
 	private transparentTex: WebGLTexture;
+	private opaqueTex: WebGLTexture;
 	private geometry: GeometryBatch;
 
 	private layers: RenderLayer[] = []; // bottom -> top draw order
@@ -157,9 +155,9 @@ export class Renderer {
 		this.vao = gl.createVertexArray()!;
 		this.vert = this.compileShader(gl.VERTEX_SHADER, shaders.fullscreenVert) ?? this.fail("vertex shader failed");
 		this.presentProgram = this.linkProgram(this.compileShader(gl.FRAGMENT_SHADER, shaders.present) ?? this.fail("present shader failed")) ?? this.fail("present link failed");
-		this.maskProgram = this.linkProgram(this.compileShader(gl.FRAGMENT_SHADER, shaders.maskComposite) ?? this.fail("mask shader failed")) ?? this.fail("mask link failed");
 		this.fallbackTex = this.makeSolidTexture(0, 0, 0, 255);
 		this.transparentTex = this.makeSolidTexture(0, 0, 0, 0);
+		this.opaqueTex = this.makeSolidTexture(255, 255, 255, 255);
 		this.geometry = new GeometryBatch(gl, shaders.shapeVert, shaders.shapeFrag);
 
 		canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -261,7 +259,6 @@ export class Renderer {
 		for (const [id, l] of [...this.layersById]) {
 			if (!keepLayers.has(id)) {
 				if (l.geom) this.freeTarget(l.geom);
-				if (l.maskTarget) this.freeTarget(l.maskTarget);
 				this.layersById.delete(id);
 			}
 		}
@@ -279,7 +276,7 @@ export class Renderer {
 	private reconcileLayer(spec: Layer, results: Map<string, CompileResult>): RenderLayer {
 		let rl = this.layersById.get(spec.id);
 		if (!rl) {
-			rl = { id: spec.id, visible: spec.visible, opacity: spec.opacity, passes: new Map(), order: [], outputPassId: spec.outputPassId, shapes: spec.shapes, geom: null, geomDirty: true, underTex: this.transparentTex, mask: null, maskTarget: null };
+			rl = { id: spec.id, visible: spec.visible, opacity: spec.opacity, passes: new Map(), order: [], outputPassId: spec.outputPassId, shapes: spec.shapes, geom: null, geomDirty: true, underTex: this.transparentTex, mask: null };
 			this.layersById.set(spec.id, rl);
 		}
 		rl.visible = spec.visible;
@@ -310,14 +307,9 @@ export class Renderer {
 		}
 		rl.order = topoOrder(spec.passes).map((id) => rl!.passes.get(id)!).filter(Boolean);
 
-		// Mask layer (rendered standalone) + the target that holds the masked result.
+		// Mask layer (rendered standalone). Its output is available to this layer's
+		// graph as kind:"mask"; the graph decides how to apply it.
 		rl.mask = spec.mask ? this.reconcileLayer(spec.mask, results) : null;
-		if (rl.mask) {
-			if (this.allocW > 0 && !rl.maskTarget) rl.maskTarget = this.allocTarget(this.allocW, this.allocH, "rgba8");
-		} else if (rl.maskTarget) {
-			this.freeTarget(rl.maskTarget);
-			rl.maskTarget = null;
-		}
 		return rl;
 	}
 
@@ -459,7 +451,7 @@ export class Renderer {
 		return p.channels[index];
 	}
 
-	setPassChannelBuiltin(passId: string, index: number, kind: NonNullable<Channel["builtin"]>, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	connectBuiltinInput(passId: string, index: number, kind: NonNullable<Channel["builtin"]>, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		const { width, height, pixels } = builtinPixels(kind);
@@ -471,7 +463,7 @@ export class Renderer {
 		this.renderFrame();
 	}
 
-	setPassChannelImage(passId: string, index: number, image: TexImageSource, w: number, h: number, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	connectImageInput(passId: string, index: number, image: TexImageSource, w: number, h: number, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		this.uploadSlot(s, w, h, image);
@@ -482,7 +474,7 @@ export class Renderer {
 		this.renderFrame();
 	}
 
-	setPassChannelPass(passId: string, index: number, sourcePassId: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	connectPassInput(passId: string, index: number, sourcePassId: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		this.freeSlot(s);
@@ -493,10 +485,10 @@ export class Renderer {
 		this.renderFrame();
 	}
 
-	/** Bind a layer-ambient input: "under" (the composite of the layers below) or
-	 * "geometry" (this layer's rasterized shapes). Both resolve dynamically per
-	 * frame, so no texture is uploaded. */
-	setPassChannelAmbient(passId: string, index: number, kind: "under" | "geometry", filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	/** Bind a layer-ambient input: "under" (the composite of the layers below),
+	 * "geometry" (this layer's rasterized shapes), or "mask" (this layer's mask
+	 * output). These resolve dynamically per frame, so no texture is uploaded. */
+	connectAmbientInput(passId: string, index: number, kind: "under" | "geometry" | "mask", filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		this.freeSlot(s);
@@ -509,7 +501,7 @@ export class Renderer {
 
 	/** Bind a video clip (data/object URL). `key` identifies the source so a
 	 * re-apply with the same key keeps the playing clip (only updates filter/wrap). */
-	setPassChannelVideo(passId: string, index: number, url: string, key: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	connectVideoInput(passId: string, index: number, url: string, key: string, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		if (s.kind === "video" && s.dyn && s.dynKey === key) {
@@ -532,7 +524,7 @@ export class Renderer {
 	}
 
 	/** Bind the live webcam (a MediaStream acquired by the caller). */
-	setPassChannelWebcam(passId: string, index: number, stream: MediaStream, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	connectWebcamInput(passId: string, index: number, stream: MediaStream, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		this.freeSlot(s);
@@ -550,7 +542,7 @@ export class Renderer {
 
 	/** Cheap filter/wrap update for an existing binding (applied per-draw, so no
 	 * re-upload, no clip reload, no webcam re-acquire). */
-	setPassChannelParams(passId: string, index: number, filter: Channel["filter"], wrap: Channel["wrap"]): void {
+	setInputParams(passId: string, index: number, filter: Channel["filter"], wrap: Channel["wrap"]): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		s.filter = filter;
@@ -565,7 +557,7 @@ export class Renderer {
 		return s && s.dyn ? (s.dynKey ?? null) : null;
 	}
 
-	clearPassChannel(passId: string, index: number): void {
+	disconnectInput(passId: string, index: number): void {
 		const s = this.slot(passId, index);
 		if (!s) return;
 		this.freeSlot(s);
@@ -661,16 +653,11 @@ export class Renderer {
 		this.allocW = w;
 		this.allocH = h;
 		for (const p of this.allPasses.values()) this.allocPassTargets(p, w, h);
-		// Geometry (every layer incl. masks) + mask targets depend on resolution.
+		// Geometry targets for every layer, including masks, depend on resolution.
 		for (const l of this.layersById.values()) {
 			if (l.geom) this.freeTarget(l.geom);
 			l.geom = this.allocTarget(w, h, "rgba8");
 			l.geomDirty = true;
-			if (l.mask && !l.maskTarget) l.maskTarget = this.allocTarget(w, h, "rgba8");
-			else if (l.maskTarget) {
-				this.freeTarget(l.maskTarget);
-				l.maskTarget = this.allocTarget(w, h, "rgba8");
-			}
 		}
 	}
 
@@ -705,24 +692,16 @@ export class Renderer {
 			if (!layer.visible) continue;
 			layer.underTex = underTex;
 			this.rasterizeGeom(layer, W, H);
-			this.renderLayerPasses(layer, t, H, rendered);
-			const comp = this.layerOutputTex(layer);
-			if (!comp) continue; // layer produced nothing this frame
-
-			if (layer.mask && layer.maskTarget) {
-				// Render the mask standalone (it never sees `under`), then attenuate
-				// this layer by it: mix(under, composite, mask.a) -- a per-pixel opacity.
+			if (layer.mask) {
 				layer.mask.underTex = this.transparentTex;
 				this.rasterizeGeom(layer.mask, W, H);
 				this.renderLayerPasses(layer.mask, t, H, rendered);
-				const maskTex = this.layerOutputTex(layer.mask) ?? this.transparentTex;
-				this.maskComposite(underTex, comp, maskTex, layer.maskTarget, W, H);
-				finalTex = layer.maskTarget.tex;
-				underTex = layer.maskTarget.tex;
-			} else {
-				finalTex = comp;
-				underTex = comp; // becomes the next layer's "under"
 			}
+			this.renderLayerPasses(layer, t, H, rendered);
+			const comp = this.layerOutputTex(layer);
+			if (!comp) continue; // layer produced nothing this frame
+			finalTex = comp;
+			underTex = comp; // becomes the next layer's "under"
 		}
 
 		// Present the topmost visible layer's composite (or clear if nothing drew).
@@ -763,31 +742,6 @@ export class Renderer {
 	private layerOutputTex(layer: RenderLayer): WebGLTexture | null {
 		const out = layer.passes.get(layer.outputPassId) ?? layer.order[layer.order.length - 1] ?? null;
 		return out && out.a ? this.curr(out).tex : null;
-	}
-
-	/** maskTarget = mix(under, composite, mask.a). All premultiplied, so the mix is
-	 * a straight linear blend. The mask's alpha is this layer's per-pixel opacity. */
-	private maskComposite(under: WebGLTexture, comp: WebGLTexture, mask: WebGLTexture, target: Target, W: number, H: number): void {
-		const gl = this.gl;
-		gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
-		gl.viewport(0, 0, W, H);
-		gl.useProgram(this.maskProgram);
-		gl.bindVertexArray(this.vao);
-		const bind = (unit: number, tex: WebGLTexture, name: string): void => {
-			gl.activeTexture(gl.TEXTURE0 + unit);
-			gl.bindTexture(gl.TEXTURE_2D, tex);
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-			const l = gl.getUniformLocation(this.maskProgram, name);
-			if (l) gl.uniform1i(l, unit);
-		};
-		bind(0, under, "uUnder");
-		bind(1, comp, "uComposite");
-		bind(2, mask, "uMask");
-		const lr = gl.getUniformLocation(this.maskProgram, "uResolution");
-		if (lr) gl.uniform2f(lr, W, H);
-		gl.drawArrays(gl.TRIANGLES, 0, 3);
-		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 	}
 
 	private drawPass(p: RenderPass, t: number, H: number, rendered: Set<string>): void {
@@ -863,6 +817,9 @@ export class Renderer {
 		} else if (slot.kind === "geometry") {
 			const g = self.layer.geom;
 			return { tex: g ? g.tex : this.transparentTex, width: self.width || this.allocW, height: self.height || this.allocH, float: false };
+		} else if (slot.kind === "mask") {
+			const mask = self.layer.mask ? this.layerOutputTex(self.layer.mask) : null;
+			return { tex: mask ?? this.opaqueTex, width: self.width || this.allocW, height: self.height || this.allocH, float: false };
 		} else if (slot.kind === "pass" && slot.passId) {
 			const src = this.allPasses.get(slot.passId);
 			if (src && src.a) {
@@ -996,7 +953,6 @@ export class Renderer {
 		for (const p of this.allPasses.values()) this.destroyPass(p);
 		for (const l of this.layersById.values()) {
 			if (l.geom) this.freeTarget(l.geom);
-			if (l.maskTarget) this.freeTarget(l.maskTarget);
 		}
 		this.geometry.dispose();
 		this.allPasses.clear();
@@ -1006,7 +962,7 @@ export class Renderer {
 }
 
 /** Topological render order over a layer's pass dependency graph (a pass depends
- * on every OTHER pass it samples via kind:"pass"). under/geometry channels are
+ * on every OTHER pass it samples via kind:"pass"). under/geometry/mask channels are
  * layer-ambient, not edges, so they're ignored here. Cycles (feedback) are broken
  * by the input order; those back-edges read the previous frame at draw time.
  * Exported for unit testing. */

@@ -39,15 +39,16 @@ npm run build         # ts0 build -> dist/index.html
   passes (each pass renders to its own offscreen, ping-ponged texture, run in
   topological order `topoOrder` of channel→pass deps, a channel pointing at its own
   pass = feedback). Layers render bottom-up: each layer sees the composite of every
-  layer below as its **`under`** input and its own rasterized geometry as its
-  **`geometry`** input (two channel `kind`s resolved per-layer, NOT graph edges);
+  layer below as its **`under`** input, its own rasterized geometry as its
+  **`geometry`** input, and its optional mask as **`mask`** (channel `kind`s
+  resolved per-layer, NOT graph edges);
   the layer's output pass is the new composite, and the topmost visible layer's
   composite is blitted to the screen by an internal present shader. A layer may
   carry a **mask** (`Layer.mask`, itself a layer rendered standalone with no
-  `under`): its output alpha attenuates the layer per-pixel via a `mask.frag.glsl`
-  mix pass (`maskComposite`: `mix(under, composite, mask.a)`), written to the
-  layer's `maskTarget`. `reconcileLayer` reconciles stack layers AND their masks
-  (recursively); `present` takes a texture. `setDocument()`
+  `under`): `add_mask` adds a visible `Masked Composite` graph pass on the owner
+  layer that samples `under`, the unmasked output pass, and `mask`, then computes
+  `mix(under, composite, mask.a)`. `reconcileLayer` reconciles stack layers AND
+  their masks (recursively); `present` takes a texture. `setDocument()`
   ((re)compiles + reconciles every layer/pass, returns a per-pass `CompileResult`)
   replaces the old `setPasses`; `setLayerShapes`/`setLayerProps` are cheap
   per-layer updates (no recompile). **Geometry is real instanced meshes**:
@@ -57,12 +58,12 @@ npm run build         # ts0 build -> dist/index.html
   shader's `kind` switch index, so a new primitive is one entry + one `case`).
   Targets are
   `rgba8` or `rgba16f` (HDR, when `EXT_color_buffer_float`/`OES_texture_float_linear`
-  allow, else it falls back). `setPassChannel*`/`clearPassChannel`
-  bind inputs (`setPassChannelAmbient` for under/geometry); `maxInputs()` exposes the GPU texture-unit ceiling. Channels can be
+  allow, else it falls back). `connect*Input`/`disconnectInput`
+  bind inputs (`connectAmbientInput` for under/geometry/mask); `maxInputs()` exposes the GPU texture-unit ceiling. Channels can be
   **dynamic** (uploaded video / live webcam): a `DynamicTexture` (`dynamictexture.ts`)
   owns a `<video>` whose current frame is re-uploaded every render tick (texImage2D
   then texSubImage2D), follows play/pause/reset, and stops its stream on teardown
-  (`setPassChannelVideo` / `setPassChannelWebcam`; `setPassChannelParams` changes
+  (`connectVideoInput` / `connectWebcamInput`; `setInputParams` changes
   filter/wrap without reloading; `dynamicKey()` lets the store skip redundant
   reloads). It also owns the clock, uniforms, and screenshot (average-colour
   feedback). `wrapper.ts` assembles
@@ -97,10 +98,10 @@ npm run build         # ts0 build -> dist/index.html
   rgba). Within a layer: `init_shader`, `edit_shader` (forgiving exact-snippet
   replace; optional `pass`), `add_pass` / `remove_pass` / `list_passes` /
   `set_output_pass`, `get_shader`, `set_uniforms` (shared across ALL layers),
-  `rename_shader` (permission-gated), `set_channel`
-  (`kind: none|under|geometry|builtin|pass|webcam`; `under`/`geometry` are the
-  layer-ambient inputs; any index auto-grows the input list),
-  `set_channel_asset` (image OR video asset), `list_assets`, `capture_screenshot`,
+  `rename_shader` (permission-gated), `connect_pins`
+  (`from: none|under|geometry|mask|builtin:<name>|pass:<name>|webcam|asset:<name>`;
+  texture input pins are inferred from `iChannelN` references in the shader),
+  `list_assets`, `capture_screenshot`,
   `generate_texture` (gated on image-gen).
 - **Permission-gated tools**: a tool can set `requiresPermission: true` (+ an
   optional `permissionPrompt(input)` for the prompt text) in its registration.
@@ -120,14 +121,15 @@ npm run build         # ts0 build -> dist/index.html
   (its composite) **plus** `shapes: Shape[]` (geometry), and `visible`/`opacity`.
   A `Pass` has `source`, a variable-length `channels: Channel[]` (up to
   `MAX_INPUTS`), `format`, and graph-editor `x`/`y`; a `Channel` `kind` is
-  `none|under|geometry|builtin|pass|video|webcam` (`under`/`geometry` are
+  `none|under|geometry|mask|builtin|pass|video|webcam` (`under`/`geometry`/`mask` are
   layer-ambient — no extra fields; `pass`+`passId` is a same-layer edge). A `Shape`
   is `{kind, x, y, w, h, rotation, color, cornerRadius, feather, falloff}` in
   normalized 0..1 canvas coords (`falloff` 0..1 ramps alpha centre->edge = a radial
   gradient). A layer also has an optional `mask?: Layer` (an owned layer used as a
   per-pixel opacity mask). `makeCompositeLayer` builds a ready "over" layer,
-  `makeMaskLayer` a geometry-passthrough mask; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`
-  are their default shaders. `src/util/media.ts` holds the file/webcam plumbing.
+  `makeMaskLayer` a geometry-passthrough mask; `ensureMaskCompositePass` adds the
+  graph node that applies it; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`/
+  `MASK_COMPOSITE_SOURCE` are their default shaders. `src/util/media.ts` holds the file/webcam plumbing.
   `store.ts` (single owner of state + the renderer + persistence + `applyTool` +
   undo/redo) tracks `selectedLayerId` + `selectedPassId` + `selectedShapeId` (the
   active layer can be a layer's mask — `layerById`/`passById`/`eachLayer` recurse
@@ -136,7 +138,7 @@ npm run build         # ts0 build -> dist/index.html
   `removeMask`), shape mutations
   (`addShape`/`updateShape`/`removeShape` — cheap via `renderer.setLayerShapes`),
   and the per-layer pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
-  `setPassSource`/`setPassChannel`/…, all resolving the pass's owning layer), plus
+  `setPassSource`/`connectPin`/…, all resolving the pass's owning layer), plus
   `commitMessages()`. `defaults.ts` `normalizeProject` migrates BOTH eras — legacy
   single-`shaderSource` and the mid-era flat `passes`/`outputPassId` graph — into a
   single "Base" layer (tested in `test/layers.test.ts`). `persist.ts` (IndexedDB,
@@ -185,8 +187,7 @@ npm run build         # ts0 build -> dist/index.html
   triangle, shared by every pass), `present.frag.glsl` (output blit), and the
   instanced-geometry pair `shape.vert.glsl` + `shape.frag.glsl` (the per-kind SDF
   `case` switch lives in `shape.frag.glsl`, kept in lockstep with the `shapes.ts`
-  registry order), and `mask.frag.glsl` (the layer-mask mix). All embedded into the
-  single-file bundle by ts0's fetch interceptor and loaded at runtime via
+  registry order). All embedded into the single-file bundle by ts0's fetch interceptor and loaded at runtime via
   `fetch(new URL(...))` (the shader sources are passed into the `Renderer`
   constructor as a `RendererShaders` object).
 

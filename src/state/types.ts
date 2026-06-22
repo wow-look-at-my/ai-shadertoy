@@ -60,11 +60,12 @@ export interface Uniform {
 
 // "video"/"webcam" are DYNAMIC: a live video element whose current frame is
 // uploaded to the channel texture every render tick (see gl/dynamictexture.ts).
-// "under"/"geometry" are LAYER-AMBIENT inputs the renderer provides per layer:
+// "under"/"geometry"/"mask" are LAYER-AMBIENT inputs the renderer provides per layer:
 // "under" = the composite of every layer below this one (transparent for the
 // bottom layer); "geometry" = this layer's shapes rasterized (premultiplied
-// rgba). Neither needs an asset/builtin/pass reference.
-export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam" | "under" | "geometry";
+// rgba); "mask" = this layer's optional mask layer output. None need an
+// asset/builtin/pass reference.
+export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam" | "under" | "geometry" | "mask";
 export type BuiltinTexture = "rgbaNoise" | "grayNoise" | "checker" | "gradient" | "blue";
 export type TexFilter = "linear" | "nearest";
 export type TexWrap = "repeat" | "clamp" | "mirror";
@@ -136,9 +137,10 @@ export interface Shape {
 
 /** One layer in the document's back-to-front stack. A layer is its own node
  * graph (`passes` + `outputPassId`, exactly like the old top-level project) plus
- * a list of geometry `shapes`. Its passes can wire two layer-ambient inputs:
+ * a list of geometry `shapes`. Its passes can wire layer-ambient inputs:
  * kind:"under" (the composite of the layers below) and kind:"geometry" (this
- * layer's rasterized shapes); the layer's output pass produces the new
+ * layer's rasterized shapes), plus kind:"mask" when the layer has a mask. The
+ * layer's output pass produces the new
  * composite. Blending is therefore whatever the graph computes. */
 export interface Layer {
 	id: string;
@@ -149,9 +151,8 @@ export interface Layer {
 	outputPassId: string; // the pass whose output is this layer's composite
 	shapes: Shape[];
 	/** Optional layer MASK: another layer (rendered standalone, no `under`) whose
-	 * output ALPHA attenuates this layer per-pixel. The masked result is
-	 * mix(under, thisComposite, mask.a) -- i.e. the mask is this layer's per-pixel
-	 * opacity. Used e.g. to reveal a texture through a radial-gradient shape. */
+	 * output ALPHA is available to this layer's graph as kind:"mask". The standard
+	 * masked-composite graph computes mix(under, thisComposite, mask.a). */
 	mask?: Layer;
 }
 
@@ -235,10 +236,21 @@ export function emptyChannel(): Channel {
 	return { kind: "none", filter: "linear", wrap: "repeat" };
 }
 
-/** A default input list. New passes start with 4 (the familiar iChannel0..3),
- * but inputs can be added/removed freely up to MAX_INPUTS. */
+/** Build a list of empty texture inputs. Passes normally derive this from their
+ * shader source; explicit legacy/project channel arrays still use this helper. */
 export function defaultChannels(n = 4): Channel[] {
 	return Array.from({ length: n }, emptyChannel);
+}
+
+export function referencedInputCount(source: string): number {
+	const clean = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+	let max = -1;
+	for (const m of clean.matchAll(/\biChannel(\d+)\b/g)) max = Math.max(max, Number(m[1]));
+	return max + 1;
+}
+
+export function channelsForSource(source: string): Channel[] {
+	return defaultChannels(referencedInputCount(source));
 }
 
 let passCounter = 0;
@@ -249,7 +261,7 @@ export function makePass(name: string, source: string, channels?: Channel[], x =
 		id: `pass_${Date.now().toString(36)}_${passCounter}`,
 		name,
 		source,
-		channels: channels ?? defaultChannels(),
+		channels: channels ?? channelsForSource(source),
 		format: "rgba8",
 		x,
 		y,
@@ -328,10 +340,48 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 `;
 
+export const MASK_COMPOSITE_SOURCE = `// Masked Composite: apply this layer's mask in the graph.
+// iChannel0 = under (everything below); iChannel1 = this layer's unmasked composite; iChannel2 = mask.
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+	vec2 uv = fragCoord / iResolution.xy;
+	vec4 under = texture(iChannel0, uv);
+	vec4 comp = texture(iChannel1, uv);
+	float m = clamp(texture(iChannel2, uv).a, 0.0, 1.0);
+	fragColor = mix(under, comp, m);
+}
+`;
+
 /** A ready-to-use mask layer: one "Mask" pass that outputs its geometry. Seed it
  * with shapes (e.g. an ellipse with falloff) to get a soft mask. */
 export function makeMaskLayer(shapes: Shape[] = []): Layer {
 	const channels: Channel[] = [{ kind: "geometry", filter: "linear", wrap: "clamp" }];
 	const pass = makePass("Mask", MASK_SOURCE, channels, 320, 60);
 	return makeLayer("Mask", [pass], pass.id, shapes);
+}
+
+export function isMaskCompositePass(pass: Pass): boolean {
+	return pass.name === "Masked Composite" && pass.source === MASK_COMPOSITE_SOURCE && pass.channels[0]?.kind === "under" && pass.channels[1]?.kind === "pass" && pass.channels[2]?.kind === "mask";
+}
+
+export function ensureMaskCompositePass(layer: Layer): Pass {
+	const out = layer.passes.find((p) => p.id === layer.outputPassId);
+	if (out && isMaskCompositePass(out)) return out;
+	const channels: Channel[] = [
+		{ kind: "under", filter: "linear", wrap: "clamp" },
+		{ kind: "pass", passId: layer.outputPassId, filter: "linear", wrap: "clamp" },
+		{ kind: "mask", filter: "linear", wrap: "clamp" },
+	];
+	const pass = makePass("Masked Composite", MASK_COMPOSITE_SOURCE, channels, 560, 60);
+	layer.passes.push(pass);
+	layer.outputPassId = pass.id;
+	return pass;
+}
+
+export function removeMaskCompositePass(layer: Layer): void {
+	const out = layer.passes.find((p) => p.id === layer.outputPassId);
+	if (!out || !isMaskCompositePass(out)) return;
+	const unmaskedId = out.channels[1]?.passId;
+	layer.passes = layer.passes.filter((p) => p.id !== out.id);
+	if (unmaskedId && layer.passes.some((p) => p.id === unmaskedId)) layer.outputPassId = unmaskedId;
+	else layer.outputPassId = layer.passes[layer.passes.length - 1]?.id ?? layer.outputPassId;
 }

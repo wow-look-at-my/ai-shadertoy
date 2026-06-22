@@ -155,15 +155,18 @@ textarea:focus {
 .brand {
 	display: flex;
 	align-items: center;
+	flex: 0 0 auto;
 	gap: 6px;
 	font-weight: 600;
 	letter-spacing: 0.2px;
+	white-space: nowrap;
 }
 .brand strong {
 	background: linear-gradient(90deg, var(--accent), var(--accent-2));
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
+	white-space: nowrap;
 }
 .busy-dot {
 	width: 9px;

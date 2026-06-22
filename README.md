@@ -45,9 +45,9 @@ existing shader, so it doesn't retype the whole thing), `add_pass` / `remove_pas
 `list_layers` (manage the layer stack), `add_shape` / `edit_shape` / `remove_shape`
 / `list_shapes` (place and tweak geometry), `set_uniforms` (live slider parameters,
 shared across all passes), `rename_shader` (rename the current shader),
-`set_channel` / `set_channel_asset` (wire a pass input to `under`, `geometry`, a
-built-in texture, an image, a video, the webcam, or — `kind: pass` — another pass's
-output), `list_assets`, `capture_screenshot`, and (optional) `generate_texture`.
+`connect_pins` (wire a shader-declared input to `under`, `geometry`, `mask`, a
+built-in texture, an asset, the webcam, or another pass's output), `list_assets`,
+`capture_screenshot`, and (optional) `generate_texture`.
 Pass and geometry tools act on the **active layer** (`select_layer` switches it).
 
 ### Layers (node-graph compositing)
@@ -55,13 +55,14 @@ Pass and geometry tools act on the **active layer** (`select_layer` switches it)
 The document is an ordered **stack of layers**, drawn **back to front** (the One
 True draw order). Each layer is its own render graph (its own passes + an output
 pass = that layer's composite) **plus** a list of **geometry shapes** (quads and
-circles, real instanced meshes). Two layer-ambient inputs are available to any
+circles, real instanced meshes). Layer-ambient inputs are available to any
 pass in a layer, wired like any other channel:
 
 - **`under`** — the composite of every layer *below* this one (transparent for the
   bottom layer). Sampling it is how a layer blends over what's underneath.
 - **`geometry`** — this layer's shapes rasterized to a premultiplied texture
   (colour + coverage).
+- **`mask`** — this layer's optional mask output, with alpha as coverage.
 
 Because the blend is just shader math in the layer's output pass, **the node graph
 controls the blending** — source-over by default, but rewrite the pass for
@@ -69,9 +70,11 @@ multiply, screen, add, displacement, masking, glow, whatever. A new layer comes
 pre-wired `iChannel0 = under`, `iChannel1 = geometry`, doing source-over.
 
 **Layer masks.** Any layer can have a **mask** — another layer (rendered
-standalone) whose output *alpha* becomes the masked layer's per-pixel opacity:
-`result = mix(under, thisComposite, mask.alpha)`. This is the clean way to reveal a
-layer (say a texture) through a shape — e.g. a circle with full falloff makes a
+standalone) whose output *alpha* is sampled by the owner graph. Adding a mask
+appends a visible `Masked Composite` pass wired `iChannel0 = under`,
+`iChannel1 = unmasked output`, `iChannel2 = mask`, with shader math:
+`result = mix(under, thisComposite, mask.alpha)`. This is the clean way to reveal
+a layer (say a texture) through a shape — e.g. a circle with full falloff makes a
 soft radial-gradient mask. The mask button on a layer row adds one (seeded with a
 soft circle) and lets you edit its geometry like any layer; the AI uses `add_mask`
 / `remove_mask`.
@@ -88,24 +91,27 @@ load as one "Base" layer, so nothing changes until you add more.
 ### Multi-pass render graph (within a layer)
 
 A layer's graph is one or more **passes**. Each pass is a full-screen fragment
-shader that renders to its own offscreen texture; its inputs (`iChannel0`,
-`iChannel1`, …) can sample `under`, `geometry`, built-in textures, image assets, or
-the **output of another pass in the same layer** — those wires are the graph edges.
-Passes execute in dependency order, and a channel pointing at its own pass reads
+shader that renders to its own offscreen texture. Texture input pins are inferred
+from the shader: referencing `iChannel0` creates input 0, referencing `iChannel2`
+creates inputs 0 through 2, and removing references removes those pins. Inputs can
+sample `under`, `geometry`, `mask`, built-in textures, image assets, or the
+**output of another pass in the same layer** — those wires are the graph edges.
+Passes execute in dependency order, and an input pointing at its own pass reads
 the *previous* frame (feedback, for trails / accumulation / ping-pong simulation).
 One pass is the layer's **output** (its composite). Passes can use an `rgba16f`
 target to keep HDR values for bloom/blur. Edit it visually in the **Passes** tab
 (draggable nodes wired by their inputs, scoped to the active layer), or let the AI
-build it. Inputs per pass are not capped at four — add as many as you need.
+build it. Inputs per pass are not capped at four; use as many `iChannelN` inputs
+as the shader needs, up to the GPU limit.
 
 ### Input channels (textures, video, webcam)
 
-Each input channel can be bound — in the **Textures** tab or by the AI — to a
-built-in procedural texture, an uploaded/generated **image**, an uploaded
-**video** clip, the live **webcam**, or another pass's output. Videos and the
+Each shader-declared texture input can be bound — in the **Textures** tab or by
+the AI — to a built-in procedural texture, an uploaded/generated **image**, an
+uploaded **video** clip, the live **webcam**, or another pass's output. Videos and the
 webcam are *dynamic*: their current frame is uploaded every render frame, so
-sampling the channel animates on its own (and `iChannelResolution` reports the
-source's size). Each channel has its own filter (linear/nearest) and wrap
+sampling the input animates on its own (and `iChannelResolution` reports the
+source's size). Each input has its own filter (linear/nearest) and wrap
 (repeat/clamp/mirror). Webcam use prompts the browser for camera permission;
 nothing is uploaded anywhere — the frames stay on your GPU.
 

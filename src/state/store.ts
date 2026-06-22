@@ -4,8 +4,9 @@
 // Also implements tool execution for the agent.
 
 import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
-import { emptyChannel, makeCompositeLayer, makeMaskLayer, makePass, makeShape } from "./types.ts";
+import { channelsForSource, ensureMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, removeMaskCompositePass } from "./types.ts";
 import { shapeDef } from "../gl/shapes.ts";
+import { extractUniformDeclarations } from "../gl/wrapper.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
@@ -212,6 +213,7 @@ export class Store {
 	// ---- renderer application ----------------------------------------------
 
 	private applyProjectToRenderer(): void {
+		this.syncUniformInputsFromSources();
 		this.passCompiles = this.renderer.setDocument(this.project.layers, this.project.uniforms);
 		this.lastCompile = this.aggregateCompile();
 		this.emit("compile", this.lastCompile);
@@ -236,43 +238,72 @@ export class Store {
 		return this.passCompiles.get(passId) ?? null;
 	}
 
+	private syncUniformInputsFromSources(): boolean {
+		const declared: Uniform[] = [];
+		const seen = new Set<string>();
+		this.eachLayer((layer) => {
+			for (const pass of layer.passes) {
+				for (const u of extractUniformDeclarations(pass.source)) {
+					if (seen.has(u.name)) continue;
+					seen.add(u.name);
+					declared.push(u);
+				}
+			}
+		});
+		const previous = new Map(this.project.uniforms.map((u) => [u.name, u]));
+		const next = declared.map((u) => {
+			const prev = previous.get(u.name);
+			if (!prev) return u;
+			const type = prev.type === "color" && u.type === "vec3" ? "color" : u.type;
+			const length = type === "float" ? 1 : type === "vec2" ? 2 : type === "vec4" ? 4 : 3;
+			const value = prev.value.slice(0, length);
+			while (value.length < length) value.push(0);
+			return { ...u, type, value, min: prev.min, max: prev.max, step: prev.step, label: prev.label };
+		});
+		if (!uniformListsEqual(this.project.uniforms, next)) {
+			this.project.uniforms = next;
+			return true;
+		}
+		return false;
+	}
+
 	private async applyChannel(passId: string, index: number): Promise<void> {
 		const pass = this.passById(passId);
 		if (!pass) return;
 		const ch = pass.channels[index];
 		if (ch.kind === "none") {
-			this.renderer.clearPassChannel(passId, index);
-		} else if (ch.kind === "under" || ch.kind === "geometry") {
-			this.renderer.setPassChannelAmbient(passId, index, ch.kind, ch.filter, ch.wrap);
+			this.renderer.disconnectInput(passId, index);
+		} else if (ch.kind === "under" || ch.kind === "geometry" || ch.kind === "mask") {
+			this.renderer.connectAmbientInput(passId, index, ch.kind, ch.filter, ch.wrap);
 		} else if (ch.kind === "builtin" && ch.builtin) {
-			this.renderer.setPassChannelBuiltin(passId, index, ch.builtin, ch.filter, ch.wrap);
+			this.renderer.connectBuiltinInput(passId, index, ch.builtin, ch.filter, ch.wrap);
 		} else if (ch.kind === "pass" && ch.passId) {
-			this.renderer.setPassChannelPass(passId, index, ch.passId, ch.filter, ch.wrap);
+			this.renderer.connectPassInput(passId, index, ch.passId, ch.filter, ch.wrap);
 		} else if (ch.kind === "image" && ch.assetId) {
 			const asset = this.assets.find((a) => a.id === ch.assetId);
 			if (!asset) {
-				this.renderer.clearPassChannel(passId, index);
+				this.renderer.disconnectInput(passId, index);
 				return;
 			}
 			try {
 				const img = await loadImageEl(asset.dataUrl);
-				this.renderer.setPassChannelImage(passId, index, img, img.naturalWidth, img.naturalHeight, ch.filter, ch.wrap);
+				this.renderer.connectImageInput(passId, index, img, img.naturalWidth, img.naturalHeight, ch.filter, ch.wrap);
 			} catch {
-				this.renderer.clearPassChannel(passId, index);
+				this.renderer.disconnectInput(passId, index);
 			}
 		} else if (ch.kind === "video" && ch.assetId) {
 			const asset = this.assets.find((a) => a.id === ch.assetId);
 			if (!asset) {
-				this.renderer.clearPassChannel(passId, index);
+				this.renderer.disconnectInput(passId, index);
 				return;
 			}
 			// Idempotent: the renderer keeps the playing clip when the key matches,
 			// so re-applying on an unrelated edit doesn't restart playback.
-			this.renderer.setPassChannelVideo(passId, index, asset.dataUrl, asset.id, ch.filter, ch.wrap);
+			this.renderer.connectVideoInput(passId, index, asset.dataUrl, asset.id, ch.filter, ch.wrap);
 		} else if (ch.kind === "webcam") {
 			// Already streaming? Refresh filter/wrap instead of re-acquiring the camera.
 			if (this.renderer.dynamicKey(passId, index) === "webcam") {
-				this.renderer.setPassChannelParams(passId, index, ch.filter, ch.wrap);
+				this.renderer.setInputParams(passId, index, ch.filter, ch.wrap);
 				return;
 			}
 			try {
@@ -283,12 +314,12 @@ export class Store {
 					stopStream(stream);
 					return;
 				}
-				this.renderer.setPassChannelWebcam(passId, index, stream, cur.filter, cur.wrap);
+				this.renderer.connectWebcamInput(passId, index, stream, cur.filter, cur.wrap);
 			} catch {
-				this.renderer.clearPassChannel(passId, index); // permission denied / no camera
+				this.renderer.disconnectInput(passId, index); // permission denied / no camera
 			}
 		} else {
-			this.renderer.clearPassChannel(passId, index);
+			this.renderer.disconnectInput(passId, index);
 		}
 	}
 
@@ -380,11 +411,20 @@ export class Store {
 	setPassSource(passId: string, src: string, compile = true): CompileResult {
 		const pass = this.passById(passId);
 		if (!pass) return { ok: true, log: "" };
+		const prevChannels = pass.channels;
 		pass.source = src;
+		const inferred = channelsForSource(src).slice(0, this.renderer.maxInputs());
+		const inputsChanged = inferred.length !== prevChannels.length;
+		pass.channels = inferred.map((ch, i) => prevChannels[i] ?? ch);
+		const uniformsChanged = this.syncUniformInputsFromSources();
 		if (compile) {
-			this.passCompiles.set(passId, this.renderer.setPassSource(passId, src));
-			this.lastCompile = this.aggregateCompile();
-			this.emit("compile", this.lastCompile);
+			if (inputsChanged || uniformsChanged) {
+				this.applyProjectToRenderer();
+			} else {
+				this.passCompiles.set(passId, this.renderer.setPassSource(passId, src));
+				this.lastCompile = this.aggregateCompile();
+				this.emit("compile", this.lastCompile);
+			}
 		}
 		this.emit("project", this.project);
 		this.commit(`Edit ${pass.name} code`, `code:${passId}`, true);
@@ -412,53 +452,22 @@ export class Store {
 		this.touch();
 	}
 
-	setPassChannel(passId: string, index: number, patch: Partial<Channel>): void {
+	connectPin(passId: string, index: number, patch: Partial<Channel>): void {
 		const pass = this.passById(passId);
-		if (!pass || index < 0 || index >= this.renderer.maxInputs()) return;
-		// Auto-grow the input list so a higher index just adds inputs (no fixed cap).
-		const grew = index >= pass.channels.length;
-		while (pass.channels.length <= index) pass.channels.push(emptyChannel());
+		if (!pass || index < 0 || index >= pass.channels.length || index >= this.renderer.maxInputs()) return;
 		const prev = pass.channels[index];
 		const next = { ...prev, ...patch };
 		pass.channels[index] = next;
-		if (grew) {
-			// Channel count changed -> the pass header changes -> recompile.
-			this.applyProjectToRenderer();
+		const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin && prev.passId === next.passId;
+		if (sourceSame && next.kind !== "none") {
+			// Only filter/wrap changed -> cheap update (no image reload, no clip
+			// restart, no webcam re-acquire).
+			this.renderer.setInputParams(passId, index, next.filter, next.wrap);
 		} else {
-			const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin && prev.passId === next.passId;
-			if (sourceSame && next.kind !== "none") {
-				// Only filter/wrap changed -> cheap update (no image reload, no clip
-				// restart, no webcam re-acquire).
-				this.renderer.setPassChannelParams(passId, index, next.filter, next.wrap);
-			} else {
-				void this.applyChannel(passId, index);
-			}
+			void this.applyChannel(passId, index);
 		}
 		this.emit("project", this.project);
 		this.commit(`Set ${pass.name} iChannel${index}`, `channel:${passId}:${index}`);
-		this.touch();
-	}
-
-	/** Append one empty input to a pass (up to the hardware limit). */
-	addPassChannel(passId: string): void {
-		const pass = this.passById(passId);
-		if (!pass || pass.channels.length >= this.renderer.maxInputs()) return;
-		pass.channels.push(emptyChannel());
-		this.applyProjectToRenderer();
-		this.emit("project", this.project);
-		this.commit(`Add input to ${pass.name}`, `addchannel:${passId}`);
-		this.touch();
-	}
-
-	/** Remove one input from a pass. Subsequent inputs shift down (iChannelN is
-	 * positional), so references in the shader may need updating. */
-	removePassChannel(passId: string, index: number): void {
-		const pass = this.passById(passId);
-		if (!pass || index < 0 || index >= pass.channels.length) return;
-		pass.channels.splice(index, 1);
-		this.applyProjectToRenderer();
-		this.emit("project", this.project);
-		this.commit(`Remove iChannel${index} from ${pass.name}`, `rmchannel:${passId}`);
 		this.touch();
 	}
 
@@ -632,6 +641,7 @@ export class Store {
 		const layer = this.layerById(layerId);
 		if (!layer) return null;
 		if (!layer.mask) layer.mask = makeMaskLayer([makeShape("circle", { w: 0.6, h: 0.6, falloff: 1 })]);
+		ensureMaskCompositePass(layer);
 		const mask = layer.mask;
 		this.applyProjectToRenderer();
 		// Edit the mask: make it the active layer + select its first shape.
@@ -651,11 +661,14 @@ export class Store {
 		const layer = this.maskOwner(layerId) ?? this.layerById(layerId);
 		if (!layer || !layer.mask) return;
 		layer.mask = undefined;
+		removeMaskCompositePass(layer);
 		// If we were editing the now-removed mask, fall back to the owner layer.
 		if (!this.layerById(this.selectedLayerId)) {
 			this.selectedLayerId = layer.id;
 			this.selectedPassId = layer.outputPassId;
 			this.selectedShapeId = "";
+		} else if (!this.passById(this.selectedPassId)) {
+			this.selectedPassId = this.activeLayer().outputPassId;
 		}
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
@@ -725,7 +738,7 @@ export class Store {
 		for (const layer of this.project.layers) {
 			for (const p of layer.passes) {
 				p.channels.forEach((ch, i) => {
-					if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.setPassChannel(p.id, i, { kind: "none", assetId: undefined });
+					if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.connectPin(p.id, i, { kind: "none", assetId: undefined });
 				});
 			}
 		}
@@ -883,7 +896,7 @@ export class Store {
 			setPassFormat: (id, fmt) => this.setPassFormat(id, fmt),
 			selectPass: (id) => this.selectPass(id),
 			setUniforms: (u) => this.setUniforms(u),
-			setPassChannel: (id, i, p) => this.setPassChannel(id, i, p),
+			connectPin: (id, i, p) => this.connectPin(id, i, p),
 			addLayer: (name, shapes) => this.addLayer(name, shapes),
 			removeLayer: (id) => this.removeLayer(id),
 			renameLayerById: (id, name) => this.renameLayer(id, name),
@@ -973,6 +986,18 @@ function uniqueProjectName(existing: Array<{ name: string }>, base: string): str
 	let i = 2;
 	while (taken(`${root} copy ${i}`)) i++;
 	return `${root} copy ${i}`;
+}
+
+function uniformListsEqual(a: Uniform[], b: Uniform[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x.name !== y.name || x.type !== y.type || x.min !== y.min || x.max !== y.max || x.step !== y.step || x.label !== y.label) return false;
+		if (x.value.length !== y.value.length) return false;
+		for (let j = 0; j < x.value.length; j++) if (x.value[j] !== y.value[j]) return false;
+	}
+	return true;
 }
 
 function uniquePassName(passes: Pass[], base: string, exceptId?: string): string {

@@ -4,7 +4,8 @@
 //   node --experimental-strip-types test/layers.test.ts
 
 import { makeProject, normalizeProject } from "../src/state/defaults.ts";
-import { makeCompositeLayer, makeMaskLayer, makeShape } from "../src/state/types.ts";
+import { channelsForSource, ensureMaskCompositePass, isMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, referencedInputCount } from "../src/state/types.ts";
+import { assembleFragment, extractUniformDeclarations } from "../src/gl/wrapper.ts";
 import { isShapeKind, shapeKindIndex, SHAPE_KINDS } from "../src/gl/shapes.ts";
 import { parseShapePatch } from "../src/ai/tools/geometry_util.ts";
 
@@ -29,6 +30,30 @@ function near(a: number, b: number, msg: string): void {
 	eq(p.layers[0].outputPassId, p.layers[0].passes[0].id, "output pass id points at the pass");
 	eq(p.layers[0].shapes.length, 0, "base layer starts with no shapes");
 	check(p.layers[0].passes[0].source.includes("mainImage"), "image pass keeps the source");
+	eq(p.layers[0].passes[0].channels.length, 0, "shader with no iChannel references has no input pins");
+}
+
+// ---- shader source owns texture/uniform inputs -----------------------------
+{
+	const src = `
+	// iChannel7 in comments is ignored
+	uniform float u_speed;
+	uniform vec3 u_tint;
+	void mainImage(out vec4 c, in vec2 f) {
+		vec4 a = texture(iChannel0, f);
+		vec4 b = texture(iChannel2, f);
+		c = vec4(u_tint * u_speed, 1.0) + a + b;
+	}`;
+	eq(referencedInputCount(src), 3, "highest referenced iChannel determines input count");
+	eq(channelsForSource(src).length, 3, "channelsForSource creates pins up to highest iChannel");
+	eq(makePass("Auto", src).channels.length, 3, "makePass derives pins from shader source");
+	const uniforms = extractUniformDeclarations(src);
+	eq(uniforms.length, 2, "custom uniform declarations are extracted");
+	eq(uniforms[0].name, "u_speed", "float uniform name extracted");
+	eq(uniforms[1].type, "vec3", "vec3 uniform type extracted");
+	const assembled = assembleFragment(src, uniforms, 3).source;
+	eq((assembled.match(/uniform float u_speed;/g) ?? []).length, 1, "custom uniform declared once in assembled shader");
+	eq((assembled.match(/uniform vec3 u_tint;/g) ?? []).length, 1, "vec3 custom uniform declared once in assembled shader");
 }
 
 // ---- migration: very old single shaderSource -> Base layer ------------------
@@ -136,6 +161,19 @@ function near(a: number, b: number, msg: string): void {
 	eq(mask.outputPassId, mask.passes[0].id, "mask output is its pass");
 	eq(mask.shapes.length, 1, "mask seeded with a shape");
 
+	const owner = makeCompositeLayer("Tex");
+	const unmaskedOutput = owner.outputPassId;
+	owner.mask = mask;
+	const wrapper = ensureMaskCompositePass(owner);
+	eq(owner.outputPassId, wrapper.id, "masked owner output becomes the mask wrapper");
+	eq(owner.passes.length, 2, "mask wrapper is a visible graph pass");
+	check(isMaskCompositePass(wrapper), "mask wrapper recognized");
+	eq(wrapper.channels[0].kind, "under", "mask wrapper iChannel0 = under");
+	eq(wrapper.channels[1].kind, "pass", "mask wrapper iChannel1 = unmasked layer output");
+	eq(wrapper.channels[1].passId, unmaskedOutput, "mask wrapper samples previous output pass");
+	eq(wrapper.channels[2].kind, "mask", "mask wrapper iChannel2 = mask");
+	check(wrapper.source.includes("mix(under, comp, m)"), "mask wrapper shader applies mask in graph");
+
 	// Migration preserves + normalizes a nested mask.
 	const raw = {
 		layers: [
@@ -156,6 +194,11 @@ function near(a: number, b: number, msg: string): void {
 	const p = normalizeProject(raw);
 	eq(p.layers.length, 1, "one stack layer after migration");
 	check(!!p.layers[0].mask, "mask carried through migration");
+	eq(p.layers[0].passes.length, 2, "migration adds visible mask composite pass");
+	const out = p.layers[0].passes.find((pass) => pass.id === p.layers[0].outputPassId);
+	check(!!out && isMaskCompositePass(out), "migrated masked layer outputs graph mask wrapper");
+	eq(out!.channels[1].passId, "p", "migrated mask wrapper samples prior output");
+	eq(out!.channels[2].kind, "mask", "migrated mask wrapper samples mask input");
 	eq(p.layers[0].mask!.passes[0].channels[0].kind, "geometry", "mask channel preserved");
 	eq(p.layers[0].mask!.shapes.length, 1, "mask shape preserved");
 	near(p.layers[0].mask!.shapes[0].falloff, 1, "mask shape falloff preserved");

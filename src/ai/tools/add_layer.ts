@@ -14,7 +14,7 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.addLayer,
 		description:
-			"Add a new LAYER on top of the stack (drawn in front of every layer below it). The new layer starts with a 'Composite' pass already wired iChannel0=under (the composite of the layers below) and iChannel1=geometry (this layer's shapes), doing source-over -- so it draws its geometry over what's underneath. It becomes the ACTIVE layer, so subsequent add_shape / edit_shader / set_channel calls target it. Optionally seed one shape with `shape`. To get a different blend mode, rewrite the Composite pass's mainImage (it samples under + geometry). Add more primitives with add_shape.",
+			"Add a new LAYER on top of the stack (drawn in front of every layer below it). The new layer starts with a 'Composite' pass whose shader references iChannel0=under and iChannel1=geometry (this layer's shapes), doing source-over -- so it draws its geometry over what's underneath. It becomes the ACTIVE layer, so subsequent add_shape / edit_shader / connect_pins calls target it. Optionally seed one shape with `shape`. To get a different blend mode, rewrite the Composite pass's mainImage (it samples under + geometry). Add more primitives with add_shape.",
 		parameters: {
 			type: "object",
 			properties: {

@@ -11,6 +11,7 @@ function describeChannel(c: Channel, assets: ImageAsset[], passes: Pass[]): stri
 	if (c.kind === "none") return "empty";
 	if (c.kind === "under") return "under (layers below)";
 	if (c.kind === "geometry") return "geometry (this layer's shapes)";
+	if (c.kind === "mask") return "mask (this layer's mask output)";
 	if (c.kind === "builtin") return `builtin:${c.builtin}`;
 	if (c.kind === "pass") return `pass:${passes.find((p) => p.id === c.passId)?.name ?? c.passId}`;
 	if (c.kind === "webcam") return "webcam";

@@ -47,7 +47,7 @@ registerTool({
 		if (idx >= 0 && idx < ctx.renderer.maxInputs()) {
 			const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
 			if (target) {
-				ctx.setPassChannel(target.id, idx, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: "linear", wrap: "repeat" });
+				ctx.connectPin(target.id, idx, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: "linear", wrap: "repeat" });
 				blocks[0] = text(`Generated texture "${asset.name}" and bound it to ${target.name}.iChannel${idx}.`);
 			}
 		}

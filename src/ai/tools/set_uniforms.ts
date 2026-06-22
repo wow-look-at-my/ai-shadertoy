@@ -1,5 +1,5 @@
-// set_uniforms -- declare the custom uniforms the shader uses; they become live
-// UI sliders. Replaces the whole set.
+// set_uniforms -- set metadata/default values for custom uniforms declared in
+// shader source. The source declaration owns the actual input surface.
 
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";
@@ -12,13 +12,13 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.setUniforms,
 		description:
-			"Declare the custom uniforms the shader uses, exposed to the user as live UI controls. This REPLACES the full set. Each becomes a `uniform <type> <name>;` available in mainImage. Use a u_ prefix to avoid colliding with built-ins. value length must match the type (float=1, vec2=2, vec3/color=3, vec4=4).",
+			"Set UI metadata/default values for custom uniforms declared in shader source. Add `uniform float/vec2/vec3/vec4 u_name;` to shader code first; those declarations automatically appear as live controls. This replaces metadata for the declared set; names not declared in shader source are ignored by the renderer sync. value length must match the type (float=1, vec2=2, vec3/color=3, vec4=4).",
 		parameters: {
 			type: "object",
 			properties: {
 				uniforms: {
 					type: "array",
-					description: "Complete list of custom uniforms.",
+					description: "Metadata/default values for shader-declared custom uniforms.",
 					items: {
 						type: "object",
 						properties: {

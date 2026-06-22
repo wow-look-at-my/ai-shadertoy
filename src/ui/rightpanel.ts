@@ -344,14 +344,11 @@ function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireCha
 
 	const rows = pass.channels.map((_c, i) => {
 		const sel = channelSelect(store, pass, i, true);
-		const rm = el("button", { class: "btn icon tiny gn-rm", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 12 }));
-		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel, rm);
+		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel);
 	});
-	const atMax = pass.channels.length >= store.renderer.maxInputs();
-	const addRow = el("div", { class: "gn-addrow" }, el("button", { class: "btn tiny", attrs: { disabled: atMax ? "" : undefined }, title: atMax ? "Input limit reached" : "Add an input channel", on: { click: () => store.addPassChannel(pass.id) } }, `+ input (iChannel${pass.channels.length})`));
 
 	node.appendChild(header);
-	node.appendChild(el("div", { class: "gn-body" }, ...rows, addRow));
+	node.appendChild(el("div", { class: "gn-body" }, ...rows));
 	const out = el("span", { class: "gn-port out", title: "Output (sampled by other passes)" });
 	out.style.top = `${outPortY(pass)}px`;
 	node.appendChild(out);
@@ -409,6 +406,7 @@ function channelValue(ch: Channel): string {
 	if (ch.kind === "none") return "none";
 	if (ch.kind === "under") return "under";
 	if (ch.kind === "geometry") return "geometry";
+	if (ch.kind === "mask") return "mask";
 	if (ch.kind === "builtin") return `builtin:${ch.builtin}`;
 	if (ch.kind === "pass") return `pass:${ch.passId}`;
 	if (ch.kind === "webcam") return "webcam";
@@ -430,7 +428,7 @@ function channelSelect(store: Store, pass: Pass, index: number, compact: boolean
 		"select",
 		{ class: "ch-sel" },
 		opt("none", compact ? "—" : "(empty)"),
-		el("optgroup", { attrs: { label: "Layer" } }, opt("under", compact ? "Under" : "Under (layers below)"), opt("geometry", compact ? "Geometry" : "Geometry (this layer's shapes)")),
+		el("optgroup", { attrs: { label: "Layer" } }, opt("under", compact ? "Under" : "Under (layers below)"), opt("geometry", compact ? "Geometry" : "Geometry (this layer's shapes)"), opt("mask", compact ? "Mask" : "Mask (this layer's mask)")),
 		opt("webcam", compact ? "Webcam" : "Webcam (live)"),
 		el("optgroup", { attrs: { label: "Passes" } }, ...sourcePasses.map((p) => opt(`pass:${p.id}`, p.id === pass.id ? `${p.name} (feedback)` : p.name))),
 		el("optgroup", { attrs: { label: "Built-in" } }, ...(Object.keys(BUILTIN_LABELS) as BuiltinTexture[]).map((b) => opt(`builtin:${b}`, BUILTIN_LABELS[b]))),
@@ -439,15 +437,15 @@ function channelSelect(store: Store, pass: Pass, index: number, compact: boolean
 	);
 	sel.addEventListener("change", () => {
 		const v = sel.value;
-		if (v === "none") store.setPassChannel(pass.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
-		else if (v === "under" || v === "geometry") store.setPassChannel(pass.id, index, { kind: v, assetId: undefined, builtin: undefined, passId: undefined });
-		else if (v === "webcam") store.setPassChannel(pass.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined });
-		else if (v.startsWith("pass:")) store.setPassChannel(pass.id, index, { kind: "pass", passId: v.slice(5), builtin: undefined, assetId: undefined });
-		else if (v.startsWith("builtin:")) store.setPassChannel(pass.id, index, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined, passId: undefined });
+		if (v === "none") store.connectPin(pass.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v === "under" || v === "geometry" || v === "mask") store.connectPin(pass.id, index, { kind: v, assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v === "webcam") store.connectPin(pass.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v.startsWith("pass:")) store.connectPin(pass.id, index, { kind: "pass", passId: v.slice(5), builtin: undefined, assetId: undefined });
+		else if (v.startsWith("builtin:")) store.connectPin(pass.id, index, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined, passId: undefined });
 		else if (v === "upload-image") void uploadAndBind(store, pass.id, index, "image");
 		else if (v === "upload-video") void uploadAndBind(store, pass.id, index, "video");
-		else if (v.startsWith("image:")) store.setPassChannel(pass.id, index, { kind: "image", assetId: v.slice(6), builtin: undefined, passId: undefined });
-		else if (v.startsWith("video:")) store.setPassChannel(pass.id, index, { kind: "video", assetId: v.slice(6), builtin: undefined, passId: undefined });
+		else if (v.startsWith("image:")) store.connectPin(pass.id, index, { kind: "image", assetId: v.slice(6), builtin: undefined, passId: undefined });
+		else if (v.startsWith("video:")) store.connectPin(pass.id, index, { kind: "video", assetId: v.slice(6), builtin: undefined, passId: undefined });
 	});
 	return sel;
 }
@@ -541,21 +539,16 @@ function renderTextures(store: Store, container: HTMLElement): void {
 
 	const rows = pass.channels.map((ch, i) => {
 		const sel = channelSelect(store, pass, i, false);
-		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.setPassChannel(pass.id, i, { filter: val as "linear" | "nearest" }));
-		const wrapSel = selectFrom(["repeat", "clamp", "mirror"], ch.wrap, (val) => store.setPassChannel(pass.id, i, { wrap: val as "repeat" | "clamp" | "mirror" }));
-		const rm = el("button", { class: "btn icon tiny", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 14 }));
-		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel, rm);
+		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.connectPin(pass.id, i, { filter: val as "linear" | "nearest" }));
+		const wrapSel = selectFrom(["repeat", "clamp", "mirror"], ch.wrap, (val) => store.connectPin(pass.id, i, { wrap: val as "repeat" | "clamp" | "mirror" }));
+		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel);
 	});
-
-	const atMax = pass.channels.length >= store.renderer.maxInputs();
-	const addBtn = el("button", { class: "btn", attrs: { disabled: atMax ? "" : undefined }, on: { click: () => store.addPassChannel(pass.id) } }, atMax ? `Max inputs (${store.renderer.maxInputs()})` : `+ Add input (iChannel${pass.channels.length})`);
 
 	render(
 		container,
 		el("div", { class: "tex-head" }, el("span", { class: "field-label" }, "Inputs for pass"), passSel),
 		pass.channels.length ? el("div", { class: "ch-list" }, ...rows) : el("p", { class: "muted small" }, "This pass has no inputs yet."),
-		addBtn,
-		el("p", { class: "muted small" }, "Bind a built-in texture, an image, a video, the live webcam, or another pass's output (kind=pass) — including this pass's own previous frame for feedback. Videos and the webcam animate (their current frame is sampled each frame). A pass can have as many inputs as the GPU allows (≥16), not just 4."),
+		el("p", { class: "muted small" }, "Inputs appear automatically from iChannel references in the shader. Bind a built-in texture, an image, a video, the live webcam, or another pass's output, including this pass's own previous frame for feedback."),
 	);
 }
 
@@ -587,7 +580,7 @@ async function uploadAndBind(store: Store, passId: string, channel: number, type
 		kind: type,
 	};
 	store.addAsset(asset);
-	store.setPassChannel(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
+	store.connectPin(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -649,7 +642,7 @@ function renderLayers(store: Store, container: HTMLElement): void {
 	render(
 		container,
 		el("div", { class: "layers-head" }, el("span", { class: "field-label" }, "Layers"), el("span", { class: "spacer" }), addBtn),
-		el("p", { class: "muted small" }, "Drawn back to front (top of the list = front). Each layer composites over the layers below it; what its graph does to the 'under' input is the blend. The mask button sets a per-pixel opacity mask."),
+				el("p", { class: "muted small" }, "Drawn back to front (top of the list = front). Each layer composites over the layers below it; what its graph does to the 'under' and 'mask' inputs is the blend."),
 		banner,
 		layers.length ? el("div", { class: "layer-list" }, ...rows) : el("p", { class: "muted" }, "No layers."),
 		shapesEditor(store, active),
