@@ -73,10 +73,15 @@ npm run build         # ts0 build -> dist/index.html
   errors map to user line numbers. Custom `uniform float/vec2/vec3/vec4 u_name;`
   lines in the body are the source of truth: `extractUniformDeclarations` reads
   them (so they become live controls) and `assembleFragment` hoists them into the
-  header (deduped — never a `redefinition`) while stripping them from the body. A
-  **trailing `//` or single-line `/* */` comment after the `;` is tolerated** (a
-  natural thing to write that used to silently break both extraction and
-  stripping). `textures.ts` (procedural built-ins).
+  header (deduped — never a `redefinition`) while stripping them from the body.
+  The declaration may carry an **optional precision qualifier** (`highp`/`mediump`/
+  `lowp`) and an **optional `= <default>` initializer** (numeric literal or
+  `vecN(...)` constructor, single-arg splat) — `parseInitializer` seeds the
+  control's starting value and `rangeForValues` widens the slider to fit a baked
+  default outside 0..1; the header re-declares the uniform WITHOUT the initializer
+  (GLSL ES requires that). A **trailing `//` or single-line `/* */` comment after
+  the `;` is tolerated** (a natural thing to write that used to silently break both
+  extraction and stripping). `textures.ts` (procedural built-ins).
 - `src/ai/` — `providers.ts` translates the neutral conversation model to/from
   **Anthropic Messages** and **OpenAI Chat Completions** (both streamed, vision +
   tool use; `testConnection` + `listModels` power the Settings test button and
