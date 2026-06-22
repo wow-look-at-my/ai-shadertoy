@@ -1,0 +1,140 @@
+{
+  "project": "Untitled shader",
+  "projectId": "p_vbuvsn4fct01",
+  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized texture, then present the outputPass texture to the screen.",
+  "outputPass": "Image",
+  "outputPassFile": "image.frag",
+  "renderOrder": [
+    "Image"
+  ],
+  "customUniforms": [
+    {
+      "name": "u_speed",
+      "type": "float",
+      "value": [
+        0.4
+      ],
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "label": "Speed"
+    },
+    {
+      "name": "u_slices",
+      "type": "float",
+      "value": [
+        8
+      ],
+      "min": 2,
+      "max": 24,
+      "step": 1,
+      "label": "Kaleidoscope slices"
+    },
+    {
+      "name": "u_warp",
+      "type": "float",
+      "value": [
+        0.9
+      ],
+      "min": 0.3,
+      "max": 1.6,
+      "step": 0.01,
+      "label": "Fold warp"
+    },
+    {
+      "name": "u_palShift",
+      "type": "vec3",
+      "value": [
+        0,
+        0.15,
+        0.3
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "Palette shift"
+    },
+    {
+      "name": "u_relief",
+      "type": "float",
+      "value": [
+        0.6
+      ],
+      "min": 0.05,
+      "max": 2,
+      "step": 0.01,
+      "label": "Relief (bump steepness)"
+    },
+    {
+      "name": "u_ambient",
+      "type": "float",
+      "value": [
+        0.25
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "Ambient"
+    },
+    {
+      "name": "u_shininess",
+      "type": "float",
+      "value": [
+        6
+      ],
+      "min": 1,
+      "max": 128,
+      "step": 1,
+      "label": "Shininess"
+    },
+    {
+      "name": "u_specStrength",
+      "type": "float",
+      "value": [
+        2
+      ],
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "label": "Specular"
+    },
+    {
+      "name": "u_lightDist",
+      "type": "float",
+      "value": [
+        0.1
+      ],
+      "min": 0.1,
+      "max": 3,
+      "step": 0.01,
+      "label": "Light orbit radius"
+    }
+  ],
+  "passes": [
+    {
+      "name": "Image",
+      "file": "image.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "none",
+          "filter": "linear",
+          "wrap": "repeat"
+        },
+        {
+          "channel": "iChannel1",
+          "kind": "none",
+          "filter": "linear",
+          "wrap": "repeat"
+        },
+        {
+          "channel": "iChannel2",
+          "kind": "none",
+          "filter": "linear",
+          "wrap": "repeat"
+        }
+      ]
+    }
+  ]
+}

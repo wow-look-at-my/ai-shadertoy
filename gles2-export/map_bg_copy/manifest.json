@@ -1,0 +1,260 @@
+{
+  "project": "map_bg copy",
+  "projectId": "p_kzgtog6i8g9i",
+  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized texture, then present the outputPass texture to the screen.",
+  "outputPass": "Image",
+  "outputPassFile": "image.frag",
+  "renderOrder": [
+    "Cover",
+    "MarkBlurX",
+    "BlurX",
+    "MarkBlurY",
+    "BlurY",
+    "Image"
+  ],
+  "customUniforms": [
+    {
+      "name": "u_markBlur",
+      "type": "float",
+      "value": [
+        16
+      ],
+      "min": 0,
+      "max": 40,
+      "step": 0.5,
+      "label": "Road Blur (px)"
+    },
+    {
+      "name": "u_bgBlur",
+      "type": "float",
+      "value": [
+        120
+      ],
+      "min": 0,
+      "max": 120,
+      "step": 1,
+      "label": "BG Blur (px)"
+    },
+    {
+      "name": "u_bgColor",
+      "type": "color",
+      "value": [
+        0.082,
+        0.082,
+        0.094
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "Background Shade"
+    },
+    {
+      "name": "u_bgTolerance",
+      "type": "float",
+      "value": [
+        0.12
+      ],
+      "min": 0.01,
+      "max": 0.5,
+      "step": 0.01,
+      "label": "BG Match Tolerance"
+    },
+    {
+      "name": "u_bgSat",
+      "type": "float",
+      "value": [
+        0.22
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "BG Saturation"
+    },
+    {
+      "name": "u_bgFlatten",
+      "type": "float",
+      "value": [
+        0.32
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "BG Flatten"
+    },
+    {
+      "name": "u_bgValue",
+      "type": "float",
+      "value": [
+        0.54
+      ],
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "label": "BG Brightness"
+    },
+    {
+      "name": "u_markSat",
+      "type": "float",
+      "value": [
+        1
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "Road Saturation"
+    },
+    {
+      "name": "u_markFlatten",
+      "type": "float",
+      "value": [
+        0
+      ],
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "label": "Road Flatten"
+    },
+    {
+      "name": "u_markValue",
+      "type": "float",
+      "value": [
+        1.47
+      ],
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "label": "Road Brightness"
+    }
+  ],
+  "passes": [
+    {
+      "name": "MarkBlurY",
+      "file": "markblury.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "pass",
+          "filter": "linear",
+          "wrap": "repeat",
+          "fromPass": "MarkBlurX",
+          "fromPassFile": "markblurx.frag"
+        }
+      ]
+    },
+    {
+      "name": "MarkBlurX",
+      "file": "markblurx.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "pass",
+          "filter": "linear",
+          "wrap": "repeat",
+          "fromPass": "Cover",
+          "fromPassFile": "cover.frag"
+        }
+      ]
+    },
+    {
+      "name": "BlurY",
+      "file": "blury.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "pass",
+          "filter": "linear",
+          "wrap": "repeat",
+          "fromPass": "BlurX",
+          "fromPassFile": "blurx.frag"
+        }
+      ]
+    },
+    {
+      "name": "BlurX",
+      "file": "blurx.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "pass",
+          "filter": "linear",
+          "wrap": "repeat",
+          "fromPass": "Cover",
+          "fromPassFile": "cover.frag"
+        }
+      ]
+    },
+    {
+      "name": "Cover",
+      "file": "cover.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "video",
+          "filter": "linear",
+          "wrap": "repeat",
+          "asset": "a_iwgolupk25fp",
+          "assetName": "16079838_640_360_30fps",
+          "assetFile": "../assets/a_iwgolupk25fp.mp4",
+          "assetSize": [
+            640,
+            360
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Image",
+      "file": "image.frag",
+      "format": "rgba8",
+      "channels": [
+        {
+          "channel": "iChannel0",
+          "kind": "image",
+          "filter": "linear",
+          "wrap": "repeat",
+          "asset": "a_8zsbfeg3tq08",
+          "assetName": "Screenshot 2026-06-20 at 11.04.29 PM",
+          "assetFile": "../assets/a_8zsbfeg3tq08.png",
+          "assetSize": [
+            952,
+            826
+          ]
+        },
+        {
+          "channel": "iChannel1",
+          "kind": "video",
+          "filter": "linear",
+          "wrap": "repeat",
+          "asset": "a_iwgolupk25fp",
+          "assetName": "16079838_640_360_30fps",
+          "assetFile": "../assets/a_iwgolupk25fp.mp4",
+          "assetSize": [
+            640,
+            360
+          ]
+        },
+        {
+          "channel": "iChannel2",
+          "kind": "pass",
+          "filter": "linear",
+          "wrap": "repeat",
+          "fromPass": "BlurY",
+          "fromPassFile": "blury.frag"
+        },
+        {
+          "channel": "iChannel3",
+          "kind": "pass",
+          "filter": "linear",
+          "wrap": "repeat",
+          "fromPass": "MarkBlurY",
+          "fromPassFile": "markblury.frag"
+        }
+      ]
+    }
+  ]
+}
