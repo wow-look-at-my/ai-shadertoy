@@ -139,10 +139,10 @@ conversation intact.
 
 A long session piles up prompts, tool calls, and (heavy) screenshots, steadily
 filling the model's **context window** — the same one the usage indicator meters.
-The **compact** button (next to the camera/attach button, it appears once there's
-enough history) does what you'd do by hand: it asks the model to *"summarize this
-entire conversation in detail for a future instance of yourself to pick up,"* then
-starts a fresh chat that **begins with that summary**, replacing the long history.
+Type **`/compact`** in the chat and send it: it does what you'd do by hand —
+asks the model to *"summarize this entire conversation in detail for a future
+instance of yourself to pick up,"* then starts a fresh chat that **begins with
+that summary**, replacing the long history.
 
 The live project state (current layers, passes, shapes, uniforms, last compile
 error) is always sent fresh, so the summary only needs to carry the *conversational*
@@ -150,7 +150,7 @@ context — your goal, stylistic intent, what was tried and rejected, and what's
 — not the shader code. The result is shown as a single collapsible **"Conversation
 compacted"** card; the next message continues from there with a much smaller (and
 cheaper) prompt. Your shader, layers, and assets are untouched — only the chat
-transcript is summarized. It can't be undone, so you're asked to confirm.
+transcript is summarized.
 
 ### Undo / redo
 

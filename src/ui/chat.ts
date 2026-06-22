@@ -17,12 +17,6 @@ import { ProviderError } from "../ai/providers.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
-// The compact glyph lives in CSS (the .icon-compress mask), not as SVG path data
-// in this file. Build a span the stylesheet tints + masks.
-function compactIcon(): HTMLElement {
-	return el("span", { class: "icon-mask icon-compress", attrs: { "aria-hidden": "true" } });
-}
-
 // init_shader is offered only until the AI has authored the shader this
 // conversation (first turn / after a reset); after that, edits only. A
 // compaction summary counts as authored -- the original init_shader tool_use is
@@ -56,7 +50,7 @@ export interface ChatDeps {
 export function createChat(deps: ChatDeps): HTMLElement {
 	const { store } = deps;
 	const list = el("div", { class: "chat-list" });
-	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: "Describe the shader you want… (Enter to send, Shift+Enter for newline)" } });
+	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: "Describe the shader you want… (Enter to send, Shift+Enter for newline · /compact to summarize)" } });
 
 	let attach = false;
 	const attachBtn = el("button", { class: "btn icon", title: "Attach the current frame to your next message" }, icon("camera"));
@@ -64,16 +58,6 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		attach = !attach;
 		attachBtn.classList.toggle("on", attach);
 	});
-
-	// Compact: replace the conversation with an AI-written summary to free up
-	// context. Hidden until there's enough history to be worth it; disabled while
-	// the agent (or a compaction) is running.
-	const compactBtn = el("button", { class: "btn icon", title: "Compact the conversation: replace it with an AI summary to free up context" }, compactIcon());
-	compactBtn.addEventListener("click", () => void compact());
-	function syncCompactBtn(): void {
-		compactBtn.hidden = !shouldCompact(store.project.messages);
-		compactBtn.disabled = store.busy;
-	}
 
 	const sendBtn = el("button", { class: "btn primary", on: { click: () => void send() } }, "Send");
 	const stopBtn = el("button", { class: "btn danger", on: { click: () => abort?.abort() } }, "Stop");
@@ -127,7 +111,6 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		sendBtn.hidden = !!b;
 		input.disabled = !!b;
 		list.classList.toggle("busy", !!b); // hide per-message edit/delete actions mid-run
-		syncCompactBtn();
 	});
 
 	// Only rebuild the whole conversation when the project itself changes
@@ -152,7 +135,6 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				list.appendChild(renderMessage(m));
 			}
 		}
-		syncCompactBtn();
 		scroll();
 	}
 
@@ -316,6 +298,12 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	async function send(): Promise<void> {
 		const value = input.value.trim();
 		if (!value) return;
+		// Slash commands are typed into the input but aren't sent as prompts.
+		if (value.toLowerCase() === "/compact") {
+			input.value = "";
+			void compact();
+			return;
+		}
 		if (!ensureReady()) return;
 
 		const blocks: Block[] = [{ type: "text", text: value }];
@@ -432,16 +420,20 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 	}
 
-	// Compact the conversation: ask the model to summarize everything so far, then
+	// The /compact command: ask the model to summarize everything so far, then
 	// replace the history with that summary. Busy/abort are managed here exactly
 	// like an agent turn, so Stop cancels it and undo/redo stay disabled meanwhile.
 	async function compact(): Promise<void> {
-		if (store.busy || !shouldCompact(store.project.messages)) return;
+		if (store.busy) return;
+		if (!shouldCompact(store.project.messages)) {
+			list.appendChild(el("div", { class: "msg muted small" }, "Nothing to compact yet — send a few messages first."));
+			scroll();
+			return;
+		}
 		if (!ensureReady()) return;
-		if (!confirm("Compact the conversation?\n\nThe messages so far will be replaced by a short AI-written summary to free up the context window (and lower per-turn cost). Your shader and project are unaffected. This cannot be undone.")) return;
 		abort = new AbortController();
 		store.setBusy(true);
-		const status = el("div", { class: "msg compaction pending" }, el("div", { class: "compaction-head" }, compactIcon(), " Compacting conversation…"));
+		const status = el("div", { class: "msg compaction pending" }, el("div", { class: "compaction-head" }, icon("compress", { size: 14 }), " Compacting conversation…"));
 		list.appendChild(status);
 		scroll();
 		try {
@@ -475,7 +467,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		{ class: "chat" },
 		list,
 		statsBar,
-		el("div", { class: "chat-bar" }, el("div", { class: "chat-tools" }, attachBtn, compactBtn), input, el("div", { class: "chat-actions" }, sendBtn, stopBtn)),
+		el("div", { class: "chat-bar" }, attachBtn, input, el("div", { class: "chat-actions" }, sendBtn, stopBtn)),
 	);
 }
 
@@ -490,7 +482,7 @@ function messageEl(m: Message): HTMLElement {
 		return el(
 			"div",
 			{ class: "msg compaction" },
-			el("div", { class: "compaction-head" }, compactIcon(), " Conversation compacted — summary for context"),
+			el("div", { class: "compaction-head" }, icon("compress", { size: 14 }), " Conversation compacted — summary for context"),
 			el("details", { class: "compaction-body", attrs: { open: "" } }, el("summary", {}, "Summary"), renderMarkdown(text)),
 		);
 	}

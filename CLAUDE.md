@@ -185,18 +185,19 @@ npm run build         # ts0 build -> dist/index.html
   rotate handle, writing through `store.updateShape` (coalesced; rotation-aware
   CSS<->normalized math, y-flip). `store.selectedShapeId` (+ `selectShape`/
   `clearShapeSelection`/`"selectedShape"`) is the shared selection; the gizmo and
-  the Layers-tab shape rows stay in sync. UI glyphs come from `src/util/icons.ts` —
-  `icon(name)` builds an inline `<svg>` from Material Design Icons path data,
-  `fill: currentColor` (no emoji, no icon font, no network request). SVG path data
-  belongs in CSS, not `.ts`: add a **new** glyph as a `currentColor`-tinted CSS mask
-  in `app.css` (see `.icon-mask` + `.icon-compress`) and render it with a `<span>`,
-  rather than adding another `@mdi/js` path to `icons.ts`. The chat (`chat.ts`) shows
+  the Layers-tab shape rows stay in sync. UI glyphs are **CSS, not `.ts`**:
+  `src/util/icons.ts` `icon(name)` only builds a `<span class="glyph icon-<name>">`;
+  the actual SVG path data lives in `app.css` as `currentColor`-tinted CSS masks (a
+  base `.glyph` + one `.icon-<name>` mask rule per glyph). Add a **new** glyph by
+  adding its name to `ICON_NAMES` and an `.icon-<name>` mask rule in `app.css` (the
+  rules are generated from `@mdi/js` path data) — never put SVG path data in a `.ts`
+  file. The chat (`chat.ts`) shows
   hover **edit/delete** actions on user prompts and assistant replies: delete removes
   a whole conversation round, edit rewrites a user prompt then re-runs from there
-  (forking the conversation); a **compact** button (in the chat bar, shown once
-  there's enough history) summarizes the whole conversation and replaces it with one
-  collapsible "Conversation compacted" card (the `compaction` summary message),
-  freeing context. The round math that keeps every `tool_use` paired with its
+  (forking the conversation); the typed **`/compact`** command (parsed in `send()`,
+  shown in the input placeholder) summarizes the whole conversation and replaces it
+  with one collapsible "Conversation compacted" card (the `compaction` summary
+  message), freeing context. The round math that keeps every `tool_use` paired with its
   `tool_result` (an orphan 400s the next request) is pure and DOM-free in
   `src/util/conversation.ts` (`isDeletable` / `deletionRange`) — tested by
   `node --experimental-strip-types`.
