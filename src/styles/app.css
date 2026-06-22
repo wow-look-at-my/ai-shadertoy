@@ -155,15 +155,18 @@ textarea:focus {
 .brand {
 	display: flex;
 	align-items: center;
+	flex: 0 0 auto;
 	gap: 6px;
 	font-weight: 600;
 	letter-spacing: 0.2px;
+	white-space: nowrap;
 }
 .brand strong {
 	background: linear-gradient(90deg, var(--accent), var(--accent-2));
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
+	white-space: nowrap;
 }
 .busy-dot {
 	width: 9px;
@@ -568,6 +571,77 @@ canvas.gl {
 	width: 100%;
 	height: 100%;
 }
+
+/* ---- on-canvas shape gizmo ---- */
+.gizmo-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	pointer-events: none; /* JS sets auto in edit mode (active layer has shapes) */
+}
+.gizmo-box {
+	position: absolute;
+	box-sizing: border-box;
+	border: 1px solid var(--accent);
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+	pointer-events: none;
+}
+.gizmo-box.is-circle {
+	border-radius: 50%;
+}
+.gizmo-handle {
+	position: absolute;
+	box-sizing: border-box;
+	width: 11px;
+	height: 11px;
+	background: #fff;
+	border: 1px solid var(--accent);
+	border-radius: 2px;
+	pointer-events: auto;
+}
+.gizmo-handle.corner {
+	transform: translate(-50%, -50%);
+}
+.gizmo-handle.tl {
+	left: 0;
+	top: 0;
+	cursor: nwse-resize;
+}
+.gizmo-handle.tr {
+	left: 100%;
+	top: 0;
+	cursor: nesw-resize;
+}
+.gizmo-handle.br {
+	left: 100%;
+	top: 100%;
+	cursor: nwse-resize;
+}
+.gizmo-handle.bl {
+	left: 0;
+	top: 100%;
+	cursor: nesw-resize;
+}
+.gizmo-handle.rotate {
+	left: 50%;
+	top: 0;
+	transform: translate(-50%, -50%) translateY(-22px);
+	border-radius: 50%;
+	cursor: grab;
+}
+.gizmo-overlay.dragging .gizmo-handle.rotate {
+	cursor: grabbing;
+}
+.gizmo-rot-stem {
+	position: absolute;
+	left: 50%;
+	top: 0;
+	width: 1px;
+	height: 22px;
+	transform: translate(-50%, -100%);
+	background: var(--accent);
+	pointer-events: none;
+}
 .scale {
 	width: 64px;
 }
@@ -927,6 +1001,169 @@ textarea.code {
 }
 .mini {
 	padding: 4px 6px;
+}
+
+/* ---- layers panel ---- */
+.layers-panel {
+	flex: 1;
+	overflow-y: auto;
+	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.layers-head,
+.shapes-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.layer-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.layer-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 7px;
+	background: var(--bg-1);
+	border: 1px solid var(--line);
+	border-left: 3px solid transparent;
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+.layer-row:hover {
+	background: var(--bg-2);
+}
+.layer-row.active {
+	border-left-color: var(--accent);
+	background: var(--bg-2);
+}
+.layer-row.is-hidden .layer-id {
+	opacity: 0.5;
+}
+.layer-row.mask-owner {
+	border-left-color: var(--accent);
+	background: var(--bg-2);
+}
+.mask-add {
+	opacity: 0.4;
+}
+.mask-add:hover {
+	opacity: 1;
+}
+.mask-btn.on {
+	color: var(--accent);
+}
+.mask-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 9px;
+	background: var(--bg-2);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius);
+	font-size: 12px;
+	color: var(--fg);
+}
+.layer-id {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	line-height: 1.2;
+}
+.layer-name {
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.layer-meta {
+	font-size: 11px;
+}
+.layer-opacity {
+	width: 64px;
+	flex: none;
+}
+.layer-row .gn-rename {
+	font-size: 13px;
+}
+
+/* ---- geometry (shape) editor ---- */
+.shapes-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	border-top: 1px solid var(--line);
+	padding-top: 10px;
+}
+.shape-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.shape-row {
+	background: var(--bg-1);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	padding: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.shape-head {
+	display: flex;
+	align-items: center;
+}
+.shape-kind {
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--fg-dim);
+	cursor: pointer;
+}
+.shape-kind:hover {
+	color: var(--fg);
+}
+.shape-row.selected {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent);
+}
+.shape-fields {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 8px;
+}
+.shape-field {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 12px;
+	color: var(--muted);
+}
+.shape-flabel {
+	font-size: 11px;
+	color: var(--muted);
+}
+.shape-num {
+	width: 68px;
+	box-sizing: border-box;
+}
+.shape-style {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.shape-color {
+	width: 34px;
+	height: 24px;
+	padding: 0;
+}
+.shape-alpha,
+.shape-round {
+	width: 80px;
 }
 
 /* ---- modal ---- */

@@ -318,7 +318,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			await runAgent(
 				store.settings,
 				() => buildSystemPrompt(),
-				() => buildProjectState({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
+				() => buildProjectState({ project: store.project, activeLayerId: store.activeLayer().id, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
 				store.project.messages,
 				() => toolDefs({ imageGen: store.settings.imageGen.enabled, allowInitShader: !authoredShader(store.project.messages) }),
 				(name, inp) => store.applyTool(name, inp),

@@ -4,13 +4,15 @@
 // text-tools mode (models without native tool calling) `textToolInstructions`
 // describes the same catalogue as forgiving XML tags.
 
-import type { Channel, Pass, Project } from "../state/types.ts";
+import type { Channel, Layer, Pass, Project } from "../state/types.ts";
 import type { ToolDef } from "./types.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
+import { SHAPE_LABELS } from "../gl/shapes.ts";
 import { TOOL_NAMES } from "./tools/names.ts";
 
 export interface PromptContext {
 	project: Project;
+	activeLayerId: string;
 	assetNames: string[];
 	imageGen: boolean;
 	lastError?: string;
@@ -18,21 +20,43 @@ export interface PromptContext {
 
 function channelDesc(ch: Channel, passes: Pass[]): string {
 	if (ch.kind === "none") return "empty";
+	if (ch.kind === "under") return "under";
+	if (ch.kind === "geometry") return "geometry";
+	if (ch.kind === "mask") return "mask";
 	if (ch.kind === "builtin") return `builtin:${ch.builtin}`;
 	if (ch.kind === "pass") return `pass:${passes.find((p) => p.id === ch.passId)?.name ?? ch.passId}`;
 	if (ch.kind === "webcam") return "webcam";
 	return `${ch.kind === "video" ? "video" : "image"}:${ch.assetId ?? "?"}`;
 }
 
-function passSummary(p: Project): string {
-	return p.passes
-		.map((pass) => {
-			const ins = pass.channels
-				.map((c, i) => (c.kind === "none" ? null : `iChannel${i}=${channelDesc(c, p.passes)}`))
-				.filter(Boolean)
-				.join(", ");
-			const tag = pass.id === p.outputPassId ? " (OUTPUT -> screen)" : "";
-			return `  - ${pass.name}${tag} [${pass.format}, ${pass.source.split("\n").length} lines]${ins ? `  inputs: ${ins}` : ""}`;
+function passLine(pass: Pass, layer: Layer): string {
+	const ins = pass.channels
+		.map((c, i) => (c.kind === "none" ? null : `iChannel${i}=${channelDesc(c, layer.passes)}`))
+		.filter(Boolean)
+		.join(", ");
+	const tag = pass.id === layer.outputPassId ? " (OUTPUT -> composite)" : "";
+	return `      - ${pass.name}${tag} [${pass.format}, ${pass.source.split("\n").length} lines]${ins ? `  inputs: ${ins}` : ""}`;
+}
+
+function shapesLine(layer: Layer): string {
+	if (!layer.shapes.length) return "";
+	const counts = layer.shapes.reduce<Record<string, number>>((acc, s) => {
+		acc[s.kind] = (acc[s.kind] ?? 0) + 1;
+		return acc;
+	}, {});
+	const parts = Object.entries(counts).map(([k, n]) => `${n} ${SHAPE_LABELS[k as keyof typeof SHAPE_LABELS] ?? k}`);
+	return `\n      geometry: ${parts.join(", ")}`;
+}
+
+/** Summarize the layer stack (back/0 -> front), each layer's graph and geometry,
+ * and mark the active layer. */
+function documentSummary(p: Project, activeLayerId: string): string {
+	return p.layers
+		.map((layer, i) => {
+			const flags = [layer.visible ? null : "hidden", layer.opacity < 1 ? `opacity ${layer.opacity.toFixed(2)}` : null, layer.mask ? "masked" : null, layer.id === activeLayerId ? "ACTIVE" : null].filter(Boolean).join(", ");
+			const head = `  [${i}] Layer "${layer.name}"${flags ? ` (${flags})` : ""}`;
+			const passes = layer.passes.map((pass) => passLine(pass, layer)).join("\n");
+			return `${head}${shapesLine(layer)}\n${passes}`;
 		})
 		.join("\n");
 }
@@ -53,16 +77,28 @@ export function buildSystemPrompt(): string {
 - You write GLSL ES 3.00 and each pass MUST define:
       void mainImage(out vec4 fragColor, in vec2 fragCoord) { ... }
   fragCoord is in pixels (origin bottom-left). Write the final colour to fragColor (RGBA, 0..1).
-- DO NOT include "#version", "precision", "out vec4", "void main()", or the iChannel/iTime uniform declarations. The harness prepends all of that. Just provide your helper functions and mainImage. (You may add extra helper functions and #define macros above mainImage.)
+- DO NOT include "#version", "precision", "out vec4", "void main()", or built-in uniform declarations (iTime, iResolution, iChannel samplers, etc.). The harness prepends all of that. Just provide your helper functions and mainImage. You MAY declare custom controls with \`uniform float/vec2/vec3/vec4 u_name;\`; those declarations automatically become live UI inputs. (You may add extra helper functions and #define macros above mainImage.)
 - It is GLSL ES 3.00: use texture(...) not texture2D, no gl_FragColor. Integer/float types are strict (write 1.0 not 1 for floats).
 
-# Multi-pass render graph (this is beyond Shadertoy's fixed buffers)
-- A project is a GRAPH of passes. Each pass is a full-screen fragment shader that renders to its OWN offscreen texture at the canvas resolution. One pass is the OUTPUT (composited to the screen).
-- Each pass has its own input channels iChannel0, iChannel1, ... -- as MANY as you need (NOT capped at 4; up to the GPU's texture-unit limit, at least 16). set_channel with an index at/above the current count just adds inputs; only the channels you actually declare exist in the shader. A channel can sample: a built-in texture, an uploaded/generated image, an uploaded VIDEO, the live WEBCAM, or THE OUTPUT OF ANOTHER PASS. Wiring a pass's output into another pass's channel is how you build the pipeline (these are the graph edges). Video and webcam channels are DYNAMIC -- their current frame is uploaded every render frame, so sampling them animates by itself (don't add iTime to make a video move; just sample it). Bind a video with set_channel_asset (it's an asset) and the webcam with set_channel kind=webcam; you cannot upload media yourself (the user does), but you can wire what exists and turn on the webcam.
-- Passes execute in dependency order (a pass that samples another renders after it). If a channel samples its OWN pass, it reads that pass's PREVIOUS frame -- this is feedback (use it for trails, reaction-diffusion, progressive accumulation, fluid).
-- Use add_pass to create passes, set_channel (kind=pass) to wire them, set_output_pass to choose what's on screen, list_passes/get_shader to inspect, remove_pass to delete. edit_shader/get_shader/set_channel take an optional 'pass' name and default to the output pass.
+# Layers (a node-graph "Photoshop")
+- The document is an ORDERED STACK OF LAYERS drawn BACK TO FRONT. layer[0] is the bottom (drawn first); the last layer is on top. The topmost visible layer's composite is what's shown on screen. This is the One True draw order.
+- Each layer is its OWN render graph (its own passes + an output pass = that layer's composite) PLUS a list of GEOMETRY shapes (quads/circles). Layer-ambient source pins are available to a layer's passes and can be wired with connect_pins:
+    - kind=under -- the composite of ALL the layers BELOW this one (transparent for the bottom layer). This is how a layer blends over what's underneath.
+    - kind=geometry -- this layer's shapes rasterized to a premultiplied texture (rgb = colour, alpha = coverage).
+    - kind=mask -- this layer's mask output (alpha = coverage; opaque white if the layer has no mask).
+  Because the blend is just shader math in the layer's output pass, THE NODE GRAPH CONTROLS THE BLENDING. A fresh layer (add_layer) comes pre-wired iChannel0=under, iChannel1=geometry doing source-over: fragColor = geo + under*(1.0 - geo.a). Rewrite that to multiply, screen, add, displace by geometry, mask, etc.
+- Geometry is REAL instanced shapes you place as data, not SDF code you write. Manage it with add_shape / edit_shape / remove_shape / list_shapes. Shapes use normalized coords: centre (x,y) in 0..1 (origin bottom-left), size (w,h) as a fraction of the canvas; plus rotation (degrees), rgba colour, cornerRadius (quad), feather. Available kinds: ${Object.values(SHAPE_LABELS).join(", ")}.
+- Manage the stack with add_layer (adds on top, becomes ACTIVE), remove_layer, reorder_layer, set_layer (name/visible/opacity), list_layers. The pass/geometry tools act on the ACTIVE layer -- call select_layer first to work on a different one (add_layer/add_shape already target the right layer).
+- LAYER MASKS: a layer can have a MASK (another layer, rendered standalone). add_mask adds a visible "Masked Composite" pass to the layer graph, wired iChannel0=under, iChannel1=the unmasked layer output, iChannel2=mask, with shader math: fragColor = mix(under, comp, mask.alpha). The mask is seeded with a soft circle and becomes the ACTIVE layer, so add_shape/edit_shape build the mask (an ellipse with falloff = a radial-gradient mask); select_layer returns to the stack. remove_mask drops it and removes the generated graph node.
+- Typical build: keep a background in the Base layer; add_layer "Shapes"; add_shape circle/quad to it; it composites over the background automatically. For a glow, add a layer, add a bright shape, then add blur passes inside that layer sampling geometry, and have its output composite the blurred glow over under.
+
+# Multi-pass render graph WITHIN a layer (beyond Shadertoy's fixed buffers)
+- A layer's graph is one or more passes. Each pass is a full-screen fragment shader that renders to its OWN offscreen texture at the canvas resolution. The layer's OUTPUT pass produces that layer's composite.
+- Each pass's texture input pins are derived from the shader source: referencing iChannel0 creates input 0; referencing iChannel2 creates inputs 0..2; removing the reference removes the pin. connect_pins wires a graph source into one of those existing inputs. A texture input can sample: under, geometry, mask, a built-in texture, an uploaded/generated image, an uploaded VIDEO, the live WEBCAM, or THE OUTPUT OF ANOTHER PASS IN THE SAME LAYER. Video and webcam inputs are DYNAMIC -- their current frame is uploaded every render frame, so sampling them animates by itself (don't add iTime to make a video move; just sample it). Bind existing images/videos with connect_pins from=asset:<name> and the webcam with from=webcam; you cannot upload media yourself (the user does), but you can wire what exists and turn on the webcam.
+- Passes execute in dependency order (a pass that samples another renders after it). If a channel samples its OWN pass, it reads that pass's PREVIOUS frame -- feedback (trails, reaction-diffusion, accumulation, fluid).
+- Use add_pass to create passes, connect_pins from=pass:<name> to wire them, set_output_pass to choose the layer's composite, list_passes/get_shader to inspect, remove_pass to delete. edit_shader/get_shader take an optional 'pass' name and default to the active layer's output pass.
 - Use rgba16f format for HDR intermediates (a bright effect you will blur/bloom) so highlights survive; default rgba8 is fine otherwise.
-- Worked example -- glow/bloom: add_pass "Effect" (draws the bright scene, rgba16f); add_pass "BlurX" sampling Effect, blurring horizontally; add_pass "BlurY" sampling BlurX, blurring vertically; then the output ("Image") pass samples both the Effect (sharp) and BlurY (soft) and adds them. Multi-pass separable blur is far cheaper than one giant single-pass kernel.
+- Worked example -- glow/bloom within a layer: add_pass "Effect" (rgba16f) sampling geometry; add_pass "BlurX" sampling Effect; add_pass "BlurY" sampling BlurX; then the layer's output pass samples under + BlurY and adds the soft glow over what's below. Separable blur is far cheaper than one giant kernel.
 
 # Built-in uniforms (already declared in every pass, just use them)
   vec3  iResolution      // viewport size in pixels (xy), z = 1
@@ -76,11 +112,11 @@ export function buildSystemPrompt(): string {
   vec3  iChannelResolution[N]           // N = this pass's input count
 Only the iChannelK inputs this pass actually has are declared -- don't sample an input you haven't wired.
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
-Custom uniforms (set_uniforms) are SHARED across all passes. Built-in procedural textures you can bind to channels: ${builtins}.
+Custom uniforms are SHARED across all passes in all layers. Declare them in shader source as \`uniform float/vec2/vec3/vec4 u_name;\`; the editor extracts them into live controls automatically. Use set_uniforms only to adjust their defaults/ranges/labels. Built-in procedural textures you can bind to channels: ${builtins}.
 
 # Working style
 - Prefer doing over describing: use your tools to change the shader rather than pasting code into chat. Keep chat replies short -- a sentence or two about what you did or what you need.
-- Start simple: a single output pass is fine for most requests. Reach for extra passes when the effect genuinely needs them (blur/bloom, feedback/trails, ping-pong simulation, deferred compositing).
+- Start simple: a single Base layer with one output pass is fine for most requests. Reach for extra passes when the effect needs them (blur/bloom, feedback/trails, ping-pong simulation), and for extra LAYERS when the user wants stacked, independently-composited elements (shapes over a background, a glow plate, a mask) -- each layer can blend over what's below however its graph says.
 - IMPORTANT: to change an existing shader, make targeted EDITS (replace just the snippet that changes). Do not retype the whole shader. init_shader writes the output pass from scratch and is only for the very first shader or a deliberate full rewrite; add_pass creates additional passes.
 - Expose the key parameters as uniforms so the user can tweak them live; keep motion subtle by default.
 - ALWAYS verify your work visually before you finish. To keep your context lean you are NOT shown a screenshot after every edit by default -- pass screenshot:true (or call capture_screenshot) when you want to see the render mid-task. When you end your turn you are ALWAYS shown the final render and asked to confirm it: check colours, scale, and composition against the request and keep editing if anything is off. A black render usually means out-of-range values, fragColor.alpha left at 0, or the wrong pass set as output.
@@ -98,12 +134,13 @@ export function buildProjectState(ctx: PromptContext): string {
 	const p = ctx.project;
 	const uniforms = p.uniforms.length ? p.uniforms.map((u) => `  ${u.type} ${u.name} = [${u.value.join(", ")}] (min ${u.min}, max ${u.max})`).join("\n") : "  (none)";
 
+	const totalPasses = p.layers.reduce((n, l) => n + l.passes.length, 0);
 	return `The following is the live project state from the editor (provided automatically -- it is not a message from the user):
 
 # Current project state
-Render graph (${p.passes.length} pass${p.passes.length === 1 ? "" : "es"}):
-${passSummary(p)}
-Custom uniforms (shared by all passes):
+Layer stack (${p.layers.length} layer${p.layers.length === 1 ? "" : "s"}, ${totalPasses} pass${totalPasses === 1 ? "" : "es"} total; drawn back [0] to front; ACTIVE layer is where pass/geometry tools act):
+${documentSummary(p, ctx.activeLayerId)}
+Custom uniforms (shared by all passes in all layers):
 ${uniforms}
 Available image assets: ${ctx.assetNames.length ? ctx.assetNames.join(", ") : "(none)"}${ctx.imageGen ? "\nImage generation is enabled (generate_texture available)." : ""}${ctx.lastError ? `\nMost recent compile error:\n${ctx.lastError}` : ""}`;
 }
@@ -122,12 +159,23 @@ const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.setOutputPass]: '<set_output_pass>{"pass":"Image"}</set_output_pass>',
 	[TOOL_NAMES.setUniforms]: '<set_uniforms>[{"name":"u_speed","type":"float","value":[1.0],"min":0,"max":3}]</set_uniforms>',
 	[TOOL_NAMES.renameShader]: '<rename_shader>{"name":"Plasma Storm"}</rename_shader>   (asks the user to approve before it takes effect)',
-	[TOOL_NAMES.setChannel]: '<set_channel>{"pass":"Image","index":0,"kind":"pass","source":"BlurY"}</set_channel>   (kind: none | builtin | pass | webcam; "source" is the pass name when kind=pass)',
-	[TOOL_NAMES.setChannelAsset]: '<set_channel_asset>{"index":0,"asset":"asset name"}</set_channel_asset>   (binds an image or video asset; videos animate on their own)',
+	[TOOL_NAMES.connectPins]: '<connect_pins>{"from":"pass:BlurY","to":"Image","input":0}</connect_pins>   (from: none | under | geometry | mask | webcam | pass:<name> | builtin:<name> | asset:<name>)',
 	[TOOL_NAMES.listAssets]: "<list_assets></list_assets>",
-	[TOOL_NAMES.getShader]: "<get_shader><pass>Effect</pass></get_shader>   (<pass> optional, defaults to the output pass)",
+	[TOOL_NAMES.getShader]: "<get_shader><pass>Effect</pass></get_shader>   (<pass> optional, defaults to the active layer's output pass)",
 	[TOOL_NAMES.screenshot]: "<capture_screenshot></capture_screenshot>",
 	[TOOL_NAMES.generateTexture]: '<generate_texture>{"prompt":"seamless rock surface","index":0}</generate_texture>',
+	[TOOL_NAMES.listLayers]: "<list_layers></list_layers>",
+	[TOOL_NAMES.addLayer]: '<add_layer>{"name":"Shapes","shape":"circle","x":0.5,"y":0.5,"w":0.3,"h":0.3,"color":[1,0.8,0.2,1]}</add_layer>   (adds a layer on top, pre-wired to composite over the layers below; becomes active)',
+	[TOOL_NAMES.removeLayer]: '<remove_layer>{"layer":"Shapes"}</remove_layer>',
+	[TOOL_NAMES.reorderLayer]: '<reorder_layer>{"layer":"Shapes","move":"top"}</reorder_layer>   (move: up | down | top | bottom, or {"to": index})',
+	[TOOL_NAMES.setLayer]: '<set_layer>{"layer":"Shapes","opacity":0.6,"visible":true}</set_layer>',
+	[TOOL_NAMES.selectLayer]: '<select_layer>{"layer":"Shapes"}</select_layer>   (make a layer active so pass/geometry tools target it)',
+	[TOOL_NAMES.addMask]: '<add_mask>{"layer":"Glow"}</add_mask>   (mask a layer by another layer\'s alpha; seeds a soft circle and makes the MASK active to edit -- e.g. an ellipse with falloff = a radial-gradient mask)',
+	[TOOL_NAMES.removeMask]: '<remove_mask>{"layer":"Glow"}</remove_mask>',
+	[TOOL_NAMES.listShapes]: '<list_shapes>{"layer":"Shapes"}</list_shapes>',
+	[TOOL_NAMES.addShape]: '<add_shape>{"kind":"quad","x":0.5,"y":0.5,"w":0.4,"h":0.25,"rotation":15,"color":[0.2,0.6,1,1],"cornerRadius":0.3}</add_shape>   (x,y centre & w,h size are 0..1 of the canvas; rotation in degrees)',
+	[TOOL_NAMES.editShape]: '<edit_shape>{"index":0,"x":0.4,"color":[1,0,0,1]}</edit_shape>   (index = shape position from list_shapes)',
+	[TOOL_NAMES.removeShape]: '<remove_shape>{"index":0}</remove_shape>',
 };
 
 export function textToolInstructions(tools: ToolDef[]): string {

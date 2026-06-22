@@ -10,11 +10,23 @@ import "./set_output_pass.ts";
 import "./get_shader.ts";
 import "./set_uniforms.ts";
 import "./rename_shader.ts";
-import "./set_channel.ts";
-import "./set_channel_asset.ts";
+import "./connect_pins.ts";
 import "./list_assets.ts";
 import "./capture_screenshot.ts";
 import "./generate_texture.ts";
+// Layer stack + geometry (the node-graph "Photoshop").
+import "./list_layers.ts";
+import "./add_layer.ts";
+import "./remove_layer.ts";
+import "./reorder_layer.ts";
+import "./set_layer.ts";
+import "./select_layer.ts";
+import "./add_mask.ts";
+import "./remove_mask.ts";
+import "./list_shapes.ts";
+import "./add_shape.ts";
+import "./edit_shape.ts";
+import "./remove_shape.ts";
 
 export { TOOL_NAMES } from "./names.ts";
 export type { ToolName } from "./names.ts";

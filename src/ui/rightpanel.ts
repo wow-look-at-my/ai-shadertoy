@@ -9,10 +9,11 @@ import { icon } from "../util/icons.ts";
 import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
-import type { BuiltinTexture, Channel, ImageAsset, Pass, PassFormat, Uniform, UniformType } from "../state/types.ts";
+import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
+import type { BuiltinTexture, Channel, ImageAsset, Layer, Pass, PassFormat, Shape, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
-const TABS = ["Code", "Passes", "Uniforms", "Textures"] as const;
+const TABS = ["Layers", "Code", "Passes", "Uniforms", "Textures"] as const;
 type Tab = (typeof TABS)[number];
 
 /** Pan/zoom of the Passes graph viewport. Persisted across re-renders so wiring
@@ -30,14 +31,18 @@ export function createRightPanel(store: Store): HTMLElement {
 	const tabBar = el("div", { class: "tabbar" });
 	const body = el("div", { class: "panel-body" });
 
+	const layersView = el("div", { class: "layers-panel" });
 	const codeView = buildCodeView(store);
 	const passesView = el("div", { class: "passes" });
 	const uniformsView = el("div", { class: "uniforms" });
 	const texturesView = el("div", { class: "textures" });
 
+	const viewFor = (t: Tab): HTMLElement => (t === "Layers" ? layersView : t === "Code" ? codeView.root : t === "Passes" ? passesView : t === "Uniforms" ? uniformsView : texturesView);
+
 	const renderActive = () => {
 		render(tabBar, ...TABS.map((t) => el("button", { class: `tab${t === active ? " active" : ""}`, on: { click: () => select(t) } }, t)));
-		render(body, active === "Code" ? codeView.root : active === "Passes" ? passesView : active === "Uniforms" ? uniformsView : texturesView);
+		render(body, viewFor(active));
+		if (active === "Layers") renderLayers(store, layersView);
 		if (active === "Code") codeView.syncHead();
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Uniforms") renderUniforms(store, uniformsView);
@@ -51,16 +56,25 @@ export function createRightPanel(store: Store): HTMLElement {
 	store.on("project", () => {
 		codeView.sync();
 		codeView.syncHead();
+		if (active === "Layers") renderLayers(store, layersView);
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Uniforms") renderUniforms(store, uniformsView);
 		if (active === "Textures") renderTextures(store, texturesView);
 	});
-	store.on("selectedPass", () => {
+	const onSelectionChange = () => {
 		codeView.sync();
 		codeView.syncHead();
 		codeView.syncLog();
+		if (active === "Layers") renderLayers(store, layersView);
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Textures") renderTextures(store, texturesView);
+	};
+	store.on("selectedPass", onSelectionChange);
+	store.on("selectedLayer", onSelectionChange);
+	// Shape selection (from the canvas gizmo or a row click) only re-skins the
+	// Layers tab; no need to rebuild the other tabs.
+	store.on("selectedShape", () => {
+		if (active === "Layers") renderLayers(store, layersView);
 	});
 	store.on("assets", () => {
 		if (active === "Textures") renderTextures(store, texturesView);
@@ -128,11 +142,12 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 	};
 	const syncHead = () => {
 		const pass = store.selectedPass();
-		const isOutput = pass.id === store.project.outputPassId;
+		const layer = store.activeLayer();
+		const isOutput = pass.id === layer.outputPassId;
 		const passSel = el(
 			"select",
-			{ class: "code-pass", title: "Pass being edited" },
-			...store.project.passes.map((p) => el("option", { value: p.id, attrs: { selected: p.id === pass.id ? "selected" : undefined } }, p.name + (p.id === store.project.outputPassId ? " ★" : ""))),
+			{ class: "code-pass", title: "Pass being edited (in the active layer)" },
+			...layer.passes.map((p) => el("option", { value: p.id, attrs: { selected: p.id === pass.id ? "selected" : undefined } }, p.name + (p.id === layer.outputPassId ? " ★" : ""))),
 		);
 		passSel.addEventListener("change", () => store.selectPass(passSel.value));
 
@@ -201,7 +216,7 @@ function fitView(view: GraphView, passes: Pass[], graph: HTMLElement): void {
 }
 
 function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => void, view: GraphView): void {
-	const passes = store.project.passes;
+	const passes = store.activeLayer().passes;
 	const viewport = el("div", { class: "graph-viewport" });
 
 	// Edges (SVG) behind the nodes, inside the transformed viewport.
@@ -295,7 +310,8 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		"div",
 		{ class: "graph-toolbar" },
 		el("button", { class: "btn tiny", on: { click: () => store.addPass("Pass", "") } }, "+ Add pass"),
-		el("span", { class: "muted small graph-hint" }, "scroll = pan · ctrl/⌘+scroll or pinch = zoom · drag background = pan"),
+		el("span", { class: "muted small" }, `layer: ${store.activeLayer().name}`),
+		el("span", { class: "muted small graph-hint" }, "scroll = pan · ctrl/⌘+scroll or pinch = zoom · drag = pan"),
 		el("span", { class: "spacer" }),
 		zoomBtn("−", "Zoom out", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1 / 1.2)),
 		zoomLabel,
@@ -307,7 +323,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 }
 
 function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireChange: () => void, view: GraphView): HTMLElement {
-	const isOutput = pass.id === store.project.outputPassId;
+	const isOutput = pass.id === store.activeLayer().outputPassId;
 	const selected = pass.id === store.selectedPassId;
 	const node = el("div", { class: `graph-node${selected ? " selected" : ""}${isOutput ? " output" : ""}` });
 	node.style.left = `${pass.x}px`;
@@ -328,14 +344,11 @@ function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireCha
 
 	const rows = pass.channels.map((_c, i) => {
 		const sel = channelSelect(store, pass, i, true);
-		const rm = el("button", { class: "btn icon tiny gn-rm", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 12 }));
-		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel, rm);
+		return el("div", { class: "gn-row" }, el("span", { class: "gn-port in" }), el("span", { class: "gn-ch" }, `iCh${i}`), sel);
 	});
-	const atMax = pass.channels.length >= store.renderer.maxInputs();
-	const addRow = el("div", { class: "gn-addrow" }, el("button", { class: "btn tiny", attrs: { disabled: atMax ? "" : undefined }, title: atMax ? "Input limit reached" : "Add an input channel", on: { click: () => store.addPassChannel(pass.id) } }, `+ input (iChannel${pass.channels.length})`));
 
 	node.appendChild(header);
-	node.appendChild(el("div", { class: "gn-body" }, ...rows, addRow));
+	node.appendChild(el("div", { class: "gn-body" }, ...rows));
 	const out = el("span", { class: "gn-port out", title: "Output (sampled by other passes)" });
 	out.style.top = `${outPortY(pass)}px`;
 	node.appendChild(out);
@@ -391,6 +404,9 @@ function startDrag(store: Store, pass: Pass, node: HTMLElement, e: PointerEvent,
 
 function channelValue(ch: Channel): string {
 	if (ch.kind === "none") return "none";
+	if (ch.kind === "under") return "under";
+	if (ch.kind === "geometry") return "geometry";
+	if (ch.kind === "mask") return "mask";
 	if (ch.kind === "builtin") return `builtin:${ch.builtin}`;
 	if (ch.kind === "pass") return `pass:${ch.passId}`;
 	if (ch.kind === "webcam") return "webcam";
@@ -403,8 +419,8 @@ function channelValue(ch: Channel): string {
 function channelSelect(store: Store, pass: Pass, index: number, compact: boolean): HTMLSelectElement {
 	const ch = pass.channels[index];
 	const value = channelValue(ch);
-	// All passes are selectable as a source, including this pass itself (feedback).
-	const sourcePasses = store.project.passes;
+	// Pass sources are within the active layer (incl. this pass itself = feedback).
+	const sourcePasses = store.activeLayer().passes;
 	const images = store.assets.filter((a) => a.kind !== "video");
 	const videos = store.assets.filter((a) => a.kind === "video");
 	const opt = (v: string, label: string) => el("option", { value: v, attrs: { selected: v === value ? "selected" : undefined } }, label);
@@ -412,6 +428,7 @@ function channelSelect(store: Store, pass: Pass, index: number, compact: boolean
 		"select",
 		{ class: "ch-sel" },
 		opt("none", compact ? "—" : "(empty)"),
+		el("optgroup", { attrs: { label: "Layer" } }, opt("under", compact ? "Under" : "Under (layers below)"), opt("geometry", compact ? "Geometry" : "Geometry (this layer's shapes)"), opt("mask", compact ? "Mask" : "Mask (this layer's mask)")),
 		opt("webcam", compact ? "Webcam" : "Webcam (live)"),
 		el("optgroup", { attrs: { label: "Passes" } }, ...sourcePasses.map((p) => opt(`pass:${p.id}`, p.id === pass.id ? `${p.name} (feedback)` : p.name))),
 		el("optgroup", { attrs: { label: "Built-in" } }, ...(Object.keys(BUILTIN_LABELS) as BuiltinTexture[]).map((b) => opt(`builtin:${b}`, BUILTIN_LABELS[b]))),
@@ -420,14 +437,15 @@ function channelSelect(store: Store, pass: Pass, index: number, compact: boolean
 	);
 	sel.addEventListener("change", () => {
 		const v = sel.value;
-		if (v === "none") store.setPassChannel(pass.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
-		else if (v === "webcam") store.setPassChannel(pass.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined });
-		else if (v.startsWith("pass:")) store.setPassChannel(pass.id, index, { kind: "pass", passId: v.slice(5), builtin: undefined, assetId: undefined });
-		else if (v.startsWith("builtin:")) store.setPassChannel(pass.id, index, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined, passId: undefined });
+		if (v === "none") store.connectPin(pass.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v === "under" || v === "geometry" || v === "mask") store.connectPin(pass.id, index, { kind: v, assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v === "webcam") store.connectPin(pass.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined });
+		else if (v.startsWith("pass:")) store.connectPin(pass.id, index, { kind: "pass", passId: v.slice(5), builtin: undefined, assetId: undefined });
+		else if (v.startsWith("builtin:")) store.connectPin(pass.id, index, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined, passId: undefined });
 		else if (v === "upload-image") void uploadAndBind(store, pass.id, index, "image");
 		else if (v === "upload-video") void uploadAndBind(store, pass.id, index, "video");
-		else if (v.startsWith("image:")) store.setPassChannel(pass.id, index, { kind: "image", assetId: v.slice(6), builtin: undefined, passId: undefined });
-		else if (v.startsWith("video:")) store.setPassChannel(pass.id, index, { kind: "video", assetId: v.slice(6), builtin: undefined, passId: undefined });
+		else if (v.startsWith("image:")) store.connectPin(pass.id, index, { kind: "image", assetId: v.slice(6), builtin: undefined, passId: undefined });
+		else if (v.startsWith("video:")) store.connectPin(pass.id, index, { kind: "video", assetId: v.slice(6), builtin: undefined, passId: undefined });
 	});
 	return sel;
 }
@@ -511,30 +529,26 @@ function fixLen(u: Uniform): void {
 
 function renderTextures(store: Store, container: HTMLElement): void {
 	const pass = store.selectedPass();
+	const layer = store.activeLayer();
 	const passSel = el(
 		"select",
-		{ class: "tex-pass", title: "Pass whose inputs you are editing" },
-		...store.project.passes.map((p) => el("option", { value: p.id, attrs: { selected: p.id === pass.id ? "selected" : undefined } }, p.name + (p.id === store.project.outputPassId ? " ★" : ""))),
+		{ class: "tex-pass", title: "Pass whose inputs you are editing (in the active layer)" },
+		...layer.passes.map((p) => el("option", { value: p.id, attrs: { selected: p.id === pass.id ? "selected" : undefined } }, p.name + (p.id === layer.outputPassId ? " ★" : ""))),
 	);
 	passSel.addEventListener("change", () => store.selectPass(passSel.value));
 
 	const rows = pass.channels.map((ch, i) => {
 		const sel = channelSelect(store, pass, i, false);
-		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.setPassChannel(pass.id, i, { filter: val as "linear" | "nearest" }));
-		const wrapSel = selectFrom(["repeat", "clamp", "mirror"], ch.wrap, (val) => store.setPassChannel(pass.id, i, { wrap: val as "repeat" | "clamp" | "mirror" }));
-		const rm = el("button", { class: "btn icon tiny", title: `Remove iChannel${i}`, on: { click: () => store.removePassChannel(pass.id, i) } }, icon("close", { size: 14 }));
-		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel, rm);
+		const filterSel = selectFrom(["linear", "nearest"], ch.filter, (val) => store.connectPin(pass.id, i, { filter: val as "linear" | "nearest" }));
+		const wrapSel = selectFrom(["repeat", "clamp", "mirror"], ch.wrap, (val) => store.connectPin(pass.id, i, { wrap: val as "repeat" | "clamp" | "mirror" }));
+		return el("div", { class: "ch-row" }, el("label", { class: "ch-label" }, `iChannel${i}`), sel, filterSel, wrapSel);
 	});
-
-	const atMax = pass.channels.length >= store.renderer.maxInputs();
-	const addBtn = el("button", { class: "btn", attrs: { disabled: atMax ? "" : undefined }, on: { click: () => store.addPassChannel(pass.id) } }, atMax ? `Max inputs (${store.renderer.maxInputs()})` : `+ Add input (iChannel${pass.channels.length})`);
 
 	render(
 		container,
 		el("div", { class: "tex-head" }, el("span", { class: "field-label" }, "Inputs for pass"), passSel),
 		pass.channels.length ? el("div", { class: "ch-list" }, ...rows) : el("p", { class: "muted small" }, "This pass has no inputs yet."),
-		addBtn,
-		el("p", { class: "muted small" }, "Bind a built-in texture, an image, a video, the live webcam, or another pass's output (kind=pass) — including this pass's own previous frame for feedback. Videos and the webcam animate (their current frame is sampled each frame). A pass can have as many inputs as the GPU allows (≥16), not just 4."),
+		el("p", { class: "muted small" }, "Inputs appear automatically from iChannel references in the shader. Bind a built-in texture, an image, a video, the live webcam, or another pass's output, including this pass's own previous frame for feedback."),
 	);
 }
 
@@ -566,7 +580,7 @@ async function uploadAndBind(store: Store, passId: string, channel: number, type
 		kind: type,
 	};
 	store.addAsset(asset);
-	store.setPassChannel(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
+	store.connectPin(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -597,4 +611,144 @@ function hexToRgb(hex: string): number[] {
 	const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
 	if (!m) return [0, 0, 0];
 	return [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255];
+}
+
+// ---- layers panel (the document's back-to-front stack) ---------------------
+
+function renderLayers(store: Store, container: HTMLElement): void {
+	const layers = store.project.layers;
+	const active = store.activeLayer();
+	const activeId = active.id;
+	const maskOwner = store.maskOwner(activeId); // set when we're editing a layer's mask
+
+	const addBtn = el("button", { class: "btn tiny", title: "Add a layer on top", on: { click: () => store.addLayer("Layer") } }, "+ Add layer");
+
+	// Render front (top) first, matching how the layers stack visually.
+	const rows: HTMLElement[] = [];
+	for (let i = layers.length - 1; i >= 0; i--) rows.push(layerRow(store, layers[i], i, layers.length, activeId));
+
+	const banner = maskOwner
+		? el(
+				"div",
+				{ class: "mask-banner" },
+				icon("mask", { size: 14 }),
+				el("span", {}, `Editing the MASK of "${maskOwner.name}"`),
+				el("span", { class: "spacer" }),
+				el("button", { class: "btn tiny", title: "Stop editing the mask", on: { click: () => store.selectLayer(maskOwner.id) } }, "Back to layer"),
+				el("button", { class: "btn tiny", title: "Remove this mask", on: { click: () => store.removeMask(maskOwner.id) } }, "Remove mask"),
+			)
+		: null;
+
+	render(
+		container,
+		el("div", { class: "layers-head" }, el("span", { class: "field-label" }, "Layers"), el("span", { class: "spacer" }), addBtn),
+				el("p", { class: "muted small" }, "Drawn back to front (top of the list = front). Each layer composites over the layers below it; what its graph does to the 'under' and 'mask' inputs is the blend."),
+		banner,
+		layers.length ? el("div", { class: "layer-list" }, ...rows) : el("p", { class: "muted" }, "No layers."),
+		shapesEditor(store, active),
+	);
+}
+
+function layerRow(store: Store, layer: Layer, index: number, total: number, activeId: string): HTMLElement {
+	const isActive = layer.id === activeId;
+	const editingMask = !!layer.mask && layer.mask.id === activeId;
+	const stop = (e: Event) => e.stopPropagation();
+
+	const eyeBtn = el("button", { class: "btn icon tiny", title: layer.visible ? "Hide layer" : "Show layer", on: { click: (e) => { stop(e); store.setLayerVisible(layer.id, !layer.visible); } } }, icon(layer.visible ? "eye" : "eyeOff", { size: 15 }));
+	const nameEl = el("span", { class: "layer-name" }, layer.name);
+	nameEl.addEventListener("dblclick", (e) => { stop(e); beginLayerRename(store, layer, nameEl); });
+	const meta = el("span", { class: "layer-meta muted small" }, `${layer.shapes.length} shp · ${layer.passes.length}p`);
+
+	const opacity = el("input", { class: "layer-opacity", type: "range", title: "Layer opacity", attrs: { min: "0", max: "1", step: "0.01", value: String(layer.opacity) } });
+	opacity.addEventListener("input", () => store.setLayerOpacity(layer.id, Number(opacity.value), true));
+	opacity.addEventListener("pointerdown", stop);
+
+	const maskBtn = layer.mask
+		? el("button", { class: `btn icon tiny mask-btn${editingMask ? " on" : ""}`, title: editingMask ? "Editing this mask" : "Edit mask", on: { click: (e) => { stop(e); store.selectLayer(layer.mask!.id); } } }, icon("mask", { size: 15 }))
+		: el("button", { class: "btn icon tiny mask-add", title: "Add a mask", on: { click: (e) => { stop(e); store.addMask(layer.id); } } }, icon("mask", { size: 15 }));
+
+	const up = el("button", { class: "btn icon tiny", title: "Move toward front", disabled: index === total - 1, on: { click: (e) => { stop(e); store.reorderLayer(layer.id, index + 1); } } }, icon("chevronUp", { size: 15 }));
+	const down = el("button", { class: "btn icon tiny", title: "Move toward back", disabled: index === 0, on: { click: (e) => { stop(e); store.reorderLayer(layer.id, index - 1); } } }, icon("chevronDown", { size: 15 }));
+	const del = el("button", { class: "btn icon tiny", title: "Delete layer", on: { click: (e) => { stop(e); const r = store.removeLayer(layer.id); if (!r.ok && r.error) alert(r.error); } } }, icon("trash", { size: 15 }));
+
+	const row = el("div", { class: `layer-row${isActive ? " active" : ""}${editingMask ? " mask-owner" : ""}${layer.visible ? "" : " is-hidden"}` }, eyeBtn, el("div", { class: "layer-id" }, nameEl, meta), el("span", { class: "spacer" }), opacity, maskBtn, up, down, del);
+	row.addEventListener("click", () => store.selectLayer(layer.id));
+	return row;
+}
+
+function beginLayerRename(store: Store, layer: Layer, nameEl: HTMLElement): void {
+	const input = el("input", { class: "gn-rename", type: "text", value: layer.name });
+	nameEl.replaceWith(input);
+	input.focus();
+	input.select();
+	input.addEventListener("pointerdown", (e) => e.stopPropagation());
+	input.addEventListener("click", (e) => e.stopPropagation());
+	const commit = () => store.renameLayer(layer.id, input.value.trim() || layer.name);
+	input.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") input.blur();
+		if (e.key === "Escape") { input.value = layer.name; input.blur(); }
+	});
+	input.addEventListener("blur", commit);
+}
+
+// ---- geometry editor (the active layer's shapes) ---------------------------
+
+function shapesEditor(store: Store, layer: Layer): HTMLElement {
+	const addButtons = SHAPE_DEFS.map((d) => el("button", { class: "btn tiny", title: `Add a ${d.label.toLowerCase()} to "${layer.name}"`, on: { click: () => store.addShape(layer.id, d.id) } }, `+ ${d.label}`));
+	const head = el("div", { class: "shapes-head" }, el("span", { class: "field-label" }, `Geometry — ${layer.name}`), el("span", { class: "spacer" }), ...addButtons);
+	const rows = layer.shapes.map((s, i) => shapeRow(store, layer, s, i));
+	return el(
+		"div",
+		{ class: "shapes-editor" },
+		head,
+		layer.shapes.length ? el("div", { class: "shape-list" }, ...rows) : el("p", { class: "muted small" }, "No shapes. Add a quad or circle — it rasterizes into this layer's 'geometry' input, which the layer's graph composites over what's below."),
+	);
+}
+
+function shapeRow(store: Store, layer: Layer, shape: Shape, index: number): HTMLElement {
+	const upd = (patch: Partial<Shape>) => store.updateShape(layer.id, shape.id, patch, true);
+	const field = (label: string, value: number, step: number, onChange: (v: number) => void) => el("label", { class: "shape-field" }, el("span", { class: "shape-flabel" }, label), shapeNum(value, step, onChange));
+
+	const fields = el(
+		"div",
+		{ class: "shape-fields" },
+		field("x", round2(shape.x), 0.01, (v) => upd({ x: v })),
+		field("y", round2(shape.y), 0.01, (v) => upd({ y: v })),
+		field("w", round2(shape.w), 0.01, (v) => upd({ w: Math.max(0, v) })),
+		field("h", round2(shape.h), 0.01, (v) => upd({ h: Math.max(0, v) })),
+		field("rot", Math.round((shape.rotation * 180) / Math.PI), 1, (v) => upd({ rotation: (v * Math.PI) / 180 })),
+	);
+
+	const colorPicker = el("input", { class: "shape-color", type: "color", value: rgbToHex(shape.color) });
+	colorPicker.addEventListener("input", () => { const rgb = hexToRgb(colorPicker.value); upd({ color: [rgb[0], rgb[1], rgb[2], shape.color[3]] }); });
+	const alpha = el("input", { class: "shape-alpha", type: "range", title: "Alpha", attrs: { min: "0", max: "1", step: "0.01", value: String(shape.color[3]) } });
+	alpha.addEventListener("input", () => upd({ color: [shape.color[0], shape.color[1], shape.color[2], Number(alpha.value)] }));
+	const style = el("div", { class: "shape-style" }, el("span", { class: "shape-flabel" }, "fill"), colorPicker, alpha);
+	if (shape.kind === "quad") {
+		const cr = el("input", { class: "shape-round", type: "range", title: "Corner radius", attrs: { min: "0", max: "1", step: "0.01", value: String(shape.cornerRadius) } });
+		cr.addEventListener("input", () => upd({ cornerRadius: Number(cr.value) }));
+		style.appendChild(el("span", { class: "shape-flabel" }, "round"));
+		style.appendChild(cr);
+	}
+	const fo = el("input", { class: "shape-round", type: "range", title: "Radial falloff (0 = solid, 1 = full gradient mask)", attrs: { min: "0", max: "1", step: "0.01", value: String(shape.falloff) } });
+	fo.addEventListener("input", () => upd({ falloff: Number(fo.value) }));
+	style.appendChild(el("span", { class: "shape-flabel" }, "falloff"));
+	style.appendChild(fo);
+
+	const del = el("button", { class: "btn icon tiny", title: "Delete shape", on: { click: () => store.removeShape(layer.id, shape.id) } }, icon("trash", { size: 14 }));
+	const kindLabel = el("span", { class: "shape-kind", title: "Select on canvas", on: { click: () => store.selectShape(shape.id) } }, `[${index}] ${SHAPE_LABELS[shape.kind]}`);
+	const head = el("div", { class: "shape-head" }, kindLabel, el("span", { class: "spacer" }), del);
+	const selected = store.selectedShapeId === shape.id;
+	return el("div", { class: `shape-row${selected ? " selected" : ""}` }, head, fields, style);
+}
+
+function shapeNum(value: number, step: number, onChange: (v: number) => void): HTMLInputElement {
+	const inp = el("input", { class: "shape-num", type: "number", attrs: { step: String(step), value: String(value) } });
+	const fire = () => { const n = Number(inp.value); if (Number.isFinite(n)) onChange(n); };
+	inp.addEventListener("input", fire);
+	return inp;
+}
+
+function round2(v: number): number {
+	return Math.round(v * 100) / 100;
 }

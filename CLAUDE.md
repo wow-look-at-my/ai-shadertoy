@@ -18,8 +18,8 @@ npm run build         # ts0 build -> dist/index.html
 
 - This is a **Node/TypeScript** project. Do NOT apply `go-toolchain` here.
 - ESM only; use `.ts` extensions in relative imports (required by ts0/esbuild).
-- The bundle must stay **< 1 MB** (CI enforces it) and have **no external
-  requests** — it ships as a single file.
+- The bundle ships as one self-contained `index.html` with **no external
+  requests**. (There is no bundle-size budget — don't optimize for byte count.)
 
 ### `ts0.json` vs `tsconfig.json` (they are not redundant)
 
@@ -34,19 +34,36 @@ npm run build         # ts0 build -> dist/index.html
 
 ## Architecture
 
-- `src/gl/` — `Renderer` is a **multi-pass** WebGL2 renderer. Each pass renders to
-  its own offscreen, ping-ponged (double-buffered) texture; passes are run in
-  topological order (`topoOrder`) of their channel→pass dependencies, a channel
-  pointing at its own pass reads the previous frame (feedback), and the chosen
-  output pass is blitted to the screen by an internal present shader. Targets are
+- `src/gl/` — `Renderer` is a **multi-pass, multi-LAYER** WebGL2 renderer. The
+  document is a back-to-front stack of layers; each layer is its own graph of
+  passes (each pass renders to its own offscreen, ping-ponged texture, run in
+  topological order `topoOrder` of channel→pass deps, a channel pointing at its own
+  pass = feedback). Layers render bottom-up: each layer sees the composite of every
+  layer below as its **`under`** input, its own rasterized geometry as its
+  **`geometry`** input, and its optional mask as **`mask`** (channel `kind`s
+  resolved per-layer, NOT graph edges);
+  the layer's output pass is the new composite, and the topmost visible layer's
+  composite is blitted to the screen by an internal present shader. A layer may
+  carry a **mask** (`Layer.mask`, itself a layer rendered standalone with no
+  `under`): `add_mask` adds a visible `Masked Composite` graph pass on the owner
+  layer that samples `under`, the unmasked output pass, and `mask`, then computes
+  `mix(under, composite, mask.a)`. `reconcileLayer` reconciles stack layers AND
+  their masks (recursively); `present` takes a texture. `setDocument()`
+  ((re)compiles + reconciles every layer/pass, returns a per-pass `CompileResult`)
+  replaces the old `setPasses`; `setLayerShapes`/`setLayerProps` are cheap
+  per-layer updates (no recompile). **Geometry is real instanced meshes**:
+  `geometry.ts` (`GeometryBatch`, `drawArraysInstanced` of a unit quad per shape,
+  premultiplied "over") shaded by a per-kind SDF in `shape.vert/frag.glsl`; the
+  shape registry `shapes.ts` is the single source of kinds (array order = the
+  shader's `kind` switch index, so a new primitive is one entry + one `case`).
+  Targets are
   `rgba8` or `rgba16f` (HDR, when `EXT_color_buffer_float`/`OES_texture_float_linear`
-  allow, else it falls back). `setPasses()` (re)compiles + reconciles per-pass
-  slots and returns a per-pass `CompileResult`; `setPassChannel*`/`clearPassChannel`
-  bind inputs; `maxInputs()` exposes the GPU texture-unit ceiling. Channels can be
+  allow, else it falls back). `connect*Input`/`disconnectInput`
+  bind inputs (`connectAmbientInput` for under/geometry/mask); `maxInputs()` exposes the GPU texture-unit ceiling. Channels can be
   **dynamic** (uploaded video / live webcam): a `DynamicTexture` (`dynamictexture.ts`)
   owns a `<video>` whose current frame is re-uploaded every render tick (texImage2D
   then texSubImage2D), follows play/pause/reset, and stops its stream on teardown
-  (`setPassChannelVideo` / `setPassChannelWebcam`; `setPassChannelParams` changes
+  (`connectVideoInput` / `connectWebcamInput`; `setInputParams` changes
   filter/wrap without reloading; `dynamicKey()` lets the store skip redundant
   reloads). It also owns the clock, uniforms, and screenshot (average-colour
   feedback). `wrapper.ts` assembles
@@ -69,16 +86,23 @@ npm run build         # ts0 build -> dist/index.html
   and `execute`, self-registering into `registry.ts`. The store builds a
   `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
   `toolDefs({ imageGen, allowInitShader })` gates the offered set. Tools are
-  **pass-aware**: `init_shader` (first turn / full rewrite of the output pass),
-  `edit_shader` (forgiving exact-snippet replace — the primary edit path; takes an
-  optional `pass`), `add_pass` / `remove_pass` / `list_passes` / `set_output_pass`
-  (manage the render graph), `get_shader` (pass + graph summary), `set_uniforms`
-  (shared across passes), `rename_shader` (permission-gated), `set_channel`
-  (`kind: none|builtin|pass|webcam`; `pass` feeds another pass's output — the graph
-  edges; `webcam` is the live camera; any index auto-grows the input list),
-  `set_channel_asset` (bind an image OR video asset — videos animate per frame),
-  `list_assets`, `capture_screenshot`, `generate_texture` (gated on image-gen). Most
-  edit tools default to the output pass and resolve a `pass` arg via `ctx.resolvePass`.
+  **layer- and pass-aware**: pass/geometry tools act on the **active layer**
+  (`ctx.resolvePass`/`ctx.passes()` are active-layer-scoped; `select_layer`
+  switches it). Layer stack: `add_layer` (adds on top, becomes active, pre-wired
+  under+geometry "over"), `remove_layer`, `list_layers`, `reorder_layer` (the draw
+  order), `set_layer` (name/visible/opacity), `select_layer`, `add_mask` /
+  `remove_mask` (mask a layer by another layer's alpha; `add_mask` seeds a soft
+  circle and makes the MASK the active layer to edit). Geometry:
+  `add_shape` / `edit_shape` / `remove_shape` / `list_shapes` (kinds from the
+  `shapes.ts` registry; `geometry_util.ts` parses shape fields — degrees→radians,
+  rgba). Within a layer: `init_shader`, `edit_shader` (forgiving exact-snippet
+  replace; optional `pass`), `add_pass` / `remove_pass` / `list_passes` /
+  `set_output_pass`, `get_shader`, `set_uniforms` (shared across ALL layers),
+  `rename_shader` (permission-gated), `connect_pins`
+  (`from: none|under|geometry|mask|builtin:<name>|pass:<name>|webcam|asset:<name>`;
+  texture input pins are inferred from `iChannelN` references in the shader),
+  `list_assets`, `capture_screenshot`,
+  `generate_texture` (gated on image-gen).
 - **Permission-gated tools**: a tool can set `requiresPermission: true` (+ an
   optional `permissionPrompt(input)` for the prompt text) in its registration.
   Before running such a call the agent loop awaits `cb.requestPermission(...)`;
@@ -92,25 +116,37 @@ npm run build         # ts0 build -> dist/index.html
   out of the reply (`texttools.ts`), and feeds results back as a plain user
   message. `init_shader` is recomputed each iteration so it drops out once the
   shader is authored.
-- `src/state/` — `types.ts`: a `Project` is a **render graph** — `passes: Pass[]`
-  (each a `Pass` with `source`, a variable-length `channels: Channel[]` input list
-  up to `MAX_INPUTS`, `format`, and graph-editor `x`/`y`) plus an `outputPassId`; a
-  `Channel` adds `kind:"pass"` (+`passId`) for pass→pass wiring, plus `"video"`
-  (an `ImageAsset` with `kind:"video"`) and `"webcam"` for dynamic inputs.
-  `src/util/media.ts` holds the file/webcam plumbing (`fileToDataUrl`, `loadVideoMeta`,
-  `requestWebcam`, …). `store.ts` (single owner of state + the renderer +
-  persistence + `applyTool` + undo/redo) tracks `selectedPassId` and exposes
-  pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/`setPassSource`/
-  `setPassChannel`/`add`+`removePassChannel`/`movePass`), plus `commitMessages()`
-  which persists in-place edits/deletes the chat UI makes to `project.messages`;
-  `defaults.ts` has `normalizeProject` which migrates legacy single-`shaderSource`
-  projects to one "Image" pass on load/import. `persist.ts` (IndexedDB for
-  projects/assets, localStorage for settings, export/import; normalizes on read).
-  `history.ts` (generic, DOM-free snapshot undo/redo stack).
+- `src/state/` — `types.ts`: a `Project` is a **layer stack** — `layers: Layer[]`
+  drawn back→front; each `Layer` has its own `passes: Pass[]` + `outputPassId`
+  (its composite) **plus** `shapes: Shape[]` (geometry), and `visible`/`opacity`.
+  A `Pass` has `source`, a variable-length `channels: Channel[]` (up to
+  `MAX_INPUTS`), `format`, and graph-editor `x`/`y`; a `Channel` `kind` is
+  `none|under|geometry|mask|builtin|pass|video|webcam` (`under`/`geometry`/`mask` are
+  layer-ambient — no extra fields; `pass`+`passId` is a same-layer edge). A `Shape`
+  is `{kind, x, y, w, h, rotation, color, cornerRadius, feather, falloff}` in
+  normalized 0..1 canvas coords (`falloff` 0..1 ramps alpha centre->edge = a radial
+  gradient). A layer also has an optional `mask?: Layer` (an owned layer used as a
+  per-pixel opacity mask). `makeCompositeLayer` builds a ready "over" layer,
+  `makeMaskLayer` a geometry-passthrough mask; `ensureMaskCompositePass` adds the
+  graph node that applies it; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`/
+  `MASK_COMPOSITE_SOURCE` are their default shaders. `src/util/media.ts` holds the file/webcam plumbing.
+  `store.ts` (single owner of state + the renderer + persistence + `applyTool` +
+  undo/redo) tracks `selectedLayerId` + `selectedPassId` + `selectedShapeId` (the
+  active layer can be a layer's mask — `layerById`/`passById`/`eachLayer` recurse
+  into masks) and exposes layer mutations (`addLayer`/`removeLayer`/`reorderLayer`/
+  `setLayerVisible`/`setLayerOpacity`/`renameLayer`/`selectLayer`/`addMask`/
+  `removeMask`), shape mutations
+  (`addShape`/`updateShape`/`removeShape` — cheap via `renderer.setLayerShapes`),
+  and the per-layer pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
+  `setPassSource`/`connectPin`/…, all resolving the pass's owning layer), plus
+  `commitMessages()`. `defaults.ts` `normalizeProject` migrates BOTH eras — legacy
+  single-`shaderSource` and the mid-era flat `passes`/`outputPassId` graph — into a
+  single "Base" layer (tested in `test/layers.test.ts`). `persist.ts` (IndexedDB,
+  normalizes on read). `history.ts` (generic, DOM-free snapshot undo/redo stack).
 - **Undo/redo**: `history.ts` is a generic `History<S>` (two stacks of
   `{snapshot,label}`, coalescing by tag + time window, reference-counted grouping,
   a size cap, an `onChange` callback). The store owns a `History<ProjectSnapshot>`
-  over the undoable project slice (`name`, `passes`, `outputPassId`, `uniforms` —
+  over the undoable project slice (`name`, `layers`, `uniforms` —
   NOT messages/ids). Each mutating store method calls `this.commit(label, tag,
   coalesce?)` after mutating; `applySnapshot` restores + re-renders (it emits a
   `"restore"` event so the code editor refreshes even while focused). Typing and
@@ -123,10 +159,20 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
   splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
-  has four tabs: **Code** (edits the selected pass), **Passes** (the object graph —
-  draggable pass nodes wired by their inputs, add/remove passes + inputs, pick the
-  output), **Uniforms** (shared), **Textures** (the selected pass's inputs, with an
-  add/remove control — not fixed at four). UI glyphs come from `src/util/icons.ts` —
+  has five tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, a
+  per-row mask button + an "editing mask" banner, add layers, and a per-layer
+  geometry editor: add quad/circle + edit position/size/rotation/colour/corner/
+  falloff), **Code** (the selected pass in the active layer),
+  **Passes** (the active layer's object graph — draggable pass nodes wired by their
+  inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
+  selected pass's inputs). The Code/Passes/Textures tabs are scoped to the active
+  layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
+  canvas: an overlay that (in "edit mode" = active layer has shapes) hit-tests the
+  active layer's shapes and draws a selection box + corner resize handles + a
+  rotate handle, writing through `store.updateShape` (coalesced; rotation-aware
+  CSS<->normalized math, y-flip). `store.selectedShapeId` (+ `selectShape`/
+  `clearShapeSelection`/`"selectedShape"`) is the shared selection; the gizmo and
+  the Layers-tab shape rows stay in sync. UI glyphs come from `src/util/icons.ts` —
   `icon(name)` builds an inline `<svg>` (Material Design Icons path data,
   `fill: currentColor`); no emoji, no icon font, no network request. Add a new glyph
   by inlining its `@mdi/js` path. The chat (`chat.ts`) shows hover **edit/delete**
@@ -138,9 +184,12 @@ npm run build         # ts0 build -> dist/index.html
   `node --experimental-strip-types`.
 - `src/shaders/*.glsl` — real `.glsl` files (per the file-type rule): the editable
   `default.frag.glsl` plus the renderer's internal `fullscreen.vert.glsl` (full-screen
-  triangle, shared by every pass) and `present.frag.glsl` (output blit). All embedded
-  into the single-file bundle by ts0's fetch interceptor and loaded at runtime via
-  `fetch(new URL(...))` (the plumbing pair is passed into the `Renderer` constructor).
+  triangle, shared by every pass), `present.frag.glsl` (output blit), and the
+  instanced-geometry pair `shape.vert.glsl` + `shape.frag.glsl` (the per-kind SDF
+  `case` switch lives in `shape.frag.glsl`, kept in lockstep with the `shapes.ts`
+  registry order). All embedded into the single-file bundle by ts0's fetch interceptor and loaded at runtime via
+  `fetch(new URL(...))` (the shader sources are passed into the `Renderer`
+  constructor as a `RendererShaders` object).
 
 ## Provider gotchas (verified against the claude-api skill)
 
@@ -198,7 +247,7 @@ npm run build         # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml`: build (npm ci, tsc, `npm test`, ts0 build, size gate)
+`.github/workflows/ci.yml`: build (npm ci, tsc, `npm test`, ts0 build)
 then deploy — publishes the single file as a **public** per-branch buildhost site via GHA
 OIDC (`X-Public-Site: true`) to `sites.pazer.build/ai-shadertoy/branch/<branch>/`.
 Models the buildhost repo's `buildhost-publish-site` action, inlined through

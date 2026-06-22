@@ -1,0 +1,79 @@
+// connect_pins -- wire a graph source pin into a pass input pin.
+
+import { BUILTIN_LABELS } from "../../gl/textures.ts";
+import type { BuiltinTexture, ImageAsset, TexFilter, TexWrap } from "../../state/types.ts";
+import { TOOL_NAMES } from "./names.ts";
+import { registerTool } from "./registry.ts";
+import { text } from "./types.ts";
+
+function findAsset(assets: ImageAsset[], nameOrId: string): ImageAsset | undefined {
+	const n = nameOrId.toLowerCase();
+	return assets.find((a) => a.id === nameOrId || a.name.toLowerCase() === n);
+}
+
+registerTool({
+	name: TOOL_NAMES.connectPins,
+	def: {
+		name: TOOL_NAMES.connectPins,
+		description:
+			"Connect a graph source pin to a pass input pin in the ACTIVE layer. `from` can be none, under, geometry, mask, webcam, pass:<pass name>, builtin:<texture>, or asset:<asset name>. `to` is the target pass name (defaults to the active layer's output pass) and `input` is the target input index. This is the graph wiring tool; masks are just a mask source pin sampled by graph shader math.",
+		parameters: {
+			type: "object",
+			properties: {
+				from: { type: "string", description: "Source pin: none, under, geometry, mask, webcam, pass:<name>, builtin:<name>, or asset:<name>." },
+				to: { type: "string", description: "Target pass name; defaults to the active layer's output pass." },
+				input: { type: "integer", description: "Target input index, e.g. 0 for iChannel0." },
+				filter: { type: "string", enum: ["linear", "nearest"] },
+				wrap: { type: "string", enum: ["repeat", "clamp", "mirror"] },
+			},
+			required: ["from", "input"],
+		},
+	},
+	execute: (ctx, input) => {
+		const index = Number(input["input"]);
+		if (!(index >= 0 && index < ctx.renderer.maxInputs())) return { content: [text(`input must be 0..${ctx.renderer.maxInputs() - 1}.`)], isError: true };
+		const target = ctx.resolvePass(input["to"] ? String(input["to"]) : undefined);
+		if (!target) return { content: [text(`No target pass named "${String(input["to"])}" in the active layer. Use list_passes.`)], isError: true };
+		if (index >= target.channels.length) return { content: [text(`${target.name} has no iChannel${index} input. Reference iChannel${index} in its shader first, then connect_pins can wire it.`)], isError: true };
+
+		const filter = (input["filter"] as TexFilter) ?? "linear";
+		const wrap = (input["wrap"] as TexWrap) ?? "repeat";
+		const from = String(input["from"] ?? "").trim();
+
+		if (from === "none") {
+			ctx.connectPin(target.id, index, { kind: "none", assetId: undefined, builtin: undefined, passId: undefined });
+			return { content: [text(`Disconnected ${target.name} input ${index}.`)] };
+		}
+		if (from === "under" || from === "geometry" || from === "mask") {
+			ctx.connectPin(target.id, index, { kind: from, assetId: undefined, builtin: undefined, passId: undefined, filter, wrap });
+			return { content: [text(`Connected ${from} -> ${target.name} input ${index}.`)] };
+		}
+		if (from === "webcam") {
+			ctx.connectPin(target.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined, filter, wrap });
+			return { content: [text(`Connected webcam -> ${target.name} input ${index}.`)] };
+		}
+		if (from.startsWith("pass:")) {
+			const srcName = from.slice(5).trim();
+			const src = ctx.resolvePass(srcName);
+			if (!src) return { content: [text(`No source pass named "${srcName}". Use list_passes.`)], isError: true };
+			ctx.connectPin(target.id, index, { kind: "pass", passId: src.id, builtin: undefined, assetId: undefined, filter, wrap });
+			const fb = src.id === target.id ? " (feedback: previous frame)" : "";
+			return { content: [text(`Connected pass "${src.name}"${fb} -> ${target.name} input ${index}.`)] };
+		}
+		if (from.startsWith("builtin:")) {
+			const builtin = from.slice(8).trim() as BuiltinTexture;
+			if (!(builtin in BUILTIN_LABELS)) return { content: [text(`builtin must be one of: ${Object.keys(BUILTIN_LABELS).join(", ")}`)], isError: true };
+			ctx.connectPin(target.id, index, { kind: "builtin", builtin, filter, wrap, assetId: undefined, passId: undefined });
+			return { content: [text(`Connected builtin ${builtin} -> ${target.name} input ${index}.`)] };
+		}
+		if (from.startsWith("asset:")) {
+			const assetName = from.slice(6).trim();
+			const asset = findAsset(ctx.assets, assetName);
+			if (!asset) return { content: [text(`No asset named "${assetName}". Use list_assets.`)], isError: true };
+			const isVideo = asset.kind === "video";
+			ctx.connectPin(target.id, index, { kind: isVideo ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined, filter, wrap });
+			return { content: [text(`Connected ${isVideo ? "video" : "image"} asset "${asset.name}" -> ${target.name} input ${index}.`)] };
+		}
+		return { content: [text("from must be: none, under, geometry, mask, webcam, pass:<name>, builtin:<name>, or asset:<name>.")], isError: true };
+	},
+});

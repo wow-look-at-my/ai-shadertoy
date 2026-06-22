@@ -8,13 +8,18 @@ also wire up input channels — built-in textures, images, **videos**, the
 
 - **No backend.** Everything runs in your browser. Your API key is stored locally
   and used only for calls you authorize.
-- **Multi-pass render graph.** Not limited to a single shader (or Shadertoy's
-  fixed buffers): build a *graph* of passes, each rendering to its own texture and
-  sampling the output of others — e.g. effect → blur X → blur Y → composite — with
-  per-pass feedback (a pass reading its own previous frame). Each pass has as many
-  inputs as the GPU allows (≥16), not a hard-wired four.
+- **Layers — a node-graph "Photoshop".** The document is a back-to-front **stack
+  of layers**. Each layer is its own render graph *plus* real instanced geometry
+  (quads/circles), and it receives the composite of everything beneath it as an
+  `under` input — so **the node graph decides how each layer blends** over the
+  rest. Reorder, hide, and set per-layer opacity.
+- **Multi-pass render graph.** Within a layer (and the classic single-layer case),
+  build a *graph* of passes, each rendering to its own texture and sampling the
+  output of others — e.g. effect → blur X → blur Y → composite — with per-pass
+  feedback (a pass reading its own previous frame). Each pass has as many inputs as
+  the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html`
-  (~720 KB, no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
+  (no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
 - **Bring your own model.** Works with Anthropic (Claude) or any
   OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator
@@ -35,34 +40,78 @@ also wire up input channels — built-in textures, images, **videos**, the
 The AI's tools: `init_shader` (the first shader / a full rewrite of the output
 pass), `edit_shader` (targeted snippet replacements — the usual way it changes an
 existing shader, so it doesn't retype the whole thing), `add_pass` / `remove_pass`
-/ `list_passes` / `set_output_pass` (build and inspect the multi-pass render
-graph), `set_uniforms` (live slider parameters, shared across passes),
-`rename_shader` (rename the current shader), `set_channel` / `set_channel_asset`
-(wire a pass input to a built-in texture, an image, a video, the webcam, or —
-`kind: pass` — another pass's output), `list_assets`, `capture_screenshot`, and
-(optional) `generate_texture`.
+/ `list_passes` / `set_output_pass` (build and inspect the per-layer render graph),
+`add_layer` / `remove_layer` / `reorder_layer` / `set_layer` / `select_layer` /
+`list_layers` (manage the layer stack), `add_shape` / `edit_shape` / `remove_shape`
+/ `list_shapes` (place and tweak geometry), `set_uniforms` (live slider parameters,
+shared across all passes), `rename_shader` (rename the current shader),
+`connect_pins` (wire a shader-declared input to `under`, `geometry`, `mask`, a
+built-in texture, an asset, the webcam, or another pass's output), `list_assets`,
+`capture_screenshot`, and (optional) `generate_texture`.
+Pass and geometry tools act on the **active layer** (`select_layer` switches it).
 
-### Multi-pass render graph
+### Layers (node-graph compositing)
 
-A project is a graph of **passes**. Each pass is a full-screen fragment shader
-that renders to its own offscreen texture; its inputs (`iChannel0`, `iChannel1`,
-…) can sample built-in textures, image assets, or the **output of another pass** —
-those wires are the graph edges. Passes execute in dependency order, and a channel
-pointing at its own pass reads the *previous* frame (feedback, for trails /
-accumulation / ping-pong simulation). One pass is the **output**, composited to
-the screen. Passes can use an `rgba16f` target to keep HDR values for bloom/blur.
-Edit it visually in the **Passes** tab (draggable nodes wired by their inputs), or
-let the AI build it. Inputs per pass are not capped at four — add as many as you
-need.
+The document is an ordered **stack of layers**, drawn **back to front** (the One
+True draw order). Each layer is its own render graph (its own passes + an output
+pass = that layer's composite) **plus** a list of **geometry shapes** (quads and
+circles, real instanced meshes). Layer-ambient inputs are available to any
+pass in a layer, wired like any other channel:
+
+- **`under`** — the composite of every layer *below* this one (transparent for the
+  bottom layer). Sampling it is how a layer blends over what's underneath.
+- **`geometry`** — this layer's shapes rasterized to a premultiplied texture
+  (colour + coverage).
+- **`mask`** — this layer's optional mask output, with alpha as coverage.
+
+Because the blend is just shader math in the layer's output pass, **the node graph
+controls the blending** — source-over by default, but rewrite the pass for
+multiply, screen, add, displacement, masking, glow, whatever. A new layer comes
+pre-wired `iChannel0 = under`, `iChannel1 = geometry`, doing source-over.
+
+**Layer masks.** Any layer can have a **mask** — another layer (rendered
+standalone) whose output *alpha* is sampled by the owner graph. Adding a mask
+appends a visible `Masked Composite` pass wired `iChannel0 = under`,
+`iChannel1 = unmasked output`, `iChannel2 = mask`, with shader math:
+`result = mix(under, thisComposite, mask.alpha)`. This is the clean way to reveal
+a layer (say a texture) through a shape — e.g. a circle with full falloff makes a
+soft radial-gradient mask. The mask button on a layer row adds one (seeded with a
+soft circle) and lets you edit its geometry like any layer; the AI uses `add_mask`
+/ `remove_mask`.
+
+The **Layers** tab is the stack: reorder (front/back), show/hide, set opacity, add
+layers, and edit each layer's shapes (position, size, rotation, colour, rounded
+corners). You can also **manipulate shapes directly on the canvas** — click a shape
+in the active layer to select it, then drag the body to move it, the corner
+handles to resize, or the top handle to rotate (the shader's `iMouse` keeps
+working on layers that have no geometry). Or let the AI drive it (`add_layer`,
+`add_shape`, `edit_shape`, `reorder_layer`, …). Existing single-shader projects
+load as one "Base" layer, so nothing changes until you add more.
+
+### Multi-pass render graph (within a layer)
+
+A layer's graph is one or more **passes**. Each pass is a full-screen fragment
+shader that renders to its own offscreen texture. Texture input pins are inferred
+from the shader: referencing `iChannel0` creates input 0, referencing `iChannel2`
+creates inputs 0 through 2, and removing references removes those pins. Inputs can
+sample `under`, `geometry`, `mask`, built-in textures, image assets, or the
+**output of another pass in the same layer** — those wires are the graph edges.
+Passes execute in dependency order, and an input pointing at its own pass reads
+the *previous* frame (feedback, for trails / accumulation / ping-pong simulation).
+One pass is the layer's **output** (its composite). Passes can use an `rgba16f`
+target to keep HDR values for bloom/blur. Edit it visually in the **Passes** tab
+(draggable nodes wired by their inputs, scoped to the active layer), or let the AI
+build it. Inputs per pass are not capped at four; use as many `iChannelN` inputs
+as the shader needs, up to the GPU limit.
 
 ### Input channels (textures, video, webcam)
 
-Each input channel can be bound — in the **Textures** tab or by the AI — to a
-built-in procedural texture, an uploaded/generated **image**, an uploaded
-**video** clip, the live **webcam**, or another pass's output. Videos and the
+Each shader-declared texture input can be bound — in the **Textures** tab or by
+the AI — to a built-in procedural texture, an uploaded/generated **image**, an
+uploaded **video** clip, the live **webcam**, or another pass's output. Videos and the
 webcam are *dynamic*: their current frame is uploaded every render frame, so
-sampling the channel animates on its own (and `iChannelResolution` reports the
-source's size). Each channel has its own filter (linear/nearest) and wrap
+sampling the input animates on its own (and `iChannelResolution` reports the
+source's size). Each input has its own filter (linear/nearest) and wrap
 (repeat/clamp/mirror). Webcam use prompts the browser for camera permission;
 nothing is uploaded anywhere — the frames stay on your GPU.
 
@@ -195,7 +244,7 @@ No runtime framework — just typed, vanilla DOM helpers, so the bundle stays sm
 
 ## Deploy
 
-`.github/workflows/ci.yml` type-checks, builds, enforces the <1 MB budget, and
+`.github/workflows/ci.yml` type-checks, builds, and
 publishes the single file as a **public** per-branch site to
 [buildhost](https://github.com/wow-look-at-my/buildhost) using GitHub Actions
 OIDC (no static token). The live URL is

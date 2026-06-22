@@ -23,12 +23,29 @@ export function glslType(t: UniformType): string {
 const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // iChannelN (any N) is a reserved input sampler name; the count is dynamic.
 const CHANNEL_NAME = /^iChannel\d+$/;
+const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*;[ \t]*$/gm;
 
 export function isValidUniformName(name: string): boolean {
 	if (!VALID_NAME.test(name)) return false;
 	if (name.startsWith("gl_")) return false; // reserved
 	if (CHANNEL_NAME.test(name)) return false; // reserved input samplers
 	return !BUILTIN_NAMES.has(name);
+}
+
+export function extractUniformDeclarations(source: string): Uniform[] {
+	const out: Uniform[] = [];
+	for (const m of source.matchAll(CUSTOM_UNIFORM_RE)) {
+		const type = m[1] as UniformType;
+		const name = m[2];
+		if (!isValidUniformName(name)) continue;
+		const n = type === "float" ? 1 : type === "vec2" ? 2 : type === "vec3" ? 3 : 4;
+		out.push({ name, type, value: new Array(n).fill(0), min: 0, max: 1, step: 0.01 });
+	}
+	return out;
+}
+
+function stripUniformDeclarations(source: string): string {
+	return source.replace(CUSTOM_UNIFORM_RE, "");
 }
 
 const BUILTIN_NAMES = new Set([
@@ -92,5 +109,5 @@ export function assembleFragment(userSource: string, uniforms: Uniform[], channe
 	const head = header(uniforms, channelCount);
 	const prefix = head + "#line 1\n";
 	const headerLines = prefix.split("\n").length - 1;
-	return { source: prefix + userSource + FOOTER, headerLines };
+	return { source: prefix + stripUniformDeclarations(userSource) + FOOTER, headerLines };
 }

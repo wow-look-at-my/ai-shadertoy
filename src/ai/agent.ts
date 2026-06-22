@@ -28,12 +28,20 @@ const RENDER_TOOLS = new Set<string>([
 	TOOL_NAMES.initShader,
 	TOOL_NAMES.editShader,
 	TOOL_NAMES.setUniforms,
-	TOOL_NAMES.setChannel,
-	TOOL_NAMES.setChannelAsset,
+	TOOL_NAMES.connectPins,
 	TOOL_NAMES.generateTexture,
 	TOOL_NAMES.addPass,
 	TOOL_NAMES.removePass,
 	TOOL_NAMES.setOutputPass,
+	TOOL_NAMES.addLayer,
+	TOOL_NAMES.removeLayer,
+	TOOL_NAMES.reorderLayer,
+	TOOL_NAMES.setLayer,
+	TOOL_NAMES.addShape,
+	TOOL_NAMES.editShape,
+	TOOL_NAMES.removeShape,
+	TOOL_NAMES.addMask,
+	TOOL_NAMES.removeMask,
 ]);
 
 /** A pending tool call awaiting the user's approval (see requiresPermission). */
