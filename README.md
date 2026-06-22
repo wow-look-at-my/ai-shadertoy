@@ -170,16 +170,25 @@ Note that Opus 4.8 / 4.7 reject `temperature`, so it is omitted for those models
 ## Cost & usage
 
 The chat panel shows a small live indicator: output **tokens/sec**, **context
-window used**, and — for models with known pricing — **cost this turn** and
-**cost this session**.
+window used**, **% cached** (when any of the prompt was served from cache), and —
+for models with known pricing — **cost this turn** and **cost this session**.
 
 Requests use **prompt caching** to cut cost and latency: the stable system prompt
 and the growing conversation history are cached, while the fast-changing project
 state (shader size, uniforms, channels, last compile error) is sent as a separate
 trailing message so it never invalidates the cache. For Anthropic this uses
-`cache_control` breakpoints; OpenAI-compatible endpoints cache the matching prefix
-automatically. Cost figures are estimates from a built-in price table — accurate
-for Claude models, and tokens-only (no dollar figure) for unrecognized endpoints.
+`cache_control` breakpoints; for hosted OpenAI we send a stable `prompt_cache_key`
+and the server caches the matching prefix automatically. For self-hosted
+OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send
+`cache_prompt: true` to opt into KV-cache prefix reuse — these extra fields are
+sent only to non-hosted endpoints, since hosted OpenAI/Azure reject unknown body
+fields. Ollama in particular **does** reuse the prompt prefix across turns (so
+after a turn ends, the next message reprocesses only the new tail — typically
+95%+ of the prompt is cached), but it doesn't report cached tokens in its OpenAI
+response; the **% cached** indicator is therefore estimated from the leading
+prompt prefix shared with the previous request (validated against Ollama's own
+cache counters to within ~1–2%). Cost figures are estimates from a built-in price table — accurate for
+Claude models, and tokens-only (no dollar figure) for unrecognized endpoints.
 
 ## Persistence & sharing
 
