@@ -71,6 +71,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let costTurn = 0;
 	let lastTps = 0;
 	let lastCtxPct = 0;
+	let lastCachePct = 0;
 	let haveStats = false;
 
 	function fmtCost(c: number): string {
@@ -87,6 +88,10 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const item = (label: string, title: string): HTMLElement => el("span", { class: "cs-item", title }, label);
 		const ctxLabel = `${lastCtxPct < 10 ? lastCtxPct.toFixed(1) : lastCtxPct.toFixed(0)}% ctx`;
 		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), item(ctxLabel, "Share of the model's context window used (last request)")];
+		if (lastCachePct > 0) {
+			const cacheLabel = `${lastCachePct < 10 ? lastCachePct.toFixed(1) : lastCachePct.toFixed(0)}% cached`;
+			parts.push(sep(), item(cacheLabel, "Share of the input prompt served from the prompt cache (last request)"));
+		}
 		if (hasPricing(store.settings.chat.model)) {
 			parts.push(sep(), item(`${fmtCost(costTurn)} turn`, "Cost of the current / last turn"), sep(), item(`${fmtCost(costTotal)} total`, "Total cost this session"));
 		}
@@ -319,6 +324,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,
+					// Per-conversation key for OpenAI prompt-cache routing (a project is
+					// one conversation thread); namespaced so it can't collide across apps.
+					cacheKey: `shadertoy-${store.project.id}`,
 					requestPermission,
 					onUsage: (usage, durationMs) => {
 						const model = store.settings.chat.model;
@@ -330,6 +338,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 						const totalIn = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
 						const ctx = modelContextWindow(model);
 						if (ctx > 0) lastCtxPct = (totalIn / ctx) * 100;
+						lastCachePct = totalIn > 0 ? (usage.cacheReadTokens / totalIn) * 100 : 0;
 						if (usage.outputTokens > 0 && durationMs > 0) lastTps = (usage.outputTokens / durationMs) * 1000;
 						haveStats = true;
 						renderStats();
