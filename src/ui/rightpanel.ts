@@ -1,8 +1,9 @@
-// Right-hand editor panel with four tabs: the per-pass shader Code editor, the
-// Passes render-graph (the object graph: draggable pass nodes wired by their
-// channel inputs), live Uniform controls (shared across passes), and the
-// iChannel texture bindings for the selected pass. All edits flow through the
-// store.
+// Right-hand editor panel. Tabs: Layers (the back-to-front stack + per-layer
+// geometry), the per-pass shader Code editor, the Passes render-graph (draggable
+// pass nodes wired by their channel inputs), live Uniform controls (shared across
+// passes), the iChannel texture bindings for the selected pass, and Assets (the
+// shared media library -- upload images/videos for the AI to bind). All edits flow
+// through the store.
 
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
@@ -13,7 +14,7 @@ import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
 import type { BuiltinTexture, Channel, ImageAsset, Layer, Pass, PassFormat, Shape, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
-const TABS = ["Layers", "Code", "Passes", "Uniforms", "Textures"] as const;
+const TABS = ["Layers", "Code", "Passes", "Uniforms", "Textures", "Assets"] as const;
 type Tab = (typeof TABS)[number];
 
 /** Pan/zoom of the Passes graph viewport. Persisted across re-renders so wiring
@@ -36,8 +37,9 @@ export function createRightPanel(store: Store): HTMLElement {
 	const passesView = el("div", { class: "passes" });
 	const uniformsView = el("div", { class: "uniforms" });
 	const texturesView = el("div", { class: "textures" });
+	const assetsView = el("div", { class: "assets" });
 
-	const viewFor = (t: Tab): HTMLElement => (t === "Layers" ? layersView : t === "Code" ? codeView.root : t === "Passes" ? passesView : t === "Uniforms" ? uniformsView : texturesView);
+	const viewFor = (t: Tab): HTMLElement => (t === "Layers" ? layersView : t === "Code" ? codeView.root : t === "Passes" ? passesView : t === "Uniforms" ? uniformsView : t === "Textures" ? texturesView : assetsView);
 
 	const renderActive = () => {
 		render(tabBar, ...TABS.map((t) => el("button", { class: `tab${t === active ? " active" : ""}`, on: { click: () => select(t) } }, t)));
@@ -47,6 +49,7 @@ export function createRightPanel(store: Store): HTMLElement {
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
 		if (active === "Uniforms") renderUniforms(store, uniformsView);
 		if (active === "Textures") renderTextures(store, texturesView);
+		if (active === "Assets") renderAssets(store, assetsView);
 	};
 	const select = (t: Tab) => {
 		active = t;
@@ -79,6 +82,7 @@ export function createRightPanel(store: Store): HTMLElement {
 	store.on("assets", () => {
 		if (active === "Textures") renderTextures(store, texturesView);
 		if (active === "Passes") renderGraph(store, passesView, select, graphView);
+		if (active === "Assets") renderAssets(store, assetsView);
 	});
 	store.on("compile", () => codeView.syncLog());
 	// Undo/redo: the "project" handler above already refreshed the other tabs and
@@ -552,12 +556,25 @@ function renderTextures(store: Store, container: HTMLElement): void {
 	);
 }
 
-async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<void> {
+/** De-duplicate an asset name against the existing library so the AI can address
+ * each asset unambiguously (connect_pins resolves asset:<name> by first match). */
+function uniqueAssetName(assets: ImageAsset[], base: string): string {
+	const want = base.trim() || "asset";
+	const taken = new Set(assets.map((a) => a.name.toLowerCase()));
+	if (!taken.has(want.toLowerCase())) return want;
+	let i = 2;
+	while (taken.has(`${want} ${i}`.toLowerCase())) i++;
+	return `${want} ${i}`;
+}
+
+/** Pick a file, probe its dimensions, and add it to the shared asset library
+ * (no channel binding). Returns the new asset, or null if cancelled/too large. */
+async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<ImageAsset | null> {
 	const file = await pickFile(type === "video" ? "video/*" : "image/*");
-	if (!file) return;
+	if (!file) return null;
 	if (type === "video" && file.size > MAX_VIDEO_BYTES) {
 		alert(`Video is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
-		return;
+		return null;
 	}
 	const dataUrl = await fileToDataUrl(file);
 	let width: number;
@@ -571,7 +588,7 @@ async function uploadAndBind(store: Store, passId: string, channel: number, type
 	}
 	const asset: ImageAsset = {
 		id: uid("a_"),
-		name: file.name.replace(/\.[^.]+$/, ""),
+		name: uniqueAssetName(store.assets, file.name.replace(/\.[^.]+$/, "")),
 		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
 		dataUrl,
 		width,
@@ -580,7 +597,63 @@ async function uploadAndBind(store: Store, passId: string, channel: number, type
 		kind: type,
 	};
 	store.addAsset(asset);
+	return asset;
+}
+
+async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<void> {
+	const asset = await pickAndAddAsset(store, type);
+	if (!asset) return;
 	store.connectPin(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
+}
+
+// ---- assets (shared media library) -----------------------------------------
+
+/** Thumbnail for a library asset: an <img> for stills; for video a muted <video>
+ * seeked to an early frame so the card shows a still preview instead of black. */
+function assetThumb(a: ImageAsset): HTMLElement {
+	if (a.kind !== "video") return el("img", { class: "asset-thumb", attrs: { src: a.dataUrl, alt: a.name } });
+	const v = el("video", { class: "asset-thumb", attrs: { playsinline: "", preload: "metadata" } });
+	v.muted = true;
+	v.src = a.dataUrl;
+	v.addEventListener("loadedmetadata", () => {
+		try {
+			v.currentTime = Math.min(0.1, (v.duration || 1) / 2);
+		} catch {
+			/* some browsers reject seeking before canplay; the poster just stays black */
+		}
+	});
+	return v;
+}
+
+function renderAssets(store: Store, container: HTMLElement): void {
+	const assets = store.assets;
+
+	const cards = assets.map((a) => {
+		const nameInput = el("input", { class: "asset-name", type: "text", value: a.name, title: "Rename (the AI binds assets by name)" });
+		nameInput.addEventListener("change", () => store.renameAsset(a.id, nameInput.value));
+
+		const meta = `${a.kind === "video" ? "video" : "image"} · ${a.width}×${a.height} · ${a.source}`;
+		const del = el("button", { class: "btn icon tiny", title: "Delete asset", on: { click: () => { if (confirm(`Delete asset "${a.name}"? It will be removed from every shader that uses it.`)) store.deleteAsset(a.id); } } }, icon("close", { size: 15 }));
+
+		return el(
+			"div",
+			{ class: "asset-card" },
+			el("div", { class: "asset-thumb-wrap" }, assetThumb(a), a.kind === "video" ? el("span", { class: "asset-badge" }, "video") : el("span", {})),
+			el("div", { class: "asset-info" }, el("div", { class: "asset-head" }, nameInput, del), el("div", { class: "asset-meta" }, meta)),
+		);
+	});
+
+	render(
+		container,
+		el("p", { class: "muted small" }, "Shared media library across all your shaders. Upload images or videos; the AI can bind them to a pass input (it sees them via list_assets, and you can wire any input to one in the Textures tab)."),
+		assets.length ? el("div", { class: "asset-grid" }, ...cards) : el("p", { class: "muted" }, "No assets yet. Upload an image or video and the AI can use it."),
+		el(
+			"div",
+			{ class: "asset-actions" },
+			el("button", { class: "btn", on: { click: () => void pickAndAddAsset(store, "image") } }, "+ Upload image"),
+			el("button", { class: "btn", on: { click: () => void pickAndAddAsset(store, "video") } }, "+ Upload video"),
+		),
+	);
 }
 
 // ---- small helpers ---------------------------------------------------------

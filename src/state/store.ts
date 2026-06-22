@@ -745,6 +745,17 @@ export class Store {
 		this.emit("assets", this.assets);
 	}
 
+	/** Rename a library asset. Channels reference assets by id, so existing
+	 * bindings are unaffected; the name is how the AI addresses it (asset:<name>). */
+	renameAsset(id: string, name: string): void {
+		const asset = this.assets.find((a) => a.id === id);
+		const trimmed = name.trim();
+		if (!asset || !trimmed || asset.name === trimmed) return;
+		asset.name = trimmed;
+		void db.saveAsset(asset);
+		this.emit("assets", this.assets);
+	}
+
 	// ---- settings -----------------------------------------------------------
 
 	updateSettings(patch: Partial<Settings>): void {

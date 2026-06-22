@@ -159,13 +159,16 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
   splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
-  has five tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, a
+  has six tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, a
   per-row mask button + an "editing mask" banner, add layers, and a per-layer
   geometry editor: add quad/circle + edit position/size/rotation/colour/corner/
   falloff), **Code** (the selected pass in the active layer),
   **Passes** (the active layer's object graph — draggable pass nodes wired by their
   inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
-  selected pass's inputs). The Code/Passes/Textures tabs are scoped to the active
+  selected pass's inputs), and **Assets** (the shared media library — upload
+  images/videos with no channel binding, rename/delete; `store.renameAsset`, and
+  the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
+  The Code/Passes/Textures tabs are scoped to the active
   layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
   canvas: an overlay that (in "edit mode" = active layer has shapes) hit-tests the
   active layer's shapes and draws a selection box + corner resize handles + a
