@@ -7,7 +7,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
-import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
+import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
 import type { BuiltinTexture, Channel, ImageAsset, Layer, Pass, PassFormat, Shape, Uniform, UniformType } from "../state/types.ts";
@@ -571,7 +571,7 @@ async function uploadAndBind(store: Store, passId: string, channel: number, type
 	}
 	const asset: ImageAsset = {
 		id: uid("a_"),
-		name: file.name.replace(/\.[^.]+$/, ""),
+		name: sanitizeAssetName(file.name.replace(/\.[^.]+$/, "")) || "asset",
 		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
 		dataUrl,
 		width,
