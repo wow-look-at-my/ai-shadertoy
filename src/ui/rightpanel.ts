@@ -11,6 +11,7 @@ import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
+import { layoutGraph, type NodePos } from "./graphlayout.ts";
 import type { BuiltinTexture, Channel, ImageAsset, Layer, Pass, PassFormat, Shape, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -178,11 +179,26 @@ const NODE_W = 196;
 const HEADER_H = 30;
 const ROW_H = 26;
 const ADDROW_H = 24;
+// Auto-layout spacing: the DAG is laid out left-to-right in dependency columns.
+const COL_GAP = 64; // horizontal gap between columns
+const ROW_GAP = 28; // vertical gap between stacked nodes in a column
+const GRAPH_MARGIN = 28; // padding before the first column/row
 
 // Per-node geometry (input count varies, so heights/ports are computed).
 const inPortY = (i: number): number => HEADER_H + ROW_H / 2 + i * ROW_H;
 const outPortY = (pass: Pass): number => HEADER_H + (Math.max(pass.channels.length, 1) * ROW_H) / 2;
 const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + ADDROW_H + 6;
+
+/** Auto-layout the active layer's passes: a left-to-right layered DAG layout
+ * derived purely from the pass->pass edges (no stored coordinates). */
+function layoutPasses(passes: Pass[]): Map<string, NodePos> {
+	const nodes = passes.map((p) => ({
+		id: p.id,
+		deps: p.channels.filter((c) => c.kind === "pass" && c.passId).map((c) => c.passId!),
+		height: nodeHeight(p),
+	}));
+	return layoutGraph(nodes, { nodeWidth: NODE_W, hGap: COL_GAP, vGap: ROW_GAP, margin: GRAPH_MARGIN });
+}
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 2.5;
@@ -199,17 +215,18 @@ function zoomAt(view: GraphView, cx: number, cy: number, factor: number): void {
 }
 
 /** Frame all nodes within the container. */
-function fitView(view: GraphView, passes: Pass[], graph: HTMLElement): void {
+function fitView(view: GraphView, passes: Pass[], pos: Map<string, NodePos>, graph: HTMLElement): void {
 	if (!passes.length) return;
 	let minX = Infinity,
 		minY = Infinity,
 		maxX = -Infinity,
 		maxY = -Infinity;
 	for (const p of passes) {
-		minX = Math.min(minX, p.x);
-		minY = Math.min(minY, p.y);
-		maxX = Math.max(maxX, p.x + NODE_W);
-		maxY = Math.max(maxY, p.y + nodeHeight(p));
+		const at = pos.get(p.id) ?? { x: GRAPH_MARGIN, y: GRAPH_MARGIN };
+		minX = Math.min(minX, at.x);
+		minY = Math.min(minY, at.y);
+		maxX = Math.max(maxX, at.x + NODE_W);
+		maxY = Math.max(maxY, at.y + nodeHeight(p));
 	}
 	const pad = 36;
 	const cw = graph.clientWidth || 600;
@@ -221,11 +238,13 @@ function fitView(view: GraphView, passes: Pass[], graph: HTMLElement): void {
 
 function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => void, view: GraphView): void {
 	const passes = store.activeLayer().passes;
+	const pos = layoutPasses(passes);
+	const at = (id: string): NodePos => pos.get(id) ?? { x: GRAPH_MARGIN, y: GRAPH_MARGIN };
 	const viewport = el("div", { class: "graph-viewport" });
 
 	// Edges (SVG) behind the nodes, inside the transformed viewport.
-	const w = Math.max(640, ...passes.map((p) => p.x + NODE_W + 60));
-	const h = Math.max(360, ...passes.map((p) => p.y + nodeHeight(p) + 60));
+	const w = Math.max(640, ...passes.map((p) => at(p.id).x + NODE_W + 60));
+	const h = Math.max(360, ...passes.map((p) => at(p.id).y + nodeHeight(p) + 60));
 	const svgNS = "http://www.w3.org/2000/svg";
 	const svg = document.createElementNS(svgNS, "svg");
 	svg.setAttribute("class", "graph-edges");
@@ -236,14 +255,16 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 	const drawEdges = (): void => {
 		while (svg.firstChild) svg.removeChild(svg.firstChild);
 		for (const tgt of passes) {
+			const tp = at(tgt.id);
 			tgt.channels.forEach((c, i) => {
 				if (c.kind !== "pass" || !c.passId) return;
 				const src = byId.get(c.passId);
 				if (!src) return;
-				const sx = src.x + NODE_W;
-				const sy = src.y + outPortY(src);
-				const tx = tgt.x;
-				const ty = tgt.y + inPortY(i);
+				const sp = at(src.id);
+				const sx = sp.x + NODE_W;
+				const sy = sp.y + outPortY(src);
+				const tx = tp.x;
+				const ty = tp.y + inPortY(i);
 				const path = document.createElementNS(svgNS, "path");
 				const dx = Math.max(40, Math.abs(tx - sx) * 0.5);
 				path.setAttribute("d", `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`);
@@ -253,7 +274,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		}
 	};
 
-	for (const pass of passes) viewport.appendChild(buildNode(store, pass, select, () => drawEdges(), view));
+	for (const pass of passes) viewport.appendChild(buildNode(store, pass, at(pass.id), select));
 	viewport.insertBefore(svg, viewport.firstChild);
 	drawEdges();
 
@@ -315,23 +336,23 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		{ class: "graph-toolbar" },
 		el("button", { class: "btn tiny", on: { click: () => store.addPass("Pass", "") } }, "+ Add pass"),
 		el("span", { class: "muted small" }, `layer: ${store.activeLayer().name}`),
-		el("span", { class: "muted small graph-hint" }, "scroll = pan · ctrl/⌘+scroll or pinch = zoom · drag = pan"),
+		el("span", { class: "muted small graph-hint" }, "auto-arranged · scroll/drag = pan · ctrl/⌘+scroll or pinch = zoom"),
 		el("span", { class: "spacer" }),
 		zoomBtn("−", "Zoom out", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1 / 1.2)),
 		zoomLabel,
 		zoomBtn("+", "Zoom in", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1.2)),
-		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, graph); applyTransform(); } } }, "Fit"),
+		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, pos, graph); applyTransform(); } } }, "Fit"),
 	);
 
 	render(container, toolbar, graph);
 }
 
-function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireChange: () => void, view: GraphView): HTMLElement {
+function buildNode(store: Store, pass: Pass, pos: NodePos, select: (t: Tab) => void): HTMLElement {
 	const isOutput = pass.id === store.activeLayer().outputPassId;
 	const selected = pass.id === store.selectedPassId;
 	const node = el("div", { class: `graph-node${selected ? " selected" : ""}${isOutput ? " output" : ""}` });
-	node.style.left = `${pass.x}px`;
-	node.style.top = `${pass.y}px`;
+	node.style.left = `${pos.x}px`;
+	node.style.top = `${pos.y}px`;
 
 	const nameEl = el("span", { class: "gn-name" }, pass.name);
 	const editBtn = el("button", { class: "btn icon tiny", title: "Edit this pass's code", on: { click: () => { store.selectPass(pass.id); select("Code"); } } }, icon("wrench", { size: 13 }));
@@ -339,8 +360,8 @@ function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireCha
 	const delBtn = el("button", { class: "btn icon tiny", title: "Delete pass", on: { click: () => { const r = store.removePass(pass.id); if (!r.ok && r.error) alert(r.error); } } }, icon("close", { size: 14 }));
 
 	const header = el("div", { class: "gn-head" }, nameEl, el("span", { class: "spacer" }), editBtn, outBtn, delBtn);
-	header.addEventListener("pointerdown", (e) => startDrag(store, pass, node, e, onWireChange, view));
-	// Rename inline on double-click.
+	// Nodes are auto-positioned (no dragging). Click the name/header to select the
+	// pass; double-click the name to rename.
 	nameEl.addEventListener("dblclick", () => beginRename(store, pass, nameEl));
 	header.addEventListener("click", (e) => {
 		if (e.target === nameEl || e.target === header) store.selectPass(pass.id);
@@ -374,34 +395,6 @@ function beginRename(store: Store, pass: Pass, nameEl: HTMLElement): void {
 		if (e.key === "Escape") { input.value = pass.name; input.blur(); }
 	});
 	input.addEventListener("blur", commit);
-}
-
-function startDrag(store: Store, pass: Pass, node: HTMLElement, e: PointerEvent, onMove: () => void, view: GraphView): void {
-	if ((e.target as HTMLElement).closest("button, select, input")) return;
-	e.preventDefault();
-	const startX = e.clientX;
-	const startY = e.clientY;
-	const baseX = pass.x;
-	const baseY = pass.y;
-	let curX = baseX;
-	let curY = baseY;
-	const move = (ev: PointerEvent): void => {
-		// Screen deltas are in zoomed pixels; convert to graph units.
-		curX = Math.max(0, baseX + (ev.clientX - startX) / view.zoom);
-		curY = Math.max(0, baseY + (ev.clientY - startY) / view.zoom);
-		node.style.left = `${curX}px`;
-		node.style.top = `${curY}px`;
-		pass.x = curX;
-		pass.y = curY;
-		onMove();
-	};
-	const up = (): void => {
-		window.removeEventListener("pointermove", move);
-		window.removeEventListener("pointerup", up);
-		store.movePass(pass.id, curX, curY);
-	};
-	window.addEventListener("pointermove", move);
-	window.addEventListener("pointerup", up);
 }
 
 // ---- shared channel <select> -----------------------------------------------

@@ -492,8 +492,7 @@ export class Store {
 
 	addPass(name: string, source = "", format: PassFormat = "rgba8", layerId?: string): Pass {
 		const layer = (layerId && this.layerById(layerId)) || this.activeLayer();
-		const x = layer.passes.reduce((m, p) => Math.max(m, p.x), 0);
-		const pass = makePass(uniquePassName(layer.passes, name), source, undefined, x ? x - 240 : 40, 60 + layer.passes.length * 30);
+		const pass = makePass(uniquePassName(layer.passes, name), source);
 		pass.format = format;
 		layer.passes.unshift(pass);
 		this.selectedLayerId = layer.id;
@@ -556,16 +555,6 @@ export class Store {
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.commit(`Set ${pass.name} format`, `format:${passId}`);
-		this.touch();
-	}
-
-	/** Persist a graph-node position (no recompile, no re-render of views). */
-	movePass(passId: string, x: number, y: number): void {
-		const pass = this.passById(passId);
-		if (!pass) return;
-		pass.x = x;
-		pass.y = y;
-		this.commit("Move pass", `move:${passId}`, true);
 		this.touch();
 	}
 

@@ -130,7 +130,8 @@ npm run build         # ts0 build -> dist/index.html
   drawn back→front; each `Layer` has its own `passes: Pass[]` + `outputPassId`
   (its composite) **plus** `shapes: Shape[]` (geometry), and `visible`/`opacity`.
   A `Pass` has `source`, a variable-length `channels: Channel[]` (up to
-  `MAX_INPUTS`), `format`, and graph-editor `x`/`y`; a `Channel` `kind` is
+  `MAX_INPUTS`), and `format` (no stored graph position — the Passes view
+  auto-lays the DAG out from its edges, see `ui/graphlayout.ts`); a `Channel` `kind` is
   `none|under|geometry|mask|builtin|pass|video|webcam` (`under`/`geometry`/`mask` are
   layer-ambient — no extra fields; `pass`+`passId` is a same-layer edge). A `Shape`
   is `{kind, x, y, w, h, rotation, color, cornerRadius, feather, falloff}` in
@@ -173,8 +174,10 @@ npm run build         # ts0 build -> dist/index.html
   per-row mask button + an "editing mask" banner, add layers, and a per-layer
   geometry editor: add quad/circle + edit position/size/rotation/colour/corner/
   falloff), **Code** (the selected pass in the active layer),
-  **Passes** (the active layer's object graph — draggable pass nodes wired by their
-  inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
+  **Passes** (the active layer's object graph — pass nodes wired by their
+  inputs, incl. `under`/`geometry`; the DAG is **auto-laid-out** left→right in
+  dependency columns by `graphlayout.ts` and nodes are NOT draggable — only
+  pan/zoom/fit the view), **Uniforms** (shared), **Textures** (the
   selected pass's inputs), and **Assets** (the shared media library — upload
   images/videos with no channel binding, rename/delete; `store.renameAsset`, and
   the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
