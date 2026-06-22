@@ -1,229 +1,195 @@
 # ai-shadertoy -> GLES2 shader export
 
-This folder is a **standalone export** of an ai-shadertoy project dump, ported to
-**GLSL ES 1.00 (OpenGL ES 2.0)** so the shaders drop straight into a GLES2 C++
-renderer. It is self-contained and has nothing to do with the parent web app's
-build -- it is a scratch deliverable on a throwaway branch.
+A **standalone, integration-ready** export of an ai-shadertoy project dump,
+ported to **OpenGL ES 2.0 / GLSL ES 1.00**. It ships:
 
-Every fragment shader here has been compile-checked as GLSL ES 1.00 with
-`glslangValidator` (and a negative control confirms the validator rejects
-GLES3-only constructs under `#version 100`, so the pass is meaningful).
+* the shaders, ported and **pruned** (each pass declares only the uniforms and
+  channels it actually references -- nothing unused),
+* a **drop-in C++ GLES2 renderer** (`cpp/shadertoy_gles2.h`) plus a generated
+  data header that bakes in the shaders, the multi-pass graph and the uniform
+  defaults, and
+* a headless demo that builds and **renders every project to a PNG** -- so this
+  isn't "trust me, it compiles," it's proven (see `cpp/`).
+
+Nothing here touches the parent web app's build; it's a self-contained folder.
 
 ## What's inside
 
 ```
 gles2-export/
-  README.md              <- you are here
-  extract.sh             <- the jq-driven generator that produced everything below
-  source-export.json     <- the raw ai-shadertoy export this was generated from
-  common/
-    fullscreen.vert      <- shared GLSL ES 1.00 fullscreen vertex shader
+  README.md
+  extract.sh             <- jq-driven generator (re-derives everything below)
+  source-export.json     <- the raw ai-shadertoy export it was generated from
+  common/fullscreen.vert <- shared GLSL ES 1.00 vertex shader
   assets/
-    assets.json          <- media library metadata (id, name, size, type)
+    assets.json          <- media metadata (id, name, size, type)
     a_8zsbfeg3tq08.png   <- decoded image asset (952x826)
     a_iwgolupk25fp.mp4   <- decoded video asset (640x360)
-  map_bg/                <- project 1 (single pass)
-    manifest.json
-    image.frag
-  map_bg_copy/           <- project 2 (6-pass blur compositing graph)
-    manifest.json
-    cover.frag  blurx.frag  blury.frag  markblurx.frag  markblury.frag  image.frag
-  untitled_shader/       <- project 3 (single pass, kaleidoscopic plasma)
-    manifest.json
-    image.frag
+  map_bg/         manifest.json + image.frag                         (1 pass)
+  map_bg_copy/    manifest.json + 6 .frag (cover/blur*/mark*/image)  (6 passes)
+  untitled_shader/manifest.json + image.frag                         (1 pass)
+  cpp/
+    shadertoy_gles2.h        <- reusable renderer (single-header, drop-in)
+    shadertoy_export.gen.h   <- GENERATED: embedded shaders + pass graph + uniforms
+    demo.cpp                 <- headless EGL example -> PNG per project
+    Makefile
+    third_party/stb_image.h, stb_image_write.h   (public domain, for the demo)
 ```
 
-Each project's `manifest.json` is the integration contract: it lists the
-**render order**, the **output pass**, every pass's **input-channel wiring**
-(`iChannel0..N`), and the **custom uniforms with their default values**.
+## The three projects
 
-## The three projects at a glance
-
-| Folder | Passes | Inputs | Output | Gist |
-|---|---|---|---|---|
-| `map_bg/` | 1 | image x1 | `image.frag` | Map image over a procedural animated backdrop; background frosted, road markings kept sharp. |
-| `map_bg_copy/` | 6 | image x1, video x1 | `image.frag` | Same idea but the backdrop is a **video**, blurred through a separable BlurX/BlurY chain (+ a lighter MarkBlur chain). |
-| `untitled_shader/` | 1 | none | `image.frag` | Self-contained Phong-lit kaleidoscopic fractal plasma. No textures needed. |
-
-## How a ported shader is structured
-
-The original app wraps a Shadertoy-style `mainImage(out vec4 fragColor, in vec2
-fragCoord)` in a `#version 300 es` program. Each `.frag` here reproduces that
-wrapper for **GLSL ES 1.00** instead:
-
-* `#version 100` + a `GL_FRAGMENT_PRECISION_HIGH` precision guard.
-* `texture(...)` rewritten to `texture2D(...)` (the only sampler call used).
-* The built-in + channel + custom uniforms declared in a header.
-* A generated `main()` that calls `mainImage()` and writes `gl_FragColor`.
-
-You compile each `.frag` against `common/fullscreen.vert`. The fragment shaders
-read `gl_FragCoord` directly, so the vertex shader only needs to place a
-fullscreen primitive -- no varyings.
-
-## The uniform contract (set these from your render loop)
-
-These are the Shadertoy built-ins every pass declares. Set the ones the shader
-uses; harmless to set them all.
-
-| Uniform | GL type | Set with | Meaning / how to compute |
+| Folder | Passes | Inputs | Gist |
 |---|---|---|---|
-| `iResolution` | `vec3` | `glUniform3f` | Render-target size in px: `(width, height, 1.0)`. `.z` is pixel aspect; use `1.0`. |
-| `iTime` | `float` | `glUniform1f` | Seconds since start. |
-| `iTimeDelta` | `float` | `glUniform1f` | Seconds since previous frame. |
-| `iFrameRate` | `float` | `glUniform1f` | Frames per second (e.g. `60.0`). |
-| `iFrame` | `int` | `glUniform1i` | Integer frame counter. |
-| `iMouse` | `vec4` | `glUniform4f` | `(x, y, clickX, clickY)` in px; `xy` valid while pressed. Pass `(0,0,0,0)` if unused. |
-| `iDate` | `vec4` | `glUniform4f` | `(year, month, day, secondsInDay)`. Pass zeros if unused. |
-| `iChannel0..N-1` | `sampler2D` | `glUniform1i` | Texture unit index the channel's texture is bound to. |
-| `iChannelResolution[N]` | `vec3[]` | `glUniform3fv` | Per-channel source size in px: `(w, h, 1.0)`. For image/video = the media size; for a pass input = that pass's render-target size. |
+| `map_bg/` | 1 | image | Map image over a procedural animated backdrop; background frosted, road markings kept sharp. |
+| `map_bg_copy/` | 6 | image, video | Same idea, backdrop is a **video** blurred through a separable BlurX/BlurY chain (+ a lighter Mark chain) and composited. |
+| `untitled_shader/` | 1 | none | Self-contained Phong-lit kaleidoscopic fractal plasma. No textures. |
 
-The **custom uniforms** (`u_*`) are project-specific UI controls, **shared across
-every pass of a project**. Their names, GLSL types and **default values** live in
-each `manifest.json` under `customUniforms[]` (`type: "color"` means a `vec3`;
-`value` is the default the app was last using). Set them once per project.
+---
 
-## Recipe 1 -- a single-pass project (`map_bg`, `untitled_shader`)
+## Option A: use the C++ renderer (the easy path)
 
-```c
-// once:
-GLuint prog = link(compile(GL_VERTEX_SHADER,   read("common/fullscreen.vert")),
-                   compile(GL_FRAGMENT_SHADER, read("untitled_shader/image.frag")));
-GLint aPos = glGetAttribLocation(prog, "aPosition");
-// fullscreen triangle in clip space
-const float tri[] = { -1.f,-1.f,  3.f,-1.f,  -1.f,3.f };
-GLuint vbo; glGenBuffers(1,&vbo); glBindBuffer(GL_ARRAY_BUFFER,vbo);
-glBufferData(GL_ARRAY_BUFFER,sizeof(tri),tri,GL_STATIC_DRAW);
+Two files are all you need in your project: **`cpp/shadertoy_gles2.h`** (the
+engine) and **`cpp/shadertoy_export.gen.h`** (the data). You provide a current
+GLES2 context and a decoded texture for each image/video asset.
 
-// per frame:
-glViewport(0,0,W,H);
-glUseProgram(prog);
-glUniform3f(glGetUniformLocation(prog,"iResolution"), (float)W,(float)H,1.f);
-glUniform1f(glGetUniformLocation(prog,"iTime"), t);
-// ...set the u_* custom uniforms from manifest.json defaults...
-glEnableVertexAttribArray(aPos);
-glVertexAttribPointer(aPos,2,GL_FLOAT,GL_FALSE,0,0);
-glDrawArrays(GL_TRIANGLES,0,3);   // draws straight to the screen
+```cpp
+#define SHADERTOY_GLES2_IMPLEMENTATION      // in exactly one .cpp
+#include "shadertoy_gles2.h"
+#include "shadertoy_export.gen.h"
+
+// 1. Decode each asset (ST_ASSETS[i]) into a GL texture you own:
+StAssetTex assets[ST_ASSET_COUNT];
+// assets[i] = { glTextureId, widthPx, heightPx };   // see demo.cpp
+
+// 2. Pick a project and initialize at your viewport size:
+StRenderer r;
+stRendererInit(&r, &ST_PROJECTS[/*index*/2], ST_VERTEX_SRC, assets, W, H);
+
+// 3. Each frame:
+r.iTime = seconds; r.iFrame = frame;
+stRenderFrame(&r);                 // renders all passes in topological order
+// show it on screen:
+glBindFramebuffer(GL_FRAMEBUFFER, 0);
+glViewport(0, 0, W, H);
+stPresent(&r, stRendererOutput(&r));
+// (on resize: stRendererResize(&r, W, H);  on exit: stRendererDestroy(&r);)
 ```
 
-`untitled_shader` samples no textures (its 3 channels are `none`); you can ignore
-`iChannel*` entirely. `map_bg` samples the map image on `iChannel0`/`iChannel1`
-(both bound to the same PNG) -- see Recipe 3 for texture setup. Its `iChannel2/3`
-are `none` and can stay unbound.
+That's it -- the renderer creates one program + one RGBA8 FBO per pass, wires
+each `iChannelN` to the right pass output or asset texture, sets `iResolution`/
+`iTime`/the custom `u_*` uniforms (by name; a pass that doesn't use one just
+ignores it), and renders in the correct order. `forceClampWrap` (default on)
+keeps NPOT textures framebuffer-complete on real GLES2 hardware.
 
-## Recipe 2 -- a multi-pass project (`map_bg_copy`)
+### Build & run the demo (the proof)
 
-Each pass renders into its **own framebuffer-sized texture**; later passes sample
-earlier passes as `iChannelN`. Follow `manifest.json`:
-
-* `renderOrder`: `Cover -> MarkBlurX -> BlurX -> MarkBlurY -> BlurY -> Image`
-  (a valid topological order; every input is rendered before its consumer).
-* `outputPass`: `Image` -- after rendering all passes, blit/draw this pass's
-  texture to the screen (or simply render the last pass directly to the default
-  framebuffer).
-* Per-pass `channels[]`: what to bind to each `iChannelN` (`fromPass` = sample
-  another pass's texture; `asset` = sample a media file).
-
-Dependency graph:
-
-```
-            video asset (a_iwgolupk25fp)
-                     |
-                  [Cover]
-                  /     \
-            [BlurX]     [MarkBlurX]
-               |             |
-            [BlurY]     [MarkBlurY]
-               \             /
-   image asset  \           /
- (a_8zsbfeg3..)  v         v
-        \----> [Image] <---/        (iChannel0=image, iChannel1=video,
-                  |                   iChannel2=BlurY, iChannel3=MarkBlurY)
-               screen
+```sh
+cd cpp
+sudo apt-get install -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri  # once
+make
+LIBGL_ALWAYS_SOFTWARE=1 ./demo 960x600 2.0     # renders render_<project>.png for each
 ```
 
-Sketch:
+The demo spins up a headless (surfaceless EGL) GLES2 context, loads the PNG
+asset with stb_image, substitutes a placeholder for the undecodable video,
+renders all three projects and writes a PNG each. It is an example you can
+delete -- the renderer and the data header are the reusable parts.
 
-```c
-// once: create one FBO + one RGBA8 texture per pass, all sized to the viewport.
-GLuint makeTarget(int W,int H){
-    GLuint tex; glGenTextures(1,&tex); glBindTexture(GL_TEXTURE_2D,tex);
-    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,W,H,0,GL_RGBA,GL_UNSIGNED_BYTE,0);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE); // NPOT-safe
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    return tex;
-}
-// per frame, for each pass in renderOrder:
-//   glBindFramebuffer(GL_FRAMEBUFFER, passFBO);   // output pass -> 0 (screen)
-//   glUseProgram(passProg);
-//   set iResolution/iTime/... and the u_* uniforms
-//   for each channel: glActiveTexture(GL_TEXTURE0+i); glBindTexture(GL_TEXTURE_2D, srcTex);
-//                     glUniform1i(iChannelI, i);
-//                     set iChannelResolution[i] = (srcW, srcH, 1)
-//   draw the fullscreen triangle
+> The video asset is real `.mp4` footage; GLES2 has no video texture. Decode
+> frames with your platform decoder (FFmpeg / MediaCodec / AVFoundation) and
+> upload the current frame into that asset's texture each tick (the web app does
+> exactly this with a `<video>`). The demo uses a placeholder so the 6-pass
+> graph still renders end to end.
+
+---
+
+## Option B: use the raw shaders + manifests yourself
+
+If you have your own renderer, ignore `cpp/` and consume the `.frag` files and
+each project's **`manifest.json`** directly. The manifest is the contract:
+
+* `renderOrder` -- the topological order to render passes each frame.
+* `outputPass` / `outputPassFile` -- the pass whose texture you present.
+* per pass: `usesUniforms`, and `channels[]` (only the channels the shader
+  samples), each resolved to a `fromPass` (sample that pass's texture) or an
+  `asset` (with `assetFile` + `assetSize`).
+* `customUniforms` -- the project-wide controls with their default `value`.
+
+Each `.frag` pairs with `common/fullscreen.vert` (a fullscreen triangle; the
+fragment shaders read `gl_FragCoord`, so no varyings are needed).
+
+`map_bg_copy` dependency graph (rendered in this order):
+
+```
+video -> [Cover] -> [BlurX] -> [BlurY] ---\
+                 \-> [MarkBlurX] -> [MarkBlurY] -\
+image ----------------------------------> [Image] -> screen
+  (Image: iChannel0=image, iChannel1=video, iChannel2=BlurY, iChannel3=MarkBlurY)
 ```
 
-Because the format is `rgba8`, allocate targets as `GL_RGBA` / `GL_UNSIGNED_BYTE`.
-All passes share one viewport size, so all `iChannelResolution` entries for
-`fromPass` inputs are `(W, H, 1)`; for `asset` inputs use the media size from the
-manifest (`assetSize`).
+## The uniform contract
 
-## Recipe 3 -- textures, sampler state, and the NPOT gotcha
+Shadertoy built-ins each pass may declare (the renderer sets these for you):
 
-Channel `filter` (`linear`/`nearest`) and `wrap` (`repeat`/`clamp`) map to:
-
-| manifest | GL min/mag filter | GL wrap |
+| Uniform | GL type | Meaning |
 |---|---|---|
-| `linear` | `GL_LINEAR` | -- |
-| `nearest` | `GL_NEAREST` | -- |
-| `repeat` | -- | `GL_REPEAT` |
-| `clamp` | -- | `GL_CLAMP_TO_EDGE` |
+| `iResolution` | `vec3` | render-target size px, `(w, h, 1.0)` |
+| `iTime` | `float` | seconds |
+| `iTimeDelta` | `float` | seconds since previous frame |
+| `iFrameRate` | `float` | fps |
+| `iFrame` | `int` | frame index |
+| `iMouse` | `vec4` | `(x, y, clickX, clickY)` px |
+| `iDate` | `vec4` | `(year, month, day, secondsInDay)` |
+| `iChannel0..N` | `sampler2D` | input textures (bind unit = channel index) |
+| `iChannelResolution[i]` | `vec3[]` | source size of `iChannelI`, `(w, h, 1.0)` |
 
-**Important GLES2 caveat:** OpenGL ES 2.0 only supports `GL_REPEAT` / mipmaps on
-**power-of-two** textures. The image (952x826), the video (640x360) and the
-viewport-sized pass targets are all **NPOT**. If you set `GL_REPEAT` on an NPOT
-texture without the `GL_OES_texture_npot` extension, the texture is *incomplete*
-and samples as **black**. These shaders keep all UVs inside `[0,1]` (aspect-fit
-math), so `repeat` vs `clamp` is visually irrelevant here -- **use
-`GL_CLAMP_TO_EDGE` and `GL_LINEAR` (no mipmaps) for every texture** unless you
-know `GL_OES_texture_npot` is available. (The manifest preserves the original
-`wrap: "repeat"` for fidelity; clamp is the safe GLES2 substitute.)
+Custom `u_*` uniforms are project-wide controls (same name = same value across
+passes); `type: "color"` is a `vec3`. Defaults are in `manifest.json` /
+`ST_UNIFORMS_*`.
 
-Loading the **image** asset: decode `assets/a_8zsbfeg3tq08.png` with your image
-loader (stb_image etc.) and `glTexImage2D` it as `GL_RGBA`.
+## GLES2 caveats (important for real hardware)
 
-Loading the **video** asset (`map_bg_copy` only): `assets/a_iwgolupk25fp.mp4` is
-real footage. GLES2 has no video texture -- decode frames with your platform
-decoder (FFmpeg, MediaCodec, AVFoundation...) and `glTexSubImage2D` the current
-frame into a texture each tick, exactly as the web app re-uploads `<video>`
-frames. For a quick static test, upload any single decoded frame (or a placeholder
-colour) -- the graph still renders, just without motion.
+* **NPOT textures.** The image (952x826), video (640x360) and viewport-sized
+  pass targets are non-power-of-two. Plain GLES2 renders NPOT + `GL_REPEAT` (or
+  mipmaps) as **black**. These shaders keep UVs in `[0,1]`, so use
+  `GL_CLAMP_TO_EDGE` + `GL_LINEAR` (no mipmaps) -- which the renderer does by
+  default (`forceClampWrap`). The manifests preserve the original `wrap` values
+  for fidelity; clamp is the safe substitute unless you have
+  `GL_OES_texture_npot`.
+* **`highp` in fragment shaders** isn't guaranteed on GLES2; every `.frag`
+  guards it with `#ifdef GL_FRAGMENT_PRECISION_HIGH` and falls back to `mediump`.
+* **Render targets are `rgba8`** -- allocate FBO textures as `GL_RGBA` /
+  `GL_UNSIGNED_BYTE`.
 
-## Regenerating
+## How it was generated
 
-Everything except this README was produced by `extract.sh`, which traverses the
-dump with `jq`:
+`extract.sh` traverses the dump with `jq` and regenerates **everything** except
+the hand-written `cpp/shadertoy_gles2.h`, `cpp/demo.cpp`, `cpp/Makefile` and
+`cpp/third_party/`:
 
 ```sh
 ./extract.sh                      # uses ./source-export.json
-./extract.sh path/to/other.json   # or point it at another ai-shadertoy export
+./extract.sh path/to/other.json   # or another ai-shadertoy export
 ```
 
-It re-derives the GLES2 fragment shaders, decodes the assets, computes each
-project's topological render order, and writes the manifests. Requires `jq`,
-`perl` and `base64` (all standard).
+For each pass it strips comments + inline `uniform` decls, probes which
+built-ins / `iChannelN` / `u_*` the body actually references, and emits only
+those -- so the shaders, the manifests' `usesUniforms`/`channels`, and the
+generated C++ tables all agree and carry nothing unused. Requires `jq`, `perl`,
+`base64`.
 
-## What was and wasn't translated
+## Porting notes
 
-* **Translated:** version directive, precision, `texture()` -> `texture2D()`,
-  fragment output (`gl_FragColor`), inline `uniform` declarations folded into the
-  header. These shaders use only GLES2-safe features (constant-bound loops,
-  `mat2`, standard built-ins) -- no integer/bitwise ops, no `textureLod`/
-  `textureGrad`/derivatives, no MRT -- so the ports are faithful.
-* **Not translated (your renderer's job):** geometry/FBO/texture plumbing, video
-  decoding, and the uniform *values* beyond the documented defaults. The app's
-  layer/mask/geometry compositing features are unused by these three projects
-  (each is a single base layer with no shapes or masks), so nothing there was
-  dropped.
+* **Translated for GLES2:** `#version 100` + precision guard, `texture()` ->
+  `texture2D()`, fragment output via `gl_FragColor`, inline `uniform` decls
+  folded into the header, and per-pass pruning of unused declarations.
+* **Faithful:** these shaders use only GLES2-safe features (constant-bound
+  loops, `mat2`, standard built-ins) -- no integer/bitwise ops, no
+  `textureLod`/`textureGrad`/derivatives, no MRT.
+* **Verified:** every shader compiles as GLSL ES 1.00 (`glslangValidator`, with
+  a negative control), zero declared-but-unused uniforms, and the C++ demo
+  builds clean and renders all three projects headlessly.
+* **Out of scope (your renderer's job):** video decoding and feedback passes
+  (none of these projects use pass feedback). The app's layer/mask/geometry
+  compositing is unused here -- each project is a single base layer.
 ```
