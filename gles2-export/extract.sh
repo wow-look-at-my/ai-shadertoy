@@ -36,17 +36,6 @@ slug() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_
 # --- map a uniform type to its GLSL type (color is a vec3) -------------------
 # (kept in sync with glslType() in src/gl/wrapper.ts)
 
-# --- per-project custom-uniform declarations (header block) ------------------
-# Reads .projects[$p].uniforms and emits "uniform <type> <name>;" lines.
-uniform_decls() {
-	local p="$1"
-	jq -r --argjson p "$p" '
-		def gt: if . == "color" then "vec3" else . end;
-		.projects[$p].uniforms[]
-		| "uniform \(.type|gt) \(.name);"
-	' "$f"
-}
-
 # --- transform a Shadertoy mainImage body for GLSL ES 1.00 -------------------
 # 1. strip inline custom-uniform declarations (the header re-adds them), using
 #    the same shape as CUSTOM_UNIFORM_RE in src/gl/wrapper.ts.
@@ -58,22 +47,65 @@ gles2_body() {
 	'
 }
 
+# canonical Shadertoy built-in declarations (emitted only when referenced).
+builtin_decl() {
+	case "$1" in
+		iResolution) echo 'uniform vec3  iResolution;        // viewport resolution in px (z = pixel aspect, use 1.0)';;
+		iTime)       echo 'uniform float iTime;              // playback time in seconds';;
+		iTimeDelta)  echo 'uniform float iTimeDelta;         // seconds since the previous frame';;
+		iFrameRate)  echo 'uniform float iFrameRate;         // frames per second';;
+		iFrame)      echo 'uniform int   iFrame;             // playback frame index';;
+		iMouse)      echo 'uniform vec4  iMouse;             // xy = current px (while pressed), zw = last click px';;
+		iDate)       echo 'uniform vec4  iDate;              // (year, month, day, seconds-in-day)';;
+	esac
+}
+
+# strip GLSL comments so identifier-usage probes don't fire on prose.
+strip_comments() { perl -0777 -pe 's{//[^\n]*}{}g; s{/\*.*?\*/}{}gs'; }
+
 # --- assemble one complete GLSL ES 1.00 fragment shader for a pass -----------
-# args: project-index pass-index out-file
+# Only the built-ins, channels and custom uniforms the body actually references
+# are declared, so nothing ships unused. args: project-index pass-index out-file
 emit_frag() {
 	local p="$1" q="$2" out="$3"
-	local pname projname chans fmt
+	local pname projname chans fmt body probe
 	pname=$(jq -r --argjson p "$p" --argjson q "$q" '.projects[$p].layers[0].passes[$q].name' "$f")
 	projname=$(jq -r --argjson p "$p" '.projects[$p].name' "$f")
 	chans=$(jq -r --argjson p "$p" --argjson q "$q" '.projects[$p].layers[0].passes[$q].channels | length' "$f")
 	fmt=$(jq -r --argjson p "$p" --argjson q "$q" '.projects[$p].layers[0].passes[$q].format' "$f")
+	body=$(jq -r --argjson p "$p" --argjson q "$q" '.projects[$p].layers[0].passes[$q].source' "$f" | gles2_body)
+	probe=$(printf '%s' "$body" | strip_comments)
+	uses() { grep -qw -- "$1" <<<"$probe"; }
+
+	# built-ins referenced (canonical order)
+	local b; local -a used_builtins=()
+	for b in iResolution iTime iTimeDelta iFrameRate iFrame iMouse iDate; do
+		uses "$b" && used_builtins+=("$b")
+	done
+
+	# iChannelResolution[] -- only if used, sized to highest literal index + 1
+	local resN=0 maxidx
+	if uses iChannelResolution; then
+		maxidx=$(grep -oE 'iChannelResolution\[[0-9]+\]' <<<"$probe" | grep -oE '[0-9]+' | sort -n | tail -1)
+		if [ -n "$maxidx" ]; then resN=$((maxidx + 1)); else resN=$chans; fi
+	fi
+
+	# iChannelN samplers referenced
+	local i; local -a used_channels=()
+	for ((i = 0; i < chans; i++)); do uses "iChannel$i" && used_channels+=("$i"); done
+
+	# custom uniforms referenced
+	local uname; local -a used_uniforms=()
+	while IFS= read -r uname; do
+		[ -n "$uname" ] && uses "$uname" && used_uniforms+=("$uname")
+	done < <(jq -r --argjson p "$p" '.projects[$p].uniforms[].name' "$f")
 
 	{
 		echo "// ============================================================================"
 		echo "// $projname  ::  pass \"$pname\"   (render target format: $fmt)"
 		echo "// Exported from ai-shadertoy and ported to GLSL ES 1.00 (OpenGL ES 2.0)."
-		echo "// Pair with common/fullscreen.vert. See this project's manifest.json for the"
-		echo "// channel wiring, render order and custom-uniform default values."
+		echo "// Pair with common/fullscreen.vert. Only the uniforms and channels this pass"
+		echo "// actually references are declared; see manifest.json for the wiring/defaults."
 		echo "// ============================================================================"
 		echo "#version 100"
 		echo "#ifdef GL_FRAGMENT_PRECISION_HIGH"
@@ -83,30 +115,30 @@ emit_frag() {
 		echo "precision mediump float;"
 		echo "precision mediump int;"
 		echo "#endif"
-		echo ""
-		echo "// --- Shadertoy built-in uniforms (drive these from your render loop) ---"
-		echo "uniform vec3  iResolution;        // viewport resolution in px (z = pixel aspect, use 1.0)"
-		echo "uniform float iTime;              // playback time in seconds"
-		echo "uniform float iTimeDelta;         // seconds elapsed since the previous frame"
-		echo "uniform float iFrameRate;         // frames per second"
-		echo "uniform int   iFrame;             // playback frame index"
-		echo "uniform vec4  iMouse;             // xy = current px (while pressed), zw = last click px"
-		echo "uniform vec4  iDate;              // (year, month, day, seconds-in-day)"
-		if [ "$chans" -gt 0 ]; then
+		if [ "${#used_builtins[@]}" -gt 0 ]; then
 			echo ""
-			echo "// --- This pass's input channels (see manifest.json for what feeds each) ---"
-			for ((i=0;i<chans;i++)); do echo "uniform sampler2D iChannel${i};"; done
-			echo "uniform vec3 iChannelResolution[${chans}];   // px size of each iChannel"
+			echo "// --- Shadertoy built-in uniforms used by this pass ---"
+			for b in "${used_builtins[@]}"; do builtin_decl "$b"; done
 		fi
-		# Custom (UI) uniforms are shared across every pass of the project.
-		if [ "$(uniform_decls "$p" | wc -l)" -gt 0 ]; then
+		if [ "${#used_channels[@]}" -gt 0 ] || [ "$resN" -gt 0 ]; then
 			echo ""
-			echo "// --- Custom uniforms (shared across all passes of this project) ---"
-			uniform_decls "$p"
+			echo "// --- Input channels used by this pass (see manifest.json for bindings) ---"
+			for i in "${used_channels[@]}"; do echo "uniform sampler2D iChannel${i};"; done
+			[ "$resN" -gt 0 ] && echo "uniform vec3 iChannelResolution[${resN}];   // px size of each iChannel"
+		fi
+		if [ "${#used_uniforms[@]}" -gt 0 ]; then
+			echo ""
+			echo "// --- Custom uniforms used by this pass (project defaults in manifest.json) ---"
+			for uname in "${used_uniforms[@]}"; do
+				jq -r --argjson p "$p" --arg n "$uname" '
+					.projects[$p].uniforms[] | select(.name==$n)
+					| "uniform \(if .type=="color" then "vec3" else .type end) \(.name);"
+				' "$f"
+			done
 		fi
 		echo ""
 		echo "// ============================ user shader body ============================"
-		jq -r --argjson p "$p" --argjson q "$q" '.projects[$p].layers[0].passes[$q].source' "$f" | gles2_body
+		printf '%s\n' "$body"
 		echo "// ============================ generated entry point ============================"
 		echo "void main() {"
 		echo "	vec4 ai_color = vec4(0.0, 0.0, 0.0, 1.0);"
@@ -176,6 +208,12 @@ emit_manifest() {
 		--slurpfile root "$f" \
 		--argjson order "$order_json" \
 		--argjson slugmap "$slugmap" '
+		# strip GLSL comments + inline uniform decls so usage probes match the
+		# emitted shaders exactly (same shape as src/gl/wrapper.ts CUSTOM_UNIFORM_RE).
+		def strip:
+			gsub("//[^\n]*";"")
+			| gsub("/\\*[\\s\\S]*?\\*/";"")
+			| gsub("(?m)^[ \\t]*uniform[ \\t]+(?:(?:lowp|mediump|highp)[ \\t]+)?(?:float|vec2|vec3|vec4)[ \\t]+[A-Za-z_][A-Za-z0-9_]*[ \\t]*(?:=[ \\t]*[^;\\n]*?)?[ \\t]*;[ \\t]*$";"");
 		($root[0]) as $r
 		| ($r.projects[$p]) as $proj
 		| ($proj.layers[0]) as $layer
@@ -184,20 +222,23 @@ emit_manifest() {
 		| {
 			project: $proj.name,
 			projectId: $proj.id,
-			note: "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized texture, then present the outputPass texture to the screen.",
+			note: "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized RGBA8 texture, then present the outputPass texture. Each pass lists ONLY the channels/uniforms it samples. wrap values are the originals; on plain GLES2 use CLAMP_TO_EDGE for these NPOT textures (see README).",
 			outputPass: $passNames[$layer.outputPassId],
 			outputPassFile: ($slugmap[$layer.outputPassId] + ".frag"),
 			renderOrder: [ $order[] | $passNames[.] ],
 			customUniforms: $proj.uniforms,
 			passes: [
 				$layer.passes[]
+				| (.source | strip) as $src
 				| {
 					name: .name,
 					file: ($slugmap[.id] + ".frag"),
 					format: .format,
+					usesUniforms: [ $proj.uniforms[].name as $n | select($src | test("\\b" + $n + "\\b")) | $n ],
 					channels: [
 						.channels | to_entries[]
 						| .key as $i | .value as $c
+						| select($src | test("\\biChannel" + ($i|tostring) + "\\b"))
 						| {
 							channel: ("iChannel" + ($i|tostring)),
 							kind: $c.kind,

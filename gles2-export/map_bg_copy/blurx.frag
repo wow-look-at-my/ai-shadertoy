@@ -1,8 +1,8 @@
 // ============================================================================
 // map_bg copy  ::  pass "BlurX"   (render target format: rgba8)
 // Exported from ai-shadertoy and ported to GLSL ES 1.00 (OpenGL ES 2.0).
-// Pair with common/fullscreen.vert. See this project's manifest.json for the
-// channel wiring, render order and custom-uniform default values.
+// Pair with common/fullscreen.vert. Only the uniforms and channels this pass
+// actually references are declared; see manifest.json for the wiring/defaults.
 // ============================================================================
 #version 100
 #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -13,30 +13,14 @@ precision mediump float;
 precision mediump int;
 #endif
 
-// --- Shadertoy built-in uniforms (drive these from your render loop) ---
+// --- Shadertoy built-in uniforms used by this pass ---
 uniform vec3  iResolution;        // viewport resolution in px (z = pixel aspect, use 1.0)
-uniform float iTime;              // playback time in seconds
-uniform float iTimeDelta;         // seconds elapsed since the previous frame
-uniform float iFrameRate;         // frames per second
-uniform int   iFrame;             // playback frame index
-uniform vec4  iMouse;             // xy = current px (while pressed), zw = last click px
-uniform vec4  iDate;              // (year, month, day, seconds-in-day)
 
-// --- This pass's input channels (see manifest.json for what feeds each) ---
+// --- Input channels used by this pass (see manifest.json for bindings) ---
 uniform sampler2D iChannel0;
-uniform vec3 iChannelResolution[1];   // px size of each iChannel
 
-// --- Custom uniforms (shared across all passes of this project) ---
-uniform float u_markBlur;
+// --- Custom uniforms used by this pass (project defaults in manifest.json) ---
 uniform float u_bgBlur;
-uniform vec3 u_bgColor;
-uniform float u_bgTolerance;
-uniform float u_bgSat;
-uniform float u_bgFlatten;
-uniform float u_bgValue;
-uniform float u_markSat;
-uniform float u_markFlatten;
-uniform float u_markValue;
 
 // ============================ user shader body ============================
 

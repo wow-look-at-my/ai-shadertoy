@@ -1,7 +1,7 @@
 {
   "project": "map_bg",
   "projectId": "p_g5e80hqla2b6",
-  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized texture, then present the outputPass texture to the screen.",
+  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized RGBA8 texture, then present the outputPass texture. Each pass lists ONLY the channels/uniforms it samples. wrap values are the originals; on plain GLES2 use CLAMP_TO_EDGE for these NPOT textures (see README).",
   "outputPass": "Image",
   "outputPassFile": "image.frag",
   "renderOrder": [
@@ -93,6 +93,15 @@
       "name": "Image",
       "file": "image.frag",
       "format": "rgba8",
+      "usesUniforms": [
+        "u_bgColor",
+        "u_bgTolerance",
+        "u_bgBlur",
+        "u_markBlur",
+        "u_bgSat",
+        "u_bgValue",
+        "u_bgFlatten"
+      ],
       "channels": [
         {
           "channel": "iChannel0",
@@ -106,31 +115,6 @@
             952,
             826
           ]
-        },
-        {
-          "channel": "iChannel1",
-          "kind": "image",
-          "filter": "linear",
-          "wrap": "repeat",
-          "asset": "a_8zsbfeg3tq08",
-          "assetName": "Screenshot 2026-06-20 at 11.04.29 PM",
-          "assetFile": "../assets/a_8zsbfeg3tq08.png",
-          "assetSize": [
-            952,
-            826
-          ]
-        },
-        {
-          "channel": "iChannel2",
-          "kind": "none",
-          "filter": "linear",
-          "wrap": "repeat"
-        },
-        {
-          "channel": "iChannel3",
-          "kind": "none",
-          "filter": "linear",
-          "wrap": "repeat"
         }
       ]
     }

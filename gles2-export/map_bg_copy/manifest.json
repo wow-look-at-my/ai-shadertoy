@@ -1,7 +1,7 @@
 {
   "project": "map_bg copy",
   "projectId": "p_kzgtog6i8g9i",
-  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized texture, then present the outputPass texture to the screen.",
+  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized RGBA8 texture, then present the outputPass texture. Each pass lists ONLY the channels/uniforms it samples. wrap values are the originals; on plain GLES2 use CLAMP_TO_EDGE for these NPOT textures (see README).",
   "outputPass": "Image",
   "outputPassFile": "image.frag",
   "renderOrder": [
@@ -131,6 +131,9 @@
       "name": "MarkBlurY",
       "file": "markblury.frag",
       "format": "rgba8",
+      "usesUniforms": [
+        "u_markBlur"
+      ],
       "channels": [
         {
           "channel": "iChannel0",
@@ -146,6 +149,9 @@
       "name": "MarkBlurX",
       "file": "markblurx.frag",
       "format": "rgba8",
+      "usesUniforms": [
+        "u_markBlur"
+      ],
       "channels": [
         {
           "channel": "iChannel0",
@@ -161,6 +167,9 @@
       "name": "BlurY",
       "file": "blury.frag",
       "format": "rgba8",
+      "usesUniforms": [
+        "u_bgBlur"
+      ],
       "channels": [
         {
           "channel": "iChannel0",
@@ -176,6 +185,9 @@
       "name": "BlurX",
       "file": "blurx.frag",
       "format": "rgba8",
+      "usesUniforms": [
+        "u_bgBlur"
+      ],
       "channels": [
         {
           "channel": "iChannel0",
@@ -191,6 +203,7 @@
       "name": "Cover",
       "file": "cover.frag",
       "format": "rgba8",
+      "usesUniforms": [],
       "channels": [
         {
           "channel": "iChannel0",
@@ -211,6 +224,16 @@
       "name": "Image",
       "file": "image.frag",
       "format": "rgba8",
+      "usesUniforms": [
+        "u_bgColor",
+        "u_bgTolerance",
+        "u_bgSat",
+        "u_bgFlatten",
+        "u_bgValue",
+        "u_markSat",
+        "u_markFlatten",
+        "u_markValue"
+      ],
       "channels": [
         {
           "channel": "iChannel0",

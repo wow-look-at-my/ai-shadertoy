@@ -1,7 +1,7 @@
 {
   "project": "Untitled shader",
   "projectId": "p_vbuvsn4fct01",
-  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized texture, then present the outputPass texture to the screen.",
+  "note": "GLSL ES 1.00 / OpenGL ES 2.0 export. Render the passes in renderOrder each frame, each into its own framebuffer-sized RGBA8 texture, then present the outputPass texture. Each pass lists ONLY the channels/uniforms it samples. wrap values are the originals; on plain GLES2 use CLAMP_TO_EDGE for these NPOT textures (see README).",
   "outputPass": "Image",
   "outputPassFile": "image.frag",
   "renderOrder": [
@@ -115,26 +115,18 @@
       "name": "Image",
       "file": "image.frag",
       "format": "rgba8",
-      "channels": [
-        {
-          "channel": "iChannel0",
-          "kind": "none",
-          "filter": "linear",
-          "wrap": "repeat"
-        },
-        {
-          "channel": "iChannel1",
-          "kind": "none",
-          "filter": "linear",
-          "wrap": "repeat"
-        },
-        {
-          "channel": "iChannel2",
-          "kind": "none",
-          "filter": "linear",
-          "wrap": "repeat"
-        }
-      ]
+      "usesUniforms": [
+        "u_speed",
+        "u_slices",
+        "u_warp",
+        "u_palShift",
+        "u_relief",
+        "u_ambient",
+        "u_shininess",
+        "u_specStrength",
+        "u_lightDist"
+      ],
+      "channels": []
     }
   ]
 }
