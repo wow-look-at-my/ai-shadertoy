@@ -44,6 +44,9 @@ export interface Message {
 	textTools?: string[];
 	/** text-tools mode: this user message carries tool results (render as a results row) */
 	toolOutput?: boolean;
+	/** Conversation-compaction artifact: "request" = the synthetic summarize prompt,
+	 * "summary" = the AI-written recap that replaces the older history (see ai/compact.ts). */
+	compaction?: "request" | "summary";
 }
 
 export type UniformType = "float" | "vec2" | "vec3" | "vec4" | "color";

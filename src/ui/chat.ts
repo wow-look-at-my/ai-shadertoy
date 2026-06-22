@@ -8,6 +8,7 @@ import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
+import { hasCompactionSummary, shouldCompact } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
 import { hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
@@ -16,19 +17,30 @@ import { ProviderError } from "../ai/providers.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
+// The compact glyph lives in CSS (the .icon-compress mask), not as SVG path data
+// in this file. Build a span the stylesheet tints + masks.
+function compactIcon(): HTMLElement {
+	return el("span", { class: "icon-mask icon-compress", attrs: { "aria-hidden": "true" } });
+}
+
 // init_shader is offered only until the AI has authored the shader this
-// conversation (first turn / after a reset); after that, edits only.
+// conversation (first turn / after a reset); after that, edits only. A
+// compaction summary counts as authored -- the original init_shader tool_use is
+// gone from the history, but the shader exists, so we must keep offering edits
+// only (else the model could init_shader and wipe the work).
 function authoredShader(messages: Message[]): boolean {
 	const isShaderTool = (n: string) => n === TOOL_NAMES.initShader || n === TOOL_NAMES.editShader;
+	if (hasCompactionSummary(messages)) return true;
 	return messages.some((m) => m.role === "assistant" && ((m.textTools?.some(isShaderTool) ?? false) || m.blocks.some((b) => b.type === "tool_use" && isShaderTool(b.name))));
 }
 
 // Short label for the undo entry that wraps an agent turn: the text of the latest
-// real user prompt (ignoring text-mode tool-result messages), truncated.
+// real user prompt (ignoring text-mode tool-result messages and compaction
+// artifacts), truncated.
 function turnPromptSummary(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i];
-		if (m.role !== "user" || m.toolOutput) continue;
+		if (m.role !== "user" || m.toolOutput || m.compaction) continue;
 		const text = m.blocks.find((b): b is TextBlock => b.type === "text")?.text.trim() ?? "";
 		if (text) return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 		break;
@@ -52,6 +64,16 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		attach = !attach;
 		attachBtn.classList.toggle("on", attach);
 	});
+
+	// Compact: replace the conversation with an AI-written summary to free up
+	// context. Hidden until there's enough history to be worth it; disabled while
+	// the agent (or a compaction) is running.
+	const compactBtn = el("button", { class: "btn icon", title: "Compact the conversation: replace it with an AI summary to free up context" }, compactIcon());
+	compactBtn.addEventListener("click", () => void compact());
+	function syncCompactBtn(): void {
+		compactBtn.hidden = !shouldCompact(store.project.messages);
+		compactBtn.disabled = store.busy;
+	}
 
 	const sendBtn = el("button", { class: "btn primary", on: { click: () => void send() } }, "Send");
 	const stopBtn = el("button", { class: "btn danger", on: { click: () => abort?.abort() } }, "Stop");
@@ -105,6 +127,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		sendBtn.hidden = !!b;
 		input.disabled = !!b;
 		list.classList.toggle("busy", !!b); // hide per-message edit/delete actions mid-run
+		syncCompactBtn();
 	});
 
 	// Only rebuild the whole conversation when the project itself changes
@@ -122,8 +145,14 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		if (!store.project.messages.length) {
 			append(list, [el("div", { class: "chat-hint" }, el("p", {}, "Tell the AI what to build. It writes the shader, sees the result, and iterates."), el("p", { class: "muted" }, "Examples: ", el("em", {}, "“a swirling plasma in purples and gold”, “raymarched torus with soft shadows”, “animated checkerboard floor”")))]);
 		} else {
-			for (const m of store.project.messages) list.appendChild(renderMessage(m));
+			// The synthetic "summarize ..." request is internal plumbing; only the
+			// summary card it produced is shown (see renderMessage).
+			for (const m of store.project.messages) {
+				if (m.compaction === "request") continue;
+				list.appendChild(renderMessage(m));
+			}
 		}
+		syncCompactBtn();
 		scroll();
 	}
 
@@ -215,6 +244,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	function renderMessage(m: Message): HTMLElement {
 		const node = messageEl(m);
+		// Compaction artifacts are managed plumbing, not editable chat turns.
+		if (m.compaction) return node;
 		if (isDeletable(m)) {
 			const buttons: HTMLElement[] = [];
 			if (m.role === "user" && !m.toolOutput) {
@@ -401,6 +432,36 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 	}
 
+	// Compact the conversation: ask the model to summarize everything so far, then
+	// replace the history with that summary. Busy/abort are managed here exactly
+	// like an agent turn, so Stop cancels it and undo/redo stay disabled meanwhile.
+	async function compact(): Promise<void> {
+		if (store.busy || !shouldCompact(store.project.messages)) return;
+		if (!ensureReady()) return;
+		if (!confirm("Compact the conversation?\n\nThe messages so far will be replaced by a short AI-written summary to free up the context window (and lower per-turn cost). Your shader and project are unaffected. This cannot be undone.")) return;
+		abort = new AbortController();
+		store.setBusy(true);
+		const status = el("div", { class: "msg compaction pending" }, el("div", { class: "compaction-head" }, compactIcon(), " Compacting conversation…"));
+		list.appendChild(status);
+		scroll();
+		try {
+			const res = await store.compactConversation(abort.signal);
+			if (!res.ok) {
+				status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact: "), res.error ?? "could not compact."));
+			} else {
+				renderAll(); // drops the old bubbles + status, shows the summary card
+			}
+		} catch (e) {
+			const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
+			status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact failed: "), detail));
+		} finally {
+			store.setBusy(false);
+			abort = null;
+			await store.saveProjectNow();
+			scroll();
+		}
+	}
+
 	input.addEventListener("keydown", (e) => {
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
@@ -414,13 +475,25 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		{ class: "chat" },
 		list,
 		statsBar,
-		el("div", { class: "chat-bar" }, attachBtn, input, el("div", { class: "chat-actions" }, sendBtn, stopBtn)),
+		el("div", { class: "chat-bar" }, el("div", { class: "chat-tools" }, attachBtn, compactBtn), input, el("div", { class: "chat-actions" }, sendBtn, stopBtn)),
 	);
 }
 
 // ---- message rendering -----------------------------------------------------
 
 function messageEl(m: Message): HTMLElement {
+	// The compacted-history summary: a distinct, full-width card (the AI recap
+	// that now stands in for everything before it), collapsible to stay out of
+	// the way while remaining inspectable.
+	if (m.compaction === "summary") {
+		const text = m.blocks.find((b): b is TextBlock => b.type === "text")?.text ?? "";
+		return el(
+			"div",
+			{ class: "msg compaction" },
+			el("div", { class: "compaction-head" }, compactIcon(), " Conversation compacted — summary for context"),
+			el("details", { class: "compaction-body", attrs: { open: "" } }, el("summary", {}, "Summary"), renderMarkdown(text)),
+		);
+	}
 	if (m.role === "user") {
 		// text-tools mode feeds tool results back as a user message -- render it
 		// as a results row, not a user bubble.

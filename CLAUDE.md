@@ -82,6 +82,16 @@ npm run build         # ts0 build -> dist/index.html
   volatile per-edit project state, kept OUT of the cached prefix and sent as a
   trailing message) plus `textToolInstructions` for text mode. `pricing.ts` maps a
   model id to its rates + context window for the chat cost / context indicator.
+  `compact.ts` is conversation **compaction**: `summarizeConversation` asks the
+  model (no tools) to "summarize this entire conversation in detail for a future
+  instance of yourself to pick up", and `buildCompactedMessages` replaces the whole
+  history with that recap as a valid `user(request)`→`assistant(summary)` round
+  (both flagged `compaction` on the `Message`), freeing the context window. Pure
+  helpers (`shouldCompact`/`hasCompactionSummary`/`buildCompactedMessages`) are
+  unit-tested in `test/compact.test.ts`. The store owns `compactConversation(signal)`
+  (summarize-and-replace + persist); the chat drives it with its own busy/abort,
+  exactly like an agent turn (Stop cancels it, and a mid-stream cancel does NOT
+  replace the conversation).
 - `src/ai/tools/` — **one tool per file**, each colocating its JSON-schema `def`
   and `execute`, self-registering into `registry.ts`. The store builds a
   `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
@@ -176,12 +186,17 @@ npm run build         # ts0 build -> dist/index.html
   CSS<->normalized math, y-flip). `store.selectedShapeId` (+ `selectShape`/
   `clearShapeSelection`/`"selectedShape"`) is the shared selection; the gizmo and
   the Layers-tab shape rows stay in sync. UI glyphs come from `src/util/icons.ts` —
-  `icon(name)` builds an inline `<svg>` (Material Design Icons path data,
-  `fill: currentColor`); no emoji, no icon font, no network request. Add a new glyph
-  by inlining its `@mdi/js` path. The chat (`chat.ts`) shows hover **edit/delete**
-  actions on user prompts and assistant replies: delete removes a whole conversation
-  round, edit rewrites a user prompt then re-runs from there (forking the
-  conversation). The round math that keeps every `tool_use` paired with its
+  `icon(name)` builds an inline `<svg>` from Material Design Icons path data,
+  `fill: currentColor` (no emoji, no icon font, no network request). SVG path data
+  belongs in CSS, not `.ts`: add a **new** glyph as a `currentColor`-tinted CSS mask
+  in `app.css` (see `.icon-mask` + `.icon-compress`) and render it with a `<span>`,
+  rather than adding another `@mdi/js` path to `icons.ts`. The chat (`chat.ts`) shows
+  hover **edit/delete** actions on user prompts and assistant replies: delete removes
+  a whole conversation round, edit rewrites a user prompt then re-runs from there
+  (forking the conversation); a **compact** button (in the chat bar, shown once
+  there's enough history) summarizes the whole conversation and replaces it with one
+  collapsible "Conversation compacted" card (the `compaction` summary message),
+  freeing context. The round math that keeps every `tool_use` paired with its
   `tool_result` (an orphan 400s the next request) is pure and DOM-free in
   `src/util/conversation.ts` (`isDeletable` / `deletionRange`) — tested by
   `node --experimental-strip-types`.
