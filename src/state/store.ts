@@ -887,7 +887,7 @@ export class Store {
 			const shot = this.screenshotBlock();
 			return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${note}, t=${stats.time.toFixed(2)}s. ${shot._avg}. Current frame:`), { type: "image", mediaType: shot.mediaType, data: shot.data }] };
 		}
-		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${note}. (No preview attached — set screenshot:true to see it now, otherwise you'll be shown the final render when you finish.)`)] };
+		return { content: [text(`${okPrefix} Rendered ${stats.width}x${stats.height}${note}. (No preview attached — set screenshot:true or call capture_screenshot if you want to see the render.)`)] };
 	}
 
 	// ---- tool execution: dispatch to the registry via a ToolContext ----------
