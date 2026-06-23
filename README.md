@@ -204,6 +204,11 @@ default outside `0..1`, and a trailing `// comment` is fine. Custom uniforms are
 AI uses `set_uniforms` only to adjust an existing control's range, default, or
 label — the `uniform` line in the source is what creates it.
 
+The **Uniforms** tab's **Copy uniforms** button copies every uniform as GLSL
+declarations with their current values baked in (e.g. `uniform vec3 u_tint =
+vec3(1.0, 0.5, 0.2);`) — paste them into a shader to lock in the values you dialled
+in, since the copied text re-extracts to the exact same controls.
+
 ## Setup
 
 Open the app, click **Settings**, and add:

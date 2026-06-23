@@ -118,6 +118,32 @@ function stripUniformDeclarations(source: string): string {
 	return source.replace(CUSTOM_UNIFORM_RE, "");
 }
 
+/** Format a number as a GLSL float literal: always carries a decimal point and
+ * trims float noise (e.g. 0.1 + 0.2). The inverse of parseInitializer's Number(). */
+function formatGlslNumber(v: number): string {
+	if (!Number.isFinite(v)) return "0.0";
+	const s = String(Number(v.toPrecision(6)));
+	return /[.eE]/.test(s) ? s : `${s}.0`;
+}
+
+/** Serialize one uniform as a GLSL declaration with its CURRENT value baked in as
+ * an `= <default>` initializer -- exactly the form extractUniformDeclarations reads
+ * back, so the output round-trips (a `color` becomes a `vec3`, matching glslType). */
+export function formatUniformDeclaration(u: Uniform): string {
+	const type = glslType(u.type);
+	const n = u.type === "float" ? 1 : u.type === "vec2" ? 2 : u.type === "vec4" ? 4 : 3;
+	const comps = Array.from({ length: n }, (_, i) => formatGlslNumber(u.value[i] ?? 0));
+	const init = n === 1 ? comps[0] : `${type}(${comps.join(", ")})`;
+	return `uniform ${type} ${u.name} = ${init};`;
+}
+
+/** Serialize every uniform as newline-separated GLSL declarations (current values
+ * baked in) -- powers the Uniforms tab "Copy" button. Round-trips through
+ * extractUniformDeclarations, so the copied text can be pasted straight into a shader. */
+export function formatUniformDeclarations(uniforms: Uniform[]): string {
+	return uniforms.map(formatUniformDeclaration).join("\n");
+}
+
 const BUILTIN_NAMES = new Set([
 	"iResolution",
 	"iTime",
