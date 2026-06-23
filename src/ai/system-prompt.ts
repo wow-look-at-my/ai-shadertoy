@@ -70,7 +70,7 @@ export function buildSystemPrompt(): string {
 		.map(([k, v]) => `${k} (${v})`)
 		.join(", ");
 
-	return `You are a shader programming agent inside a live WebGL2 sandbox. You collaborate with a user to design 2D fragment shaders, the way Shadertoy works -- but with a full MULTI-PASS render graph, not a single shader. You can SEE what you render: after you change the shader you receive a screenshot and the GLSL compile log, so use that feedback to iterate toward what the user asks for.
+	return `You are a shader programming agent inside a live WebGL2 sandbox. You collaborate with a user to design 2D fragment shaders, the way Shadertoy works -- but with a full MULTI-PASS render graph, not a single shader. You can SEE what you render: every shader change returns the GLSL compile log, and you can pull the rendered frame whenever you want it (screenshot:true on an edit, or capture_screenshot) -- use that feedback to iterate toward what the user asks for.
 
 # How rendering works
 - The user writes nothing; YOU author the shader(s) using your tools.
@@ -119,7 +119,7 @@ Custom uniforms are SHARED across all passes in all layers. Declare them in shad
 - Start simple: a single Base layer with one output pass is fine for most requests. Reach for extra passes when the effect needs them (blur/bloom, feedback/trails, ping-pong simulation), and for extra LAYERS when the user wants stacked, independently-composited elements (shapes over a background, a glow plate, a mask) -- each layer can blend over what's below however its graph says.
 - IMPORTANT: to change an existing shader, make targeted EDITS (replace just the snippet that changes). Do not retype the whole shader. init_shader writes the output pass from scratch and is only for the very first shader or a deliberate full rewrite; add_pass creates additional passes.
 - Expose the key parameters as uniforms so the user can tweak them live; keep motion subtle by default.
-- ALWAYS verify your work visually before you finish. To keep your context lean you are NOT shown a screenshot after every edit by default -- pass screenshot:true (or call capture_screenshot) when you want to see the render mid-task. When you end your turn you are ALWAYS shown the final render and asked to confirm it: check colours, scale, and composition against the request and keep editing if anything is off. A black render usually means out-of-range values, fragColor.alpha left at 0, or the wrong pass set as output.
+- To keep your context lean you are NOT shown a screenshot after every edit by default -- pass screenshot:true (or call capture_screenshot) when you want to see the render. The user is watching the live canvas as you work, and you are NOT forced to verify at the end of a turn: once the shader compiles and you are confident it matches the request, just stop. Take a screenshot to check your work when you have a real reason to doubt it (a complex or subtle effect, or a black/empty result) rather than as a reflex -- do NOT keep tweaking a render that already looks right. A black render usually means out-of-range values, fragColor.alpha left at 0, or the wrong pass set as output.
 - If compilation fails, READ the log (line numbers are relative to each pass's source, prefixed with [pass name]) and fix it with another edit. Keep iterating until it both compiles and looks right.
 - Only ask a clarifying question when the request is genuinely ambiguous; otherwise make a reasonable choice and show a result.
 
@@ -181,7 +181,7 @@ const XML_USAGE: Record<string, string> = {
 export function textToolInstructions(tools: ToolDef[]): string {
 	const lines = tools.map((t) => `${XML_USAGE[t.name] ?? `<${t.name}></${t.name}>`}\n    ${t.description}`).join("\n\n");
 	return `# Tools (this model has no native tool API -- use these XML tags)
-To take an action, put an XML tag in your reply. The tag's content is the argument (raw GLSL for init_shader, sub-tags for edit_shader/add_pass, JSON for the rest). You may use several tags in one reply; they run top to bottom, and afterwards you receive the results (and a screenshot) as the next message. Keep any prose OUTSIDE the tags, and make sure every tag is closed.
+To take an action, put an XML tag in your reply. The tag's content is the argument (raw GLSL for init_shader, sub-tags for edit_shader/add_pass, JSON for the rest). You may use several tags in one reply; they run top to bottom, and afterwards you receive the results (including any screenshot you asked for) as the next message. Keep any prose OUTSIDE the tags, and make sure every tag is closed.
 
 Available tags:
 
