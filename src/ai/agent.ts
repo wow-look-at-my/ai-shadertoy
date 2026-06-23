@@ -40,6 +40,11 @@ export interface AgentCallbacks {
 	requestPermission(req: PermissionRequest): Promise<boolean>;
 	/** Token usage + generation time for one model response (cost/context meter). */
 	onUsage?(usage: Usage, durationMs: number): void;
+	/** Drain any messages the user queued mid-turn (steering). Called before each
+	 * model request and before the loop would otherwise stop, so the model picks
+	 * them up on its next response. Returned messages are appended to the
+	 * conversation as-is (the caller has already rendered + persists them). */
+	takeSteering?(): Message[];
 	signal?: AbortSignal;
 	/** Stable per-conversation key for OpenAI prompt-cache routing (prompt_cache_key). */
 	cacheKey?: string;
@@ -58,7 +63,19 @@ export async function runAgent(
 ): Promise<void> {
 	const textMode = settings.chat.toolMode === "text";
 
+	// Fold any steering messages the user queued mid-turn into the conversation so
+	// the model sees them on its next response. Only ever called at "balanced"
+	// points (after tool results / a no-tool assistant turn), so a user message
+	// here never splits a tool_use from its tool_result. Returns true if any were
+	// added. The caller has already rendered + will persist these messages.
+	const drainSteering = (): boolean => {
+		const queued = cb.takeSteering?.() ?? [];
+		for (const m of queued) messages.push(m);
+		return queued.length > 0;
+	};
+
 	for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+		drainSteering(); // pick up anything queued during the previous model call / tool run
 		cb.onTurnStart();
 		const tools = toolsFor();
 		const system = textMode ? `${baseSystem()}\n\n${textToolInstructions(tools)}` : baseSystem();
@@ -95,6 +112,9 @@ export async function runAgent(
 			// canvas, and the model can inspect the render itself any time
 			// (screenshot:true on an edit, or capture_screenshot) -- so we do NOT
 			// force a final screenshot + verification turn.
+			// Before ending, fold in anything the user steered in while the model was
+			// finishing; if there is any, give it another turn instead of stopping.
+			if (drainSteering()) continue;
 			return;
 		}
 

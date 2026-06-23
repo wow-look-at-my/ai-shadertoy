@@ -50,7 +50,9 @@ export interface ChatDeps {
 export function createChat(deps: ChatDeps): HTMLElement {
 	const { store } = deps;
 	const list = el("div", { class: "chat-list" });
-	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: "Describe the shader you want… (Enter to send, Shift+Enter for newline · /compact to summarize)" } });
+	const idlePlaceholder = "Describe the shader you want… (Enter to send, Shift+Enter for newline · /compact to summarize)";
+	const busyPlaceholder = "Steer the AI — send a note mid-turn to nudge it (Enter to send)";
+	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: idlePlaceholder } });
 
 	let attach = false;
 	const attachBtn = el("button", { class: "btn icon", title: "Attach the current frame to your next message" }, icon("camera"));
@@ -60,10 +62,34 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	});
 
 	const sendBtn = el("button", { class: "btn primary", on: { click: () => void send() } }, "Send");
-	const stopBtn = el("button", { class: "btn danger", on: { click: () => abort?.abort() } }, "Stop");
+	const stopBtn = el("button", { class: "btn danger", on: { click: () => stopRun() } }, "Stop");
 	stopBtn.hidden = true;
 
 	let abort: AbortController | null = null;
+	// True only while an agent turn is running (runTurn) — i.e. there is a tool loop
+	// to steer. Compaction also goes busy but can't be steered, so we don't queue
+	// into it.
+	let steerable = false;
+	// Messages the user queued while the agent was busy (steering). Each keeps its
+	// already-rendered DOM node so Stop can remove the ones not yet picked up.
+	let steerQueue: Array<{ msg: Message; node: HTMLElement }> = [];
+
+	// Hand the queued steering messages to the running agent (it splices them into
+	// the conversation). They are already rendered, so this just transfers ownership.
+	function takeSteering(): Message[] {
+		if (!steerQueue.length) return [];
+		const msgs = steerQueue.map((s) => s.msg);
+		steerQueue = [];
+		return msgs;
+	}
+
+	// Stop: abort the current turn and drop any steering the agent hasn't picked up
+	// yet (removing its un-sent bubbles), so "Stop" really means stop.
+	function stopRun(): void {
+		for (const { node } of steerQueue) node.remove();
+		steerQueue = [];
+		abort?.abort();
+	}
 	let streamingText: HTMLElement | null = null;
 	let thinkingEl: HTMLElement | null = null; // live extended-thinking block for the turn
 	let pending = ""; // assistant text received but not yet painted
@@ -107,9 +133,16 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	}
 
 	store.on("busy", (b) => {
+		// `steerable` is set before setBusy(true) in runTurn, so it's accurate here.
+		const steer = !!b && steerable;
 		stopBtn.hidden = !b;
-		sendBtn.hidden = !!b;
-		input.disabled = !!b;
+		// During an agent turn the input stays live so the user can STEER: a message
+		// sent mid-turn is queued and folded into the conversation on the agent's
+		// next step (see send()). The Send button reads "Steer" to signal this.
+		// Compaction also goes busy but can't be steered, so we lock the input then.
+		sendBtn.textContent = steer ? "Steer" : "Send";
+		input.placeholder = steer ? busyPlaceholder : idlePlaceholder;
+		input.disabled = !!b && !steerable;
 		list.classList.toggle("busy", !!b); // hide per-message edit/delete actions mid-run
 	});
 
@@ -314,6 +347,21 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			attachBtn.classList.remove("on");
 		}
 		const userMsg: Message = { id: uid("m_"), role: "user", ts: Date.now(), blocks };
+
+		// Mid-turn? Queue it as a steering message: render it now and let the running
+		// agent fold it into the conversation on its next step. It does NOT start a
+		// new turn (that would run a second agent loop concurrently). Only an agent
+		// turn is steerable; while compacting we leave the text for the user to resend.
+		if (store.busy) {
+			if (!steerable) return;
+			const node = renderMessage(userMsg);
+			steerQueue.push({ msg: userMsg, node });
+			list.appendChild(node);
+			input.value = "";
+			scroll();
+			return;
+		}
+
 		store.project.messages.push(userMsg);
 		if (store.project.messages.length === 1) clear(list);
 		list.appendChild(renderMessage(userMsg));
@@ -326,6 +374,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	// by the edit-and-resend flow (which has already mutated the message list).
 	async function runTurn(): Promise<void> {
 		abort = new AbortController();
+		steerable = true; // this turn has a tool loop the user can steer
 		store.setBusy(true);
 		costTurn = 0; // start a fresh per-turn cost tally
 		// Collapse every edit this turn makes into a single undo step, so one
@@ -347,6 +396,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 					// one conversation thread); namespaced so it can't collide across apps.
 					cacheKey: `shadertoy-${store.project.id}`,
 					requestPermission,
+					takeSteering,
 					onUsage: (usage, durationMs) => {
 						const model = store.settings.chat.model;
 						const c = messageCost(model, usage);
@@ -413,10 +463,21 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		} finally {
 			store.endHistoryGroup();
 			store.setBusy(false);
+			steerable = false;
 			abort = null;
 			endStream();
 			await store.saveProjectNow();
 			scroll();
+		}
+		// The agent picks up steering at each step and before it stops. The only gap
+		// is a message queued during the very last iteration (e.g. the model hit the
+		// tool-iteration cap) — fold those already-rendered bubbles into the history
+		// and run a fresh turn so the steering is never silently dropped.
+		if (steerQueue.length) {
+			for (const { msg } of steerQueue) store.project.messages.push(msg);
+			steerQueue = [];
+			store.commitMessages();
+			await runTurn();
 		}
 	}
 
