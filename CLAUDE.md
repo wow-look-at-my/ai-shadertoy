@@ -81,7 +81,15 @@ npm run build         # ts0 build -> dist/index.html
   default outside 0..1; the header re-declares the uniform WITHOUT the initializer
   (GLSL ES requires that). A **trailing `//` or single-line `/* */` comment after
   the `;` is tolerated** (a natural thing to write that used to silently break both
-  extraction and stripping). `textures.ts` (procedural built-ins).
+  extraction and stripping). `reconcileUniforms(declared, previous, lastDefaults)`
+  is the pure helper the store uses on every recompile to fold the source-declared
+  set into the live control list: a NEW uniform takes its baked default, an UNCHANGED
+  initializer preserves the live slider/`set_uniforms` value, and a **CHANGED
+  initializer is adopted** (editing `= 1.5` -> `= 2.0` actually takes effect instead
+  of being silently preserved at the old value — the store remembers each uniform's
+  last-seen declared default in a session `declaredDefaults` map to tell the two
+  apart, reset on project switch / undo so those preserve persisted values).
+  `textures.ts` (procedural built-ins).
 - `src/ai/` — `providers.ts` translates the neutral conversation model to/from
   **Anthropic Messages** and **OpenAI Chat Completions** (both streamed, vision +
   tool use; `testConnection` + `listModels` power the Settings test button and
@@ -91,7 +99,10 @@ npm run build         # ts0 build -> dist/index.html
   (the stable, cacheable base — it does NOT list tool schemas, those go in the
   request's `tools` field for native models) and `buildProjectState()` (the
   volatile per-edit project state, kept OUT of the cached prefix and sent as a
-  trailing message) plus `textToolInstructions` for text mode. `pricing.ts` maps a
+  trailing message — it includes the **live GLSL source of the ACTIVE layer's
+  passes** so the model edits against ground truth without a `get_shader` round-trip
+  and sees any edits the user made between turns) plus `textToolInstructions` for
+  text mode. `pricing.ts` maps a
   model id to its rates + context window for the chat cost / context indicator.
   `compact.ts` is conversation **compaction**: `summarizeConversation` asks the
   model (no tools) to "summarize this entire conversation in detail for a future
@@ -118,8 +129,10 @@ npm run build         # ts0 build -> dist/index.html
   `shapes.ts` registry; `geometry_util.ts` parses shape fields — degrees→radians,
   rgba). Within a layer: `init_shader`, `edit_shader` (forgiving exact-snippet
   replace; optional `pass`), `add_pass` / `remove_pass` / `list_passes` /
-  `set_output_pass`, `get_shader`, `set_uniforms` (shared across ALL layers),
-  `rename_shader` (permission-gated), `connect_pins`
+  `set_output_pass`, `get_shader`, `set_uniforms` (shared across ALL layers; a
+  **PATCH** that merges by name — only the named uniforms are updated, omitting one
+  never resets it, so the model never resends the whole list), `rename_shader`
+  (permission-gated), `connect_pins`
   (`from: none|under|geometry|mask|builtin:<name>|pass:<name>|webcam|asset:<name>`;
   texture input pins are inferred from `iChannelN` references in the shader),
   `list_assets`, `capture_screenshot`,
