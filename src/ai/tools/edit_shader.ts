@@ -21,7 +21,7 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.editShader,
 		description:
-			"Make a targeted edit to a pass's shader by replacing an exact snippet -- the primary way to change an existing shader (don't retype the whole thing). `old` must appear in that pass's source (whitespace included); it is replaced by `new`. Targets the output pass by default; set `pass` to a pass name (see list_passes) to edit a different pass. Make several edits in one turn by calling this multiple times. If `old` is not unique, include more surrounding lines or set replace_all. After your edits compile you get a screenshot and the compile log.",
+			"Make a targeted edit to a pass's shader by replacing an exact snippet -- the primary way to change an existing shader (don't retype the whole thing). `old` must appear in that pass's source (whitespace included); it is replaced by `new`. Targets the output pass by default; set `pass` to a pass name (see list_passes) to edit a different pass. Make several edits in one turn by calling this multiple times. If `old` is not unique, include more surrounding lines or set replace_all. After your edits compile you get the compile log (set screenshot:true to get the rendered frame too).",
 		parameters: {
 			type: "object",
 			properties: {
@@ -29,7 +29,7 @@ registerTool({
 				new: { type: "string", description: "Replacement text." },
 				pass: { type: "string", description: "Pass name to edit (default: the output pass)." },
 				replace_all: { type: "boolean", description: "Replace every occurrence (default false = the single match)." },
-				screenshot: { type: "boolean", description: "Attach the rendered frame to the result so you can verify it (default false; you are always shown the render when you finish)." },
+				screenshot: { type: "boolean", description: "Attach the rendered frame to the result so you can see it (default false). Set true when you want to check this change visually." },
 			},
 			required: ["old", "new"],
 		},
