@@ -135,6 +135,23 @@ re-runs from that point (everything after is replaced). Deleting removes that
 exchange — a prompt and the reply it produced — and keeps the rest of the
 conversation intact.
 
+### Compact the chat
+
+A long session piles up prompts, tool calls, and (heavy) screenshots, steadily
+filling the model's **context window** — the same one the usage indicator meters.
+Type **`/compact`** in the chat and send it: it does what you'd do by hand —
+asks the model to *"summarize this entire conversation in detail for a future
+instance of yourself to pick up,"* then starts a fresh chat that **begins with
+that summary**, replacing the long history.
+
+The live project state (current layers, passes, shapes, uniforms, last compile
+error) is always sent fresh, so the summary only needs to carry the *conversational*
+context — your goal, stylistic intent, what was tried and rejected, and what's left
+— not the shader code. The result is shown as a single collapsible **"Conversation
+compacted"** card; the next message continues from there with a much smaller (and
+cheaper) prompt. Your shader, layers, and assets are untouched — only the chat
+transcript is summarized.
+
 ### Undo / redo
 
 A single history tracks the whole project — every pass's code, the render graph,
@@ -256,7 +273,7 @@ src/
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history / layers / cache / uniforms / assets)
+test/                   # plain-Node unit tests (history / layers / cache / uniforms / assets / compact)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

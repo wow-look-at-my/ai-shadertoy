@@ -8,6 +8,7 @@ import { channelsForSource, ensureMaskCompositePass, makeCompositeLayer, makeMas
 import { shapeDef } from "../gl/shapes.ts";
 import { extractUniformDeclarations } from "../gl/wrapper.ts";
 import { getTool, text } from "../ai/tools/index.ts";
+import { buildCompactedMessages, shouldCompact, summarizeConversation } from "../ai/compact.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
 import type { CompileResult } from "../gl/renderer.ts";
@@ -405,6 +406,22 @@ export class Store {
 	commitMessages(): void {
 		this.touch();
 		void this.saveProjectNow();
+	}
+
+	/** Compact the conversation: replace the history with an AI-written summary so
+	 * the context window (and per-turn cost) drops. The model call is the caller's
+	 * to gate (busy/abort live in the chat, like an agent turn); this just does the
+	 * summarize-and-replace and persists. Throws on a provider/network error. */
+	async compactConversation(signal?: AbortSignal): Promise<{ ok: boolean; error?: string; before: number; after: number }> {
+		const before = this.project.messages.length;
+		if (!shouldCompact(this.project.messages)) return { ok: false, error: "Not enough conversation to compact yet.", before, after: before };
+		const { summary } = await summarizeConversation(this.settings, this.project.messages, { signal });
+		// A mid-stream Stop can return partial text instead of throwing -- don't
+		// replace the conversation if the user cancelled.
+		if (signal?.aborted) return { ok: false, error: "Compaction cancelled.", before, after: before };
+		this.project.messages = buildCompactedMessages(summary);
+		this.commitMessages();
+		return { ok: true, before, after: this.project.messages.length };
 	}
 
 	/** Edit one pass's source (recompiles just that pass). */

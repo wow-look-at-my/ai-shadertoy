@@ -8,6 +8,7 @@ import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
+import { hasCompactionSummary, shouldCompact } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
 import { hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
@@ -17,18 +18,23 @@ import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlo
 import type { Store } from "../state/store.ts";
 
 // init_shader is offered only until the AI has authored the shader this
-// conversation (first turn / after a reset); after that, edits only.
+// conversation (first turn / after a reset); after that, edits only. A
+// compaction summary counts as authored -- the original init_shader tool_use is
+// gone from the history, but the shader exists, so we must keep offering edits
+// only (else the model could init_shader and wipe the work).
 function authoredShader(messages: Message[]): boolean {
 	const isShaderTool = (n: string) => n === TOOL_NAMES.initShader || n === TOOL_NAMES.editShader;
+	if (hasCompactionSummary(messages)) return true;
 	return messages.some((m) => m.role === "assistant" && ((m.textTools?.some(isShaderTool) ?? false) || m.blocks.some((b) => b.type === "tool_use" && isShaderTool(b.name))));
 }
 
 // Short label for the undo entry that wraps an agent turn: the text of the latest
-// real user prompt (ignoring text-mode tool-result messages), truncated.
+// real user prompt (ignoring text-mode tool-result messages and compaction
+// artifacts), truncated.
 function turnPromptSummary(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i];
-		if (m.role !== "user" || m.toolOutput) continue;
+		if (m.role !== "user" || m.toolOutput || m.compaction) continue;
 		const text = m.blocks.find((b): b is TextBlock => b.type === "text")?.text.trim() ?? "";
 		if (text) return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 		break;
@@ -44,7 +50,7 @@ export interface ChatDeps {
 export function createChat(deps: ChatDeps): HTMLElement {
 	const { store } = deps;
 	const list = el("div", { class: "chat-list" });
-	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: "Describe the shader you want… (Enter to send, Shift+Enter for newline)" } });
+	const input = el("textarea", { class: "chat-input", attrs: { rows: "2", placeholder: "Describe the shader you want… (Enter to send, Shift+Enter for newline · /compact to summarize)" } });
 
 	let attach = false;
 	const attachBtn = el("button", { class: "btn icon", title: "Attach the current frame to your next message" }, icon("camera"));
@@ -122,7 +128,12 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		if (!store.project.messages.length) {
 			append(list, [el("div", { class: "chat-hint" }, el("p", {}, "Tell the AI what to build. It writes the shader, sees the result, and iterates."), el("p", { class: "muted" }, "Examples: ", el("em", {}, "“a swirling plasma in purples and gold”, “raymarched torus with soft shadows”, “animated checkerboard floor”")))]);
 		} else {
-			for (const m of store.project.messages) list.appendChild(renderMessage(m));
+			// The synthetic "summarize ..." request is internal plumbing; only the
+			// summary card it produced is shown (see renderMessage).
+			for (const m of store.project.messages) {
+				if (m.compaction === "request") continue;
+				list.appendChild(renderMessage(m));
+			}
 		}
 		scroll();
 	}
@@ -215,6 +226,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	function renderMessage(m: Message): HTMLElement {
 		const node = messageEl(m);
+		// Compaction artifacts are managed plumbing, not editable chat turns.
+		if (m.compaction) return node;
 		if (isDeletable(m)) {
 			const buttons: HTMLElement[] = [];
 			if (m.role === "user" && !m.toolOutput) {
@@ -285,6 +298,12 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	async function send(): Promise<void> {
 		const value = input.value.trim();
 		if (!value) return;
+		// Slash commands are typed into the input but aren't sent as prompts.
+		if (value.toLowerCase() === "/compact") {
+			input.value = "";
+			void compact();
+			return;
+		}
 		if (!ensureReady()) return;
 
 		const blocks: Block[] = [{ type: "text", text: value }];
@@ -401,6 +420,40 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 	}
 
+	// The /compact command: ask the model to summarize everything so far, then
+	// replace the history with that summary. Busy/abort are managed here exactly
+	// like an agent turn, so Stop cancels it and undo/redo stay disabled meanwhile.
+	async function compact(): Promise<void> {
+		if (store.busy) return;
+		if (!shouldCompact(store.project.messages)) {
+			list.appendChild(el("div", { class: "msg muted small" }, "Nothing to compact yet — send a few messages first."));
+			scroll();
+			return;
+		}
+		if (!ensureReady()) return;
+		abort = new AbortController();
+		store.setBusy(true);
+		const status = el("div", { class: "msg compaction pending" }, el("div", { class: "compaction-head" }, icon("compress", { size: 14 }), " Compacting conversation…"));
+		list.appendChild(status);
+		scroll();
+		try {
+			const res = await store.compactConversation(abort.signal);
+			if (!res.ok) {
+				status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact: "), res.error ?? "could not compact."));
+			} else {
+				renderAll(); // drops the old bubbles + status, shows the summary card
+			}
+		} catch (e) {
+			const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
+			status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact failed: "), detail));
+		} finally {
+			store.setBusy(false);
+			abort = null;
+			await store.saveProjectNow();
+			scroll();
+		}
+	}
+
 	input.addEventListener("keydown", (e) => {
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
@@ -421,6 +474,18 @@ export function createChat(deps: ChatDeps): HTMLElement {
 // ---- message rendering -----------------------------------------------------
 
 function messageEl(m: Message): HTMLElement {
+	// The compacted-history summary: a distinct, full-width card (the AI recap
+	// that now stands in for everything before it), collapsible to stay out of
+	// the way while remaining inspectable.
+	if (m.compaction === "summary") {
+		const text = m.blocks.find((b): b is TextBlock => b.type === "text")?.text ?? "";
+		return el(
+			"div",
+			{ class: "msg compaction" },
+			el("div", { class: "compaction-head" }, icon("compress", { size: 14 }), " Conversation compacted — summary for context"),
+			el("details", { class: "compaction-body", attrs: { open: "" } }, el("summary", {}, "Summary"), renderMarkdown(text)),
+		);
+	}
 	if (m.role === "user") {
 		// text-tools mode feeds tool results back as a user message -- render it
 		// as a results row, not a user bubble.
