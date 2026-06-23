@@ -7,7 +7,7 @@
 
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
-import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
+import { debounce, formatBytes, pickFile, pickFiles, uid } from "../util/misc.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
@@ -39,6 +39,7 @@ export function createRightPanel(store: Store): HTMLElement {
 	const uniformsView = el("div", { class: "uniforms" });
 	const texturesView = el("div", { class: "textures" });
 	const assetsView = el("div", { class: "assets" });
+	setupAssetDrop(store, assetsView);
 
 	const viewFor = (t: Tab): HTMLElement => (t === "Layers" ? layersView : t === "Code" ? codeView.root : t === "Passes" ? passesView : t === "Uniforms" ? uniformsView : t === "Textures" ? texturesView : assetsView);
 
@@ -581,16 +582,20 @@ function uniqueAssetName(assets: ImageAsset[], base: string): string {
 	return `${want} ${i}`;
 }
 
-/** Pick a file, probe its dimensions, and add it to the shared asset library
- * (no channel binding). Returns the new asset, or null if cancelled/too large. */
-async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<ImageAsset | null> {
-	const file = await pickFile(type === "video" ? "video/*" : "image/*");
-	if (!file) return null;
+/** Probe one already-chosen file's dimensions and add it to the shared asset
+ * library (no channel binding). Returns the new asset, or null if it was rejected
+ * (a video over the size limit). May throw if the media fails to decode. */
+async function addAssetFromFile(store: Store, file: File, type: "image" | "video"): Promise<ImageAsset | null> {
 	if (type === "video" && file.size > MAX_VIDEO_BYTES) {
-		alert(`Video is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
+		alert(`Video "${file.name}" is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
 		return null;
 	}
 	const dataUrl = await fileToDataUrl(file);
+	// Content de-dup: identical bytes => identical data URL. Reuse the existing
+	// asset instead of storing the same media twice (so re-dropping a file, or
+	// dropping one already in the library, is a no-op that still binds correctly).
+	const dup = store.assets.find((a) => a.dataUrl === dataUrl);
+	if (dup) return dup;
 	let width: number;
 	let height: number;
 	if (type === "video") {
@@ -614,6 +619,93 @@ async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<I
 	};
 	store.addAsset(asset);
 	return asset;
+}
+
+/** Pick a single file, probe it, and add it to the shared asset library (no
+ * channel binding). Returns the new asset, or null if cancelled/rejected. */
+async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<ImageAsset | null> {
+	const file = await pickFile(type === "video" ? "video/*" : "image/*");
+	if (!file) return null;
+	return addAssetFromFile(store, file, type);
+}
+
+/** Add a batch of (file, kind) pairs to the library. Sequential so name- and
+ * content-de-dup see every prior add; each file is isolated so one bad file
+ * (corrupt / undecodable) alerts but doesn't abort the rest. */
+async function addFilesToLibrary(store: Store, items: Array<{ file: File; kind: "image" | "video" }>): Promise<void> {
+	for (const { file, kind } of items) {
+		try {
+			await addAssetFromFile(store, file, kind);
+		} catch {
+			alert(`Couldn't load "${file.name}" — it may be corrupt or an unsupported ${kind} format.`);
+		}
+	}
+}
+
+/** Pick one or more files (all of one kind) and add them to the shared library. */
+async function pickAndAddAssets(store: Store, type: "image" | "video"): Promise<void> {
+	const files = await pickFiles(type === "video" ? "video/*" : "image/*");
+	await addFilesToLibrary(store, files.map((file) => ({ file, kind: type })));
+}
+
+/** Classify a dropped file as image or video (MIME first, extension as a fallback
+ * for when the OS didn't tag it); null = not media we accept. */
+function fileKind(file: File): "image" | "video" | null {
+	const t = file.type.toLowerCase();
+	if (t.startsWith("image/")) return "image";
+	if (t.startsWith("video/")) return "video";
+	const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+	if (["mp4", "webm", "mov", "m4v", "ogv", "ogg", "mkv"].includes(ext)) return "video";
+	if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"].includes(ext)) return "image";
+	return null;
+}
+
+/** Add files dropped onto the Assets panel, routing each to image/video by type. */
+async function addDroppedFiles(store: Store, fileList: FileList): Promise<void> {
+	const items: Array<{ file: File; kind: "image" | "video" }> = [];
+	let skipped = 0;
+	for (const file of Array.from(fileList)) {
+		const kind = fileKind(file);
+		if (kind) items.push({ file, kind });
+		else skipped++;
+	}
+	if (!items.length && skipped) {
+		alert("Only image and video files can be added to the library.");
+		return;
+	}
+	await addFilesToLibrary(store, items);
+}
+
+/** Make the Assets panel a drop target for files dragged in from the OS. */
+function setupAssetDrop(store: Store, container: HTMLElement): void {
+	const hasFiles = (e: DragEvent): boolean => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+	// dragenter/leave fire per child, so count depth and only un-highlight at zero.
+	let depth = 0;
+	const setHot = (on: boolean) => container.classList.toggle("dropzone-hot", on);
+	container.addEventListener("dragenter", (e) => {
+		if (!hasFiles(e)) return;
+		e.preventDefault();
+		depth++;
+		setHot(true);
+	});
+	container.addEventListener("dragover", (e) => {
+		if (!hasFiles(e)) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+	});
+	container.addEventListener("dragleave", (e) => {
+		if (!hasFiles(e)) return;
+		depth = Math.max(0, depth - 1);
+		if (depth === 0) setHot(false);
+	});
+	container.addEventListener("drop", (e) => {
+		if (!hasFiles(e)) return;
+		e.preventDefault();
+		depth = 0;
+		setHot(false);
+		const files = e.dataTransfer?.files;
+		if (files && files.length) void addDroppedFiles(store, files);
+	});
 }
 
 async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<void> {
@@ -661,13 +753,13 @@ function renderAssets(store: Store, container: HTMLElement): void {
 
 	render(
 		container,
-		el("p", { class: "muted small" }, "Shared media library across all your shaders. Upload images or videos; the AI can bind them to a pass input (it sees them via list_assets, and you can wire any input to one in the Textures tab)."),
-		assets.length ? el("div", { class: "asset-grid" }, ...cards) : el("p", { class: "muted" }, "No assets yet. Upload an image or video and the AI can use it."),
+		el("p", { class: "muted small" }, "Shared media library across all your shaders. Upload or drag in images or videos (several at once); the AI can bind them to a pass input (it sees them via list_assets, and you can wire any input to one in the Textures tab)."),
+		assets.length ? el("div", { class: "asset-grid" }, ...cards) : el("p", { class: "muted" }, "No assets yet. Upload or drag in images or videos and the AI can use them."),
 		el(
 			"div",
 			{ class: "asset-actions" },
-			el("button", { class: "btn", on: { click: () => void pickAndAddAsset(store, "image") } }, "+ Upload image"),
-			el("button", { class: "btn", on: { click: () => void pickAndAddAsset(store, "video") } }, "+ Upload video"),
+			el("button", { class: "btn", on: { click: () => void pickAndAddAssets(store, "image") } }, "+ Upload images"),
+			el("button", { class: "btn", on: { click: () => void pickAndAddAssets(store, "video") } }, "+ Upload videos"),
 		),
 	);
 }
