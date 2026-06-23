@@ -6,7 +6,7 @@
 // DOM-free, so plain Node can exercise it:
 //   node --experimental-strip-types test/uniforms.test.ts
 
-import { assembleFragment, extractUniformDeclarations } from "../src/gl/wrapper.ts";
+import { assembleFragment, extractUniformDeclarations, formatUniformDeclarations } from "../src/gl/wrapper.ts";
 import type { Uniform } from "../src/state/types.ts";
 
 let passed = 0;
@@ -154,6 +154,44 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 	];
 	const assembled = assembleFragment("void mainImage(out vec4 o,in vec2 c){o=vec4(u_x);}", dup, 0).source;
 	eq((assembled.match(/uniform float u_x;/g) ?? []).length, 1, "duplicate uniform collapsed to a single header declaration");
+}
+
+// ---- formatUniformDeclarations: the inverse of extraction (round-trips) -----
+// Powers the Uniforms tab "Copy uniforms" button: serialize current values as
+// GLSL declarations that paste straight back into a shader and re-extract identically.
+{
+	const original: Uniform[] = [
+		{ name: "u_speed", type: "float", value: [1.5], min: 0, max: 2, step: 0.01 },
+		{ name: "u_tint", type: "vec3", value: [1, 0.5, 0.2], min: 0, max: 1, step: 0.01 },
+		{ name: "u_off", type: "vec2", value: [-3, 4], min: -4, max: 4, step: 0.1 },
+		{ name: "u_quad", type: "vec4", value: [0.1, 0.2, 0.3, 0.4], min: 0, max: 1, step: 0.01 },
+		{ name: "u_col", type: "color", value: [0.25, 0.5, 0.75], min: 0, max: 1, step: 0.01 },
+	];
+	const text = formatUniformDeclarations(original);
+	check(text.split("\n").every((l) => /^uniform (float|vec[234]) u_\w+ = .+;$/.test(l)), "every line is a uniform declaration with a baked initializer");
+	check(text.includes("uniform float u_speed = 1.5;"), "float value baked into the declaration");
+	check(text.includes("uniform vec3 u_tint = vec3(1.0, 0.5, 0.2);"), "vec3 components serialized as a constructor (integers get a decimal point)");
+	check(text.includes("uniform vec3 u_col = vec3(0.25, 0.5, 0.75);"), "color is serialized as a vec3 with its rgb value");
+
+	// Re-extracting the copied text yields the same names, values, and GLSL types.
+	const back = extractUniformDeclarations(text);
+	eq(back.length, original.length, "every uniform round-trips back out");
+	near(byName(back, "u_speed").value[0], 1.5, "float value preserved through a round-trip");
+	near(byName(back, "u_tint").value[0], 1, "vec3 component preserved (x)");
+	near(byName(back, "u_tint").value[2], 0.2, "vec3 component preserved (z)");
+	near(byName(back, "u_off").value[0], -3, "negative component preserved");
+	near(byName(back, "u_off").value[1], 4, "positive component preserved");
+	near(byName(back, "u_quad").value[3], 0.4, "vec4 fourth component preserved");
+	eq(byName(back, "u_col").type, "vec3", "a color comes back as a vec3 (GLSL has no color type)");
+	near(byName(back, "u_col").value[1], 0.5, "color green channel preserved");
+}
+
+// ---- formatting trims float noise and never emits a bare integer literal ----
+{
+	const noisy: Uniform[] = [{ name: "u_n", type: "vec2", value: [0.1 + 0.2, 2], min: 0, max: 1, step: 0.01 }];
+	const text = formatUniformDeclarations(noisy);
+	check(!text.includes("0.30000000000000004"), "float noise is trimmed (0.1 + 0.2)");
+	check(text.includes("vec2(0.3, 2.0)"), "integer component gets a decimal point so it stays a GLSL float");
 }
 
 console.log(`uniforms.test.ts: ${passed} checks passed`);

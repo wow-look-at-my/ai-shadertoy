@@ -1041,6 +1041,10 @@ textarea.code {
 	flex-direction: column;
 	gap: 12px;
 }
+.u-actions {
+	display: flex;
+	gap: 8px;
+}
 .u-row {
 	background: var(--bg-1);
 	border: 1px solid var(--line);

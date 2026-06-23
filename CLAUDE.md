@@ -191,7 +191,10 @@ npm run build         # ts0 build -> dist/index.html
   **Passes** (the active layer's object graph — pass nodes wired by their
   inputs, incl. `under`/`geometry`; the DAG is **auto-laid-out** left→right in
   dependency columns by `graphlayout.ts` and nodes are NOT draggable — only
-  pan/zoom/fit the view), **Uniforms** (shared), **Textures** (the
+  pan/zoom/fit the view), **Uniforms** (shared; a **Copy uniforms** button
+  serializes every uniform to GLSL declarations with current values baked in via
+  `formatUniformDeclarations` — the inverse of `extractUniformDeclarations`, so it
+  round-trips), **Textures** (the
   selected pass's inputs), and **Assets** (the shared media library — upload
   images/videos with no channel binding (multi-select `pickFiles` OR drag-and-drop
   onto the panel; identical bytes are content-deduped by `dataUrl`, so re-adding a

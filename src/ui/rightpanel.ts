@@ -7,7 +7,8 @@
 
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
-import { debounce, formatBytes, pickFile, pickFiles, uid } from "../util/misc.ts";
+import { copyText, debounce, formatBytes, pickFile, pickFiles, uid } from "../util/misc.ts";
+import { formatUniformDeclarations } from "../gl/wrapper.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
@@ -499,19 +500,35 @@ function renderUniforms(store: Store, container: HTMLElement): void {
 		);
 	});
 
+	const addBtn = el("button", {
+		class: "btn",
+		on: {
+			click: () => {
+				store.project.uniforms.push({ name: uniqueName(uniforms), type: "float", value: [0.5], min: 0, max: 1, step: 0.01 });
+				commit();
+			},
+		},
+	}, "+ Add uniform");
+
+	const copyBtn = el("button", {
+		class: "btn",
+		title: "Copy every uniform as GLSL declarations with their current values (paste into a shader to bake them in)",
+		on: {
+			click: () => {
+				const label = copyBtn.textContent;
+				void copyText(formatUniformDeclarations(store.project.uniforms)).then((ok) => {
+					copyBtn.textContent = ok ? "Copied!" : "Copy failed";
+					setTimeout(() => { copyBtn.textContent = label; }, 1200);
+				});
+			},
+		},
+	}, "Copy uniforms");
+
 	render(
 		container,
 		el("p", { class: "muted small" }, "Uniforms are shared across all passes."),
 		uniforms.length ? el("div", { class: "u-list" }, ...rows) : el("p", { class: "muted" }, "No custom uniforms. The AI adds these with set_uniforms, or add one below."),
-		el("button", {
-			class: "btn",
-			on: {
-				click: () => {
-					store.project.uniforms.push({ name: uniqueName(uniforms), type: "float", value: [0.5], min: 0, max: 1, step: 0.01 });
-					commit();
-				},
-			},
-		}, "+ Add uniform"),
+		el("div", { class: "u-actions" }, addBtn, uniforms.length ? copyBtn : null),
 	);
 }
 
