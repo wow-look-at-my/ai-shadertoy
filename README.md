@@ -100,15 +100,14 @@ Passes execute in dependency order, and an input pointing at its own pass reads
 the *previous* frame (feedback, for trails / accumulation / ping-pong simulation).
 One pass is the layer's **output** (its composite). Passes can use an `rgba16f`
 target to keep HDR values for bloom/blur. Edit it visually in the **Passes** tab
-(draggable nodes wired by their inputs, scoped to the active layer), or let the AI
-build it. Inputs per pass are not capped at four; use as many `iChannelN` inputs
+(auto-arranged nodes wired by their inputs, scoped to the active layer), or let the
+AI build it. Inputs per pass are not capped at four; use as many `iChannelN` inputs
 as the shader needs, up to the GPU limit.
 
 The graph **auto-arranges** itself left-to-right by dependency (sources on the
-left, the on-screen output on the right) as passes are added and wired — so an
-AI-built graph comes out tidy instead of piled up. Drag any node and that layer
-switches to manual layout (your positions stick); the **Tidy** button in the
-Passes toolbar re-runs the auto-arrange and re-enables it.
+left, the on-screen output on the right) — every time passes are added, removed,
+or rewired, and on load — so it is always tidy and there is nothing to drag. The
+Passes viewport pans and zooms (with a **Fit** button to frame everything).
 
 ### Input channels (textures, video, webcam)
 

@@ -24,8 +24,6 @@ interface GraphView {
 	x: number;
 	y: number;
 	zoom: number;
-	/** Set by "Tidy" so the next render frames the freshly arranged graph. */
-	fitNext?: boolean;
 }
 
 export function createRightPanel(store: Store): HTMLElement {
@@ -248,7 +246,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		}
 	};
 
-	for (const pass of passes) viewport.appendChild(buildNode(store, pass, select, () => drawEdges(), view));
+	for (const pass of passes) viewport.appendChild(buildNode(store, pass, select));
 	viewport.insertBefore(svg, viewport.firstChild);
 	drawEdges();
 
@@ -315,22 +313,13 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		zoomBtn("−", "Zoom out", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1 / 1.2)),
 		zoomLabel,
 		zoomBtn("+", "Zoom in", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1.2)),
-		el("button", { class: "btn tiny", title: "Auto-arrange passes left-to-right by dependency", on: { click: () => { view.fitNext = true; store.tidyPasses(); } } }, "Tidy"),
 		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, graph); applyTransform(); } } }, "Fit"),
 	);
 
 	render(container, toolbar, graph);
-
-	// "Tidy" requests a frame of the freshly arranged graph; do it after mount so
-	// the container has measurable dimensions.
-	if (view.fitNext) {
-		view.fitNext = false;
-		fitView(view, passes, graph);
-		applyTransform();
-	}
 }
 
-function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireChange: () => void, view: GraphView): HTMLElement {
+function buildNode(store: Store, pass: Pass, select: (t: Tab) => void): HTMLElement {
 	const isOutput = pass.id === store.activeLayer().outputPassId;
 	const selected = pass.id === store.selectedPassId;
 	const node = el("div", { class: `graph-node${selected ? " selected" : ""}${isOutput ? " output" : ""}` });
@@ -343,8 +332,8 @@ function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireCha
 	const delBtn = el("button", { class: "btn icon tiny", title: "Delete pass", on: { click: () => { const r = store.removePass(pass.id); if (!r.ok && r.error) alert(r.error); } } }, icon("close", { size: 14 }));
 
 	const header = el("div", { class: "gn-head" }, nameEl, el("span", { class: "spacer" }), editBtn, outBtn, delBtn);
-	header.addEventListener("pointerdown", (e) => startDrag(store, pass, node, e, onWireChange, view));
-	// Rename inline on double-click.
+	// Click the header to select; double-click the name to rename. Node positions
+	// are owned by the auto-layout, so there is no node dragging.
 	nameEl.addEventListener("dblclick", () => beginRename(store, pass, nameEl));
 	header.addEventListener("click", (e) => {
 		if (e.target === nameEl || e.target === header) store.selectPass(pass.id);
@@ -378,34 +367,6 @@ function beginRename(store: Store, pass: Pass, nameEl: HTMLElement): void {
 		if (e.key === "Escape") { input.value = pass.name; input.blur(); }
 	});
 	input.addEventListener("blur", commit);
-}
-
-function startDrag(store: Store, pass: Pass, node: HTMLElement, e: PointerEvent, onMove: () => void, view: GraphView): void {
-	if ((e.target as HTMLElement).closest("button, select, input")) return;
-	e.preventDefault();
-	const startX = e.clientX;
-	const startY = e.clientY;
-	const baseX = pass.x;
-	const baseY = pass.y;
-	let curX = baseX;
-	let curY = baseY;
-	const move = (ev: PointerEvent): void => {
-		// Screen deltas are in zoomed pixels; convert to graph units.
-		curX = Math.max(0, baseX + (ev.clientX - startX) / view.zoom);
-		curY = Math.max(0, baseY + (ev.clientY - startY) / view.zoom);
-		node.style.left = `${curX}px`;
-		node.style.top = `${curY}px`;
-		pass.x = curX;
-		pass.y = curY;
-		onMove();
-	};
-	const up = (): void => {
-		window.removeEventListener("pointermove", move);
-		window.removeEventListener("pointerup", up);
-		store.movePass(pass.id, curX, curY);
-	};
-	window.addEventListener("pointermove", move);
-	window.addEventListener("pointerup", up);
 }
 
 // ---- shared channel <select> -----------------------------------------------

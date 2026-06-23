@@ -153,15 +153,14 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 		passes,
 		outputPassId,
 		shapes,
-		// Default to manual (preserve stored node positions) so loading a project
-		// never re-shuffles a graph the user arranged by hand; only an explicit
-		// saved `false` (or a fresh/migrated graph below) opts back into auto-layout.
-		manualLayout: r.manualLayout !== false,
 	};
 	if (r.mask && typeof r.mask === "object") {
 		layer.mask = normalizeLayer(r.mask, 0);
 		ensureMaskCompositePass(layer);
 	}
+	// Node positions are owned by the dependency auto-layout, never persisted state,
+	// so always (re)derive them on load -- ignoring whatever x/y happen to be stored.
+	applyLayout(layer);
 	return layer;
 }
 
@@ -176,12 +175,8 @@ export function normalizeProject(raw: unknown): Project {
 	if (Array.isArray(r.layers) && r.layers.length) {
 		layers = r.layers.map((l, i) => normalizeLayer(l, i));
 	} else if (Array.isArray(r.passes) && r.passes.length) {
-		// Mid-era flat graphs predate node positions; give them a proper dependency
-		// layout instead of the old index-order placement and let it stay automatic.
-		const base = normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0);
-		base.manualLayout = false;
-		applyLayout(base);
-		layers = [base];
+		// Mid-era flat graph -> one "Base" layer (normalizeLayer lays it out).
+		layers = [normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0)];
 	} else {
 		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels), 320, 60);
 		layers = [makeLayer("Base", [output], output.id, [])];

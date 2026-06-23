@@ -945,7 +945,7 @@ textarea.code {
 	gap: 1px;
 	padding: 0 4px 0 9px;
 	border-bottom: 1px solid var(--line);
-	cursor: move;
+	cursor: pointer; /* click selects the pass; nodes are auto-arranged, not draggable */
 	touch-action: none;
 }
 .gn-name {

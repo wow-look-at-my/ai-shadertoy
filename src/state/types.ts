@@ -104,7 +104,10 @@ export interface Pass {
 	source: string; // GLSL ES 3.00 body defining mainImage()
 	channels: Channel[]; // 0..MAX_INPUTS; named iChannel0..iChannel{N-1}
 	format: PassFormat;
-	x: number; // node position in the graph editor
+	// Node position in the graph editor. Owned by the dependency auto-layout
+	// (src/util/graphlayout.ts) -- recomputed on every structural change and on
+	// load -- not a user-editable value (there is no node dragging).
+	x: number;
 	y: number;
 }
 
@@ -157,10 +160,6 @@ export interface Layer {
 	 * output ALPHA is available to this layer's graph as kind:"mask". The standard
 	 * masked-composite graph computes mix(under, thisComposite, mask.a). */
 	mask?: Layer;
-	/** When true, the user has hand-arranged this layer's pass-graph nodes, so
-	 * structural edits no longer auto-re-arrange them (the "Tidy" button resets
-	 * this). Absent/false means the dependency auto-layout owns the positions. */
-	manualLayout?: boolean;
 }
 
 // A bindable media asset: a still image or (kind === "video") a clip sampled per
