@@ -67,7 +67,7 @@ export interface AgentCallbacks {
 	cacheKey?: string;
 }
 
-const MAX_ITERATIONS = 12;
+const MAX_ITERATIONS = 100;
 
 export async function runAgent(
 	settings: Settings,
