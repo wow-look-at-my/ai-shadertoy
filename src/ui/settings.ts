@@ -141,7 +141,7 @@ export function createSettings(store: Store): SettingsModal {
 		checkField("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
 		field("CORS proxy URL", proxyUrl, "Request becomes proxyURL + targetURL."),
 		el("h3", {}, "Vision feedback"),
-		checkField("Attach a render to every shader change", autoScreenshot, "Off by default: the AI requests a render when it wants one (screenshot:true) and is always shown the final result before it finishes."),
+		checkField("Attach a render to every shader change", autoScreenshot, "Off by default: the AI pulls a render only when it wants one (screenshot:true or capture_screenshot). Turn this on to attach a render to every shader change."),
 		field("Screenshot max edge (px)", shotDim),
 		el("h3", {}, "Image generation (optional)"),
 		checkField("Enable generate_texture tool", igEnabled),

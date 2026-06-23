@@ -57,7 +57,7 @@ export const STARTER_UNIFORMS: Uniform[] = [];
  * stacked on top of this. */
 export function makeProject(name: string, shaderSource: string): Project {
 	const now = Date.now();
-	const output = makePass("Image", shaderSource, channelsForSource(shaderSource), 320, 60);
+	const output = makePass("Image", shaderSource, channelsForSource(shaderSource));
 	const base = makeLayer("Base", [output], output.id, []);
 	return {
 		id: uid("p_"),
@@ -106,15 +106,15 @@ function normalizeChannels(raw: unknown, source = ""): Channel[] {
 
 function normalizePass(raw: unknown, i: number): Pass {
 	const r = (raw ?? {}) as Partial<Pass>;
-	const fallback = makePass(r.name ?? `Pass ${i + 1}`, r.source ?? "", normalizeChannels(r.channels, r.source ?? ""), 40 + i * 240, 60);
+	// Legacy `x`/`y` graph-editor coordinates (if present) are dropped: the Passes
+	// view now auto-lays the DAG out from its edges (see ui/graphlayout.ts).
+	const fallback = makePass(r.name ?? `Pass ${i + 1}`, r.source ?? "", normalizeChannels(r.channels, r.source ?? ""));
 	return {
 		id: typeof r.id === "string" && r.id ? r.id : fallback.id,
 		name: r.name ?? fallback.name,
 		source: r.source ?? "",
 		channels: normalizeChannels(r.channels, r.source ?? ""),
 		format: r.format === "rgba16f" ? "rgba16f" : "rgba8",
-		x: typeof r.x === "number" ? r.x : fallback.x,
-		y: typeof r.y === "number" ? r.y : fallback.y,
 	};
 }
 
@@ -173,7 +173,7 @@ export function normalizeProject(raw: unknown): Project {
 	} else if (Array.isArray(r.passes) && r.passes.length) {
 		layers = [normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0)];
 	} else {
-		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels), 320, 60);
+		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels));
 		layers = [makeLayer("Base", [output], output.id, [])];
 	}
 	return {

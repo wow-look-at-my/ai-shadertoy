@@ -104,8 +104,6 @@ export interface Pass {
 	source: string; // GLSL ES 3.00 body defining mainImage()
 	channels: Channel[]; // 0..MAX_INPUTS; named iChannel0..iChannel{N-1}
 	format: PassFormat;
-	x: number; // node position in the graph editor
-	y: number;
 }
 
 // ---- layers + geometry -----------------------------------------------------
@@ -257,8 +255,10 @@ export function channelsForSource(source: string): Channel[] {
 }
 
 let passCounter = 0;
-/** Build a fresh pass. `id` is unique within a session; pass ids are persisted. */
-export function makePass(name: string, source: string, channels?: Channel[], x = 40, y = 40): Pass {
+/** Build a fresh pass. `id` is unique within a session; pass ids are persisted.
+ * Graph-editor positions are NOT stored -- the Passes view auto-lays the DAG out
+ * from its dependency edges (see ui/graphlayout.ts). */
+export function makePass(name: string, source: string, channels?: Channel[]): Pass {
 	passCounter++;
 	return {
 		id: `pass_${Date.now().toString(36)}_${passCounter}`,
@@ -266,8 +266,6 @@ export function makePass(name: string, source: string, channels?: Channel[], x =
 		source,
 		channels: channels ?? channelsForSource(source),
 		format: "rgba8",
-		x,
-		y,
 	};
 }
 
@@ -330,7 +328,7 @@ export function makeCompositeLayer(name: string, shapes: Shape[] = []): Layer {
 		{ kind: "under", filter: "linear", wrap: "clamp" },
 		{ kind: "geometry", filter: "linear", wrap: "clamp" },
 	];
-	const pass = makePass("Composite", LAYER_COMPOSITE_SOURCE, channels, 320, 60);
+	const pass = makePass("Composite", LAYER_COMPOSITE_SOURCE, channels);
 	return makeLayer(name, [pass], pass.id, shapes);
 }
 
@@ -358,7 +356,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
  * with shapes (e.g. an ellipse with falloff) to get a soft mask. */
 export function makeMaskLayer(shapes: Shape[] = []): Layer {
 	const channels: Channel[] = [{ kind: "geometry", filter: "linear", wrap: "clamp" }];
-	const pass = makePass("Mask", MASK_SOURCE, channels, 320, 60);
+	const pass = makePass("Mask", MASK_SOURCE, channels);
 	return makeLayer("Mask", [pass], pass.id, shapes);
 }
 
@@ -374,7 +372,7 @@ export function ensureMaskCompositePass(layer: Layer): Pass {
 		{ kind: "pass", passId: layer.outputPassId, filter: "linear", wrap: "clamp" },
 		{ kind: "mask", filter: "linear", wrap: "clamp" },
 	];
-	const pass = makePass("Masked Composite", MASK_COMPOSITE_SOURCE, channels, 560, 60);
+	const pass = makePass("Masked Composite", MASK_COMPOSITE_SOURCE, channels);
 	layer.passes.push(pass);
 	layer.outputPassId = pass.id;
 	return pass;
