@@ -216,10 +216,18 @@ npm run build         # ts0 build -> dist/index.html
   (forking the conversation); the typed **`/compact`** command (parsed in `send()`,
   shown in the input placeholder) summarizes the whole conversation and replaces it
   with one collapsible "Conversation compacted" card (the `compaction` summary
-  message), freeing context. The round math that keeps every `tool_use` paired with its
-  `tool_result` (an orphan 400s the next request) is pure and DOM-free in
-  `src/util/conversation.ts` (`isDeletable` / `deletionRange`) — tested by
-  `node --experimental-strip-types`.
+  message), freeing context. **Steering**: the input stays live while a turn runs —
+  a message sent mid-turn is queued (rendered immediately) and folded into the
+  conversation by the agent loop on its next step rather than starting a second
+  turn. `runAgent` drains the queue via the `takeSteering` callback at the top of
+  each iteration AND before it would stop (so a steer can keep a finishing turn
+  going); injection only happens at "balanced" points, so it never splits a
+  `tool_use` from its `tool_result`. Stop discards un-picked-up steering; the chat
+  re-runs once for the rare message queued in the final iteration. Only an agent
+  turn is steerable (compaction is not). The round math that keeps every `tool_use`
+  paired with its `tool_result` (an orphan 400s the next request) is pure and
+  DOM-free in `src/util/conversation.ts` (`isDeletable` / `deletionRange`) — tested
+  by `node --experimental-strip-types`.
 - `src/shaders/*.glsl` — real `.glsl` files (per the file-type rule): the editable
   `default.frag.glsl` plus the renderer's internal `fullscreen.vert.glsl` (full-screen
   triangle, shared by every pass), `present.frag.glsl` (output blit), and the
