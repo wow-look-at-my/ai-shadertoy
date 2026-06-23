@@ -178,6 +178,18 @@ What makes it work for an AI tool:
 matching `iChannelResolution[N]`). You only write `mainImage`; the harness adds
 `#version`, precision, the uniform declarations, and `main()`.
 
+### Custom uniforms (live sliders)
+
+Declare your own controls right in the shader source —
+`uniform float/vec2/vec3/vec4 u_name;` — and each one automatically becomes a
+live slider (a colour picker for `vec3`/`vec4`) in the **Uniforms** tab. Add an
+optional default to bake in a starting value, e.g. `uniform float u_speed = 1.5;`
+or `uniform vec3 u_tint = vec3(1.0, 0.5, 0.2);` — the slider range widens to fit a
+default outside `0..1`, and a trailing `// comment` is fine. Custom uniforms are
+**shared across every pass and layer**, so the same `u_speed` drives them all. The
+AI uses `set_uniforms` only to adjust an existing control's range, default, or
+label — the `uniform` line in the source is what creates it.
+
 ## Setup
 
 Open the app, click **Settings**, and add:
@@ -261,7 +273,7 @@ src/
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history / layers / cache / uniforms)
+test/                   # plain-Node unit tests (history / layers / cache / uniforms / assets / compact)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.
