@@ -118,11 +118,13 @@ source's size). Each input has its own filter (linear/nearest) and wrap
 nothing is uploaded anywhere — the frames stay on your GPU.
 
 Upload media to the shared **Assets** tab — a library of images and videos that
-lives across all your shaders, independent of any channel. Drop a file in there
-and the AI can see it (`list_assets`) and bind it to a pass input on its own
-(`connect_pins from=asset:<name>`); rename an asset to give the AI a clear handle,
-or delete it to remove it everywhere it's used. (You can still upload straight
-into a channel from the Textures tab — that file lands in the same library.)
+lives across all your shaders, independent of any channel. Upload (or drag and
+drop) one or several files at once — identical files are de-duplicated, so
+re-adding the same image is a no-op — and the AI can see them (`list_assets`) and
+bind them to a pass input on its own (`connect_pins from=asset:<name>`); rename an
+asset to give the AI a clear handle, or delete it to remove it everywhere it's
+used. (You can still upload straight into a channel from the Textures tab — that
+file lands in the same library.)
 
 Some tools require your approval before they take effect. When the AI calls one
 (currently `rename_shader`), the chat shows an **Approve / Deny** prompt and the

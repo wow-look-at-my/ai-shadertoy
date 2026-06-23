@@ -1125,6 +1125,12 @@ textarea.code {
 	flex-direction: column;
 	gap: 12px;
 }
+/* Highlight the Assets panel while files are dragged over it (drag-and-drop upload). */
+.assets.dropzone-hot {
+	outline: 2px dashed var(--accent);
+	outline-offset: -6px;
+	background: rgba(91, 140, 255, 0.1);
+}
 .asset-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
