@@ -11,6 +11,7 @@ import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
+import { inPortY, nodeHeight, NODE_W, outPortY } from "../util/graphlayout.ts";
 import type { BuiltinTexture, Channel, ImageAsset, Layer, Pass, PassFormat, Shape, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -23,6 +24,8 @@ interface GraphView {
 	x: number;
 	y: number;
 	zoom: number;
+	/** Set by "Tidy" so the next render frames the freshly arranged graph. */
+	fitNext?: boolean;
 }
 
 export function createRightPanel(store: Store): HTMLElement {
@@ -173,16 +176,8 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 }
 
 // ---- passes graph (the object graph) ---------------------------------------
-
-const NODE_W = 196;
-const HEADER_H = 30;
-const ROW_H = 26;
-const ADDROW_H = 24;
-
-// Per-node geometry (input count varies, so heights/ports are computed).
-const inPortY = (i: number): number => HEADER_H + ROW_H / 2 + i * ROW_H;
-const outPortY = (pass: Pass): number => HEADER_H + (Math.max(pass.channels.length, 1) * ROW_H) / 2;
-const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + ADDROW_H + 6;
+// Node geometry (NODE_W, port/height helpers) lives in util/graphlayout.ts so the
+// auto-layout, the store, and this view all measure nodes the same way.
 
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 2.5;
@@ -320,10 +315,19 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		zoomBtn("−", "Zoom out", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1 / 1.2)),
 		zoomLabel,
 		zoomBtn("+", "Zoom in", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1.2)),
+		el("button", { class: "btn tiny", title: "Auto-arrange passes left-to-right by dependency", on: { click: () => { view.fitNext = true; store.tidyPasses(); } } }, "Tidy"),
 		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, graph); applyTransform(); } } }, "Fit"),
 	);
 
 	render(container, toolbar, graph);
+
+	// "Tidy" requests a frame of the freshly arranged graph; do it after mount so
+	// the container has measurable dimensions.
+	if (view.fitNext) {
+		view.fitNext = false;
+		fitView(view, passes, graph);
+		applyTransform();
+	}
 }
 
 function buildNode(store: Store, pass: Pass, select: (t: Tab) => void, onWireChange: () => void, view: GraphView): HTMLElement {

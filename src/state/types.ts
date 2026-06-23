@@ -157,6 +157,10 @@ export interface Layer {
 	 * output ALPHA is available to this layer's graph as kind:"mask". The standard
 	 * masked-composite graph computes mix(under, thisComposite, mask.a). */
 	mask?: Layer;
+	/** When true, the user has hand-arranged this layer's pass-graph nodes, so
+	 * structural edits no longer auto-re-arrange them (the "Tidy" button resets
+	 * this). Absent/false means the dependency auto-layout owns the positions. */
+	manualLayout?: boolean;
 }
 
 // A bindable media asset: a still image or (kind === "video") a clip sampled per

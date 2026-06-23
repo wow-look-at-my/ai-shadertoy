@@ -104,6 +104,12 @@ target to keep HDR values for bloom/blur. Edit it visually in the **Passes** tab
 build it. Inputs per pass are not capped at four; use as many `iChannelN` inputs
 as the shader needs, up to the GPU limit.
 
+The graph **auto-arranges** itself left-to-right by dependency (sources on the
+left, the on-screen output on the right) as passes are added and wired — so an
+AI-built graph comes out tidy instead of piled up. Drag any node and that layer
+switches to manual layout (your positions stick); the **Tidy** button in the
+Passes toolbar re-runs the auto-arrange and re-enables it.
+
 ### Input channels (textures, video, webcam)
 
 Each shader-declared texture input can be bound — in the **Textures** tab or by
@@ -269,11 +275,11 @@ src/
   state/                # types, central store, undo/redo history, IndexedDB persistence
   ui/                   # vanilla-DOM components: chat | (preview stacked over the
                         #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets)
-  util/                 # DOM helper, tiny markdown renderer, misc
+  util/                 # DOM helper, tiny markdown renderer, pass-graph auto-layout, misc
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history / layers / cache / uniforms / assets / compact)
+test/                   # plain-Node unit tests (history / layers / cache / uniforms / assets / compact / graphlayout)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

@@ -3,6 +3,7 @@
 import type { Channel, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
 import { channelsForSource, emptyChannel, ensureMaskCompositePass, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
 import { isShapeKind } from "../gl/shapes.ts";
+import { applyLayout } from "../util/graphlayout.ts";
 import { uid } from "../util/misc.ts";
 
 // Model presets per provider. Free-text entry is still allowed in Settings; these
@@ -152,6 +153,10 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 		passes,
 		outputPassId,
 		shapes,
+		// Default to manual (preserve stored node positions) so loading a project
+		// never re-shuffles a graph the user arranged by hand; only an explicit
+		// saved `false` (or a fresh/migrated graph below) opts back into auto-layout.
+		manualLayout: r.manualLayout !== false,
 	};
 	if (r.mask && typeof r.mask === "object") {
 		layer.mask = normalizeLayer(r.mask, 0);
@@ -171,7 +176,12 @@ export function normalizeProject(raw: unknown): Project {
 	if (Array.isArray(r.layers) && r.layers.length) {
 		layers = r.layers.map((l, i) => normalizeLayer(l, i));
 	} else if (Array.isArray(r.passes) && r.passes.length) {
-		layers = [normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0)];
+		// Mid-era flat graphs predate node positions; give them a proper dependency
+		// layout instead of the old index-order placement and let it stay automatic.
+		const base = normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0);
+		base.manualLayout = false;
+		applyLayout(base);
+		layers = [base];
 	} else {
 		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels), 320, 60);
 		layers = [makeLayer("Base", [output], output.id, [])];

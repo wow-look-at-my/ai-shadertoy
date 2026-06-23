@@ -147,7 +147,9 @@ npm run build         # ts0 build -> dist/index.html
   is `{kind, x, y, w, h, rotation, color, cornerRadius, feather, falloff}` in
   normalized 0..1 canvas coords (`falloff` 0..1 ramps alpha centre->edge = a radial
   gradient). A layer also has an optional `mask?: Layer` (an owned layer used as a
-  per-pixel opacity mask). `makeCompositeLayer` builds a ready "over" layer,
+  per-pixel opacity mask) and an optional `manualLayout?: boolean` (true once the
+  user has hand-dragged this layer's graph nodes — see the auto-layout below).
+  `makeCompositeLayer` builds a ready "over" layer,
   `makeMaskLayer` a geometry-passthrough mask; `ensureMaskCompositePass` adds the
   graph node that applies it; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`/
   `MASK_COMPOSITE_SOURCE` are their default shaders. `src/util/media.ts` holds the
@@ -163,9 +165,23 @@ npm run build         # ts0 build -> dist/index.html
   (`addShape`/`updateShape`/`removeShape` — cheap via `renderer.setLayerShapes`),
   and the per-layer pass-graph mutations (`addPass`/`removePass`/`setOutputPass`/
   `setPassSource`/`connectPin`/…, all resolving the pass's owning layer), plus
-  `commitMessages()`. `defaults.ts` `normalizeProject` migrates BOTH eras — legacy
-  single-`shaderSource` and the mid-era flat `passes`/`outputPassId` graph — into a
-  single "Base" layer (tested in `test/layers.test.ts`). `persist.ts` (IndexedDB,
+  `commitMessages()`. **Pass-graph auto-layout**: `src/util/graphlayout.ts` owns
+  the node geometry (`NODE_W`, `inPortY`/`outPortY`/`nodeHeight`) AND a pure,
+  DOM-free **layered (Sugiyama-style) layout** — `layoutPasses(passes, outputPassId)`
+  ranks nodes by dependency depth (longest path over `pass`→`pass` channel edges;
+  self-feedback ignored) into left→right columns, keeps the output pass rightmost,
+  orders within a column by barycenter to cut crossings, and centres each column
+  (`applyLayout` writes the result back; unit-tested in `test/graphlayout.test.ts`).
+  The store calls it automatically from the structural mutations (`addPass`/
+  `removePass`/`connectPin` of a `pass` edge) via `private autoTidy(layer)` UNLESS
+  `layer.manualLayout` is set; `movePass` (a node drag) sets `manualLayout`, and the
+  Passes-tab **Tidy** button (`tidyPasses`) clears it and re-arranges. So AI/UI
+  built graphs come out tidy while hand-arranged ones are preserved. `defaults.ts`
+  `normalizeProject` migrates BOTH eras — legacy single-`shaderSource` and the
+  mid-era flat `passes`/`outputPassId` graph — into a single "Base" layer (the flat
+  graph is given an `applyLayout` since it predates node positions; current-era
+  layers load with `manualLayout` true to preserve stored positions) (tested in
+  `test/layers.test.ts`). `persist.ts` (IndexedDB,
   normalizes on read). `history.ts` (generic, DOM-free snapshot undo/redo stack).
 - **Undo/redo**: `history.ts` is a generic `History<S>` (two stacks of
   `{snapshot,label}`, coalescing by tag + time window, reference-counted grouping,
@@ -188,7 +204,10 @@ npm run build         # ts0 build -> dist/index.html
   geometry editor: add quad/circle + edit position/size/rotation/colour/corner/
   falloff), **Code** (the selected pass in the active layer),
   **Passes** (the active layer's object graph — draggable pass nodes wired by their
-  inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
+  inputs, incl. `under`/`geometry`; node geometry + the dependency auto-layout come
+  from `src/util/graphlayout.ts`, and the toolbar's **Tidy** button calls
+  `store.tidyPasses()` then frames the result via a one-shot `GraphView.fitNext`),
+  **Uniforms** (shared), **Textures** (the
   selected pass's inputs), and **Assets** (the shared media library — upload
   images/videos with no channel binding, rename/delete; `store.renameAsset`, and
   the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).

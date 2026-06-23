@@ -15,6 +15,7 @@ import type { CompileResult } from "../gl/renderer.ts";
 import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersistence, saveSettings, setCurrentProjectId } from "./persist.ts";
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
 import { History } from "./history.ts";
+import { applyLayout } from "../util/graphlayout.ts";
 import { debounce, uid } from "../util/misc.ts";
 import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
@@ -483,6 +484,12 @@ export class Store {
 		} else {
 			void this.applyChannel(passId, index);
 		}
+		// A changed pass->pass edge reshapes the graph: re-arrange (unless the user
+		// has taken manual control of this layer's layout).
+		if (!sourceSame && (prev.kind === "pass" || next.kind === "pass")) {
+			const layer = this.layerOfPass(passId);
+			if (layer) this.autoTidy(layer);
+		}
 		this.emit("project", this.project);
 		this.commit(`Set ${pass.name} iChannel${index}`, `channel:${passId}:${index}`);
 		this.touch();
@@ -492,10 +499,13 @@ export class Store {
 
 	addPass(name: string, source = "", format: PassFormat = "rgba8", layerId?: string): Pass {
 		const layer = (layerId && this.layerById(layerId)) || this.activeLayer();
-		const x = layer.passes.reduce((m, p) => Math.max(m, p.x), 0);
-		const pass = makePass(uniquePassName(layer.passes, name), source, undefined, x ? x - 240 : 40, 60 + layer.passes.length * 30);
+		// Drop the new (still unwired) node just left of the current graph; auto-tidy
+		// re-places everything by dependency once it's connected.
+		const minX = layer.passes.reduce((m, p) => Math.min(m, p.x), Infinity);
+		const pass = makePass(uniquePassName(layer.passes, name), source, undefined, Number.isFinite(minX) ? Math.max(0, minX - 240) : 40, 60);
 		pass.format = format;
 		layer.passes.unshift(pass);
+		this.autoTidy(layer);
 		this.selectedLayerId = layer.id;
 		this.selectedPassId = pass.id;
 		this.applyProjectToRenderer();
@@ -521,6 +531,7 @@ export class Store {
 		}
 		if (layer.outputPassId === passId) layer.outputPassId = layer.passes[layer.passes.length - 1].id;
 		if (this.selectedPassId === passId) this.selectedPassId = layer.outputPassId;
+		this.autoTidy(layer);
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedPass", this.selectedPassId);
@@ -559,14 +570,37 @@ export class Store {
 		this.touch();
 	}
 
-	/** Persist a graph-node position (no recompile, no re-render of views). */
+	/** Persist a graph-node position (no recompile, no re-render of views). Dragging
+	 * a node hands layout control to the user: this layer stops auto-arranging until
+	 * "Tidy" is pressed again. */
 	movePass(passId: string, x: number, y: number): void {
 		const pass = this.passById(passId);
 		if (!pass) return;
 		pass.x = x;
 		pass.y = y;
+		const layer = this.layerOfPass(passId);
+		if (layer) layer.manualLayout = true;
 		this.commit("Move pass", `move:${passId}`, true);
 		this.touch();
+	}
+
+	/** Auto-arrange the active layer's pass graph left-to-right by dependency and
+	 * re-enable automatic re-arrangement (until the next manual drag). */
+	tidyPasses(layerId?: string): void {
+		const layer = (layerId && this.layerById(layerId)) || this.activeLayer();
+		layer.manualLayout = false;
+		applyLayout(layer);
+		this.emit("project", this.project);
+		this.commit("Tidy graph", `tidy:${layer.id}`);
+		this.touch();
+	}
+
+	/** Re-run the dependency layout for a layer unless the user has taken manual
+	 * control of it. Called inline by the structural mutations (no separate commit
+	 * or event -- the caller's own commit captures the new node positions). */
+	private autoTidy(layer: Layer): void {
+		if (layer.manualLayout) return;
+		applyLayout(layer);
 	}
 
 	// ---- layer stack mutations ---------------------------------------------
@@ -659,6 +693,7 @@ export class Store {
 		if (!layer) return null;
 		if (!layer.mask) layer.mask = makeMaskLayer([makeShape("circle", { w: 0.6, h: 0.6, falloff: 1 })]);
 		ensureMaskCompositePass(layer);
+		this.autoTidy(layer);
 		const mask = layer.mask;
 		this.applyProjectToRenderer();
 		// Edit the mask: make it the active layer + select its first shape.
@@ -679,6 +714,7 @@ export class Store {
 		if (!layer || !layer.mask) return;
 		layer.mask = undefined;
 		removeMaskCompositePass(layer);
+		this.autoTidy(layer);
 		// If we were editing the now-removed mask, fall back to the owner layer.
 		if (!this.layerById(this.selectedLayerId)) {
 			this.selectedLayerId = layer.id;
