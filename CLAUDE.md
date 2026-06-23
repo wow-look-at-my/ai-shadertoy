@@ -190,7 +190,9 @@ npm run build         # ts0 build -> dist/index.html
   **Passes** (the active layer's object graph — draggable pass nodes wired by their
   inputs, incl. `under`/`geometry`), **Uniforms** (shared), **Textures** (the
   selected pass's inputs), and **Assets** (the shared media library — upload
-  images/videos with no channel binding, rename/delete; `store.renameAsset`, and
+  images/videos with no channel binding (multi-select `pickFiles` OR drag-and-drop
+  onto the panel; identical bytes are content-deduped by `dataUrl`, so re-adding a
+  file reuses the existing asset), rename/delete; `store.renameAsset`, and
   the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
   The Code/Passes/Textures tabs are scoped to the active
   layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
