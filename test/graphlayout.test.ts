@@ -84,12 +84,15 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 	check(!routes.has("a>b") && !routes.has("b>c"), "single-column edges are not routed");
 	const route = routes.get("a>c");
 	check(!!route, "the skip edge a->c is routed");
-	eq(route!.length, 1, "one waypoint per skipped column (a->c skips column 1)");
-	eq(route![0].x, colX(1) + OPTS.nodeWidth / 2, "waypoint sits at the centre of the skipped column");
-	// The waypoint must be in a clear lane, i.e. outside the middle node b's band.
+	eq(route!.length, 2, "two waypoints per skipped column (a->c skips column 1)");
+	eq(route![0].x, colX(1), "first waypoint at the skipped column's left edge");
+	eq(route![1].x, colX(1) + OPTS.nodeWidth, "second waypoint at the skipped column's right edge");
+	eq(route![0].y, route![1].y, "the spanning waypoints share a height -> a flat run across the column");
+	// The lane must be clear, i.e. outside the middle node b's band, across the
+	// whole column width (both waypoints are at the same clear height).
 	const b = pos.get("b")!;
 	const wy = route![0].y;
-	check(wy <= b.y + 1e-9 || wy >= b.y + 50 - 1e-9, "routing waypoint avoids the middle node's vertical span");
+	check(wy <= b.y + 1e-9 || wy >= b.y + 50 - 1e-9, "routing lane avoids the middle node's vertical span");
 }
 
 // ---- longer skip gets one waypoint per skipped column ----------------------
@@ -100,9 +103,11 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 	eq(pos.get("d")!.x, colX(3), "d in the last column");
 	const route = routes.get("a>d");
 	check(!!route, "the two-column skip edge a->d is routed");
-	eq(route!.length, 2, "a->d skips two columns -> two waypoints");
-	eq(route![0].x, colX(1) + OPTS.nodeWidth / 2, "first waypoint in column 1");
-	eq(route![1].x, colX(2) + OPTS.nodeWidth / 2, "second waypoint in column 2");
+	eq(route!.length, 4, "a->d skips two columns -> two waypoints each (4 total)");
+	eq(route![0].x, colX(1), "column 1 left edge");
+	eq(route![1].x, colX(1) + OPTS.nodeWidth, "column 1 right edge");
+	eq(route![2].x, colX(2), "column 2 left edge");
+	eq(route![3].x, colX(2) + OPTS.nodeWidth, "column 2 right edge");
 }
 
 // ---- independent passes stack in one column without overlap ----------------

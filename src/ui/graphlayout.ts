@@ -29,10 +29,11 @@ export interface LayoutOpts {
 export interface LayoutResult {
 	/** Real node id -> top-left position. */
 	pos: Map<string, NodePos>;
-	/** For an edge that spans MORE THAN ONE column, the ordered intermediate
-	 * waypoints (one per skipped column, in a clear vertical lane) the wire should
-	 * route through so it doesn't cross the nodes in between. Keyed `${from}>${to}`.
-	 * Single-column (adjacent) edges get no entry -- draw them straight. */
+	/** For an edge that spans MORE THAN ONE column, the ordered routing waypoints
+	 * the wire should thread so it doesn't cross the nodes in between -- TWO per
+	 * skipped column (the column's left and right edge, at a clear lane height), so
+	 * the wire runs flat across each spanned column and bends only in the gaps.
+	 * Keyed `${from}>${to}`. Single-column (adjacent) edges get no entry. */
 	routes: Map<string, NodePos[]>;
 }
 
@@ -151,20 +152,26 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 	}
 
 	// --- coordinates: stack each column, centering shorter columns vertically.
-	// Real slots yield a top-left; lane slots yield a routing waypoint (column
-	// center, lane middle). ---
+	// Real slots yield a top-left. A lane slot yields TWO waypoints -- one at each
+	// side of the column -- so the wire runs HORIZONTALLY across the column at the
+	// (node-free) lane height and only bends in the gaps between columns, never
+	// clipping the node it routes past. ---
 	const colHeight = columns.map((c) => c.reduce((s, sl) => s + sl.height, 0) + Math.max(0, c.length - 1) * vGap);
 	const tallest = Math.max(0, ...colHeight);
-	const laneAt = new Map<string, NodePos>();
+	const laneAt = new Map<string, [NodePos, NodePos]>();
 	columns.forEach((c, ci) => {
 		const x = margin + ci * (nodeWidth + hGap);
 		let y = margin + (tallest - colHeight[ci]) / 2;
 		for (const s of c) {
-			if (s.dummy) laneAt.set(s.id, { x: x + nodeWidth / 2, y: y + s.height / 2 });
-			else pos.set(s.id, { x, y });
+			if (s.dummy) {
+				const ly = y + s.height / 2;
+				laneAt.set(s.id, [{ x, y: ly }, { x: x + nodeWidth, y: ly }]);
+			} else {
+				pos.set(s.id, { x, y });
+			}
 			y += s.height + vGap;
 		}
 	});
-	for (const [key, chain] of routeChains) routes.set(key, chain.map((id) => laneAt.get(id)!));
+	for (const [key, chain] of routeChains) routes.set(key, chain.flatMap((id) => laneAt.get(id)!));
 	return { pos, routes };
 }
