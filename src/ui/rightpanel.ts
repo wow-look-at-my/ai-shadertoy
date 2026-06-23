@@ -7,7 +7,7 @@
 
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
-import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
+import { debounce, formatBytes, pickFile, pickFiles, uid } from "../util/misc.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
@@ -567,13 +567,12 @@ function uniqueAssetName(assets: ImageAsset[], base: string): string {
 	return `${want} ${i}`;
 }
 
-/** Pick a file, probe its dimensions, and add it to the shared asset library
- * (no channel binding). Returns the new asset, or null if cancelled/too large. */
-async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<ImageAsset | null> {
-	const file = await pickFile(type === "video" ? "video/*" : "image/*");
-	if (!file) return null;
+/** Probe one already-chosen file's dimensions and add it to the shared asset
+ * library (no channel binding). Returns the new asset, or null if it was rejected
+ * (a video over the size limit). May throw if the media fails to decode. */
+async function addAssetFromFile(store: Store, file: File, type: "image" | "video"): Promise<ImageAsset | null> {
 	if (type === "video" && file.size > MAX_VIDEO_BYTES) {
-		alert(`Video is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
+		alert(`Video "${file.name}" is ${formatBytes(file.size)}. Please use a clip under 32 MB — short, low-resolution loops work best (everything is stored inline in your browser).`);
 		return null;
 	}
 	const dataUrl = await fileToDataUrl(file);
@@ -600,6 +599,28 @@ async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<I
 	};
 	store.addAsset(asset);
 	return asset;
+}
+
+/** Pick a single file, probe it, and add it to the shared asset library (no
+ * channel binding). Returns the new asset, or null if cancelled/rejected. */
+async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<ImageAsset | null> {
+	const file = await pickFile(type === "video" ? "video/*" : "image/*");
+	if (!file) return null;
+	return addAssetFromFile(store, file, type);
+}
+
+/** Pick one or more files and add them all to the shared asset library. Each is
+ * processed independently so a single bad file doesn't abort the rest; names are
+ * de-duplicated as they're added (added sequentially so each sees the previous). */
+async function pickAndAddAssets(store: Store, type: "image" | "video"): Promise<void> {
+	const files = await pickFiles(type === "video" ? "video/*" : "image/*");
+	for (const file of files) {
+		try {
+			await addAssetFromFile(store, file, type);
+		} catch {
+			alert(`Couldn't load "${file.name}" — it may be corrupt or an unsupported ${type} format.`);
+		}
+	}
 }
 
 async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<void> {
@@ -652,8 +673,8 @@ function renderAssets(store: Store, container: HTMLElement): void {
 		el(
 			"div",
 			{ class: "asset-actions" },
-			el("button", { class: "btn", on: { click: () => void pickAndAddAsset(store, "image") } }, "+ Upload image"),
-			el("button", { class: "btn", on: { click: () => void pickAndAddAsset(store, "video") } }, "+ Upload video"),
+			el("button", { class: "btn", on: { click: () => void pickAndAddAssets(store, "image") } }, "+ Upload images"),
+			el("button", { class: "btn", on: { click: () => void pickAndAddAssets(store, "video") } }, "+ Upload videos"),
 		),
 	);
 }
