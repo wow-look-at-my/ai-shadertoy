@@ -79,6 +79,19 @@ export function pickFile(accept: string): Promise<File | null> {
 	});
 }
 
+/** Like pickFile but allows selecting several files at once. Resolves with the
+ * chosen files (empty array if none were selected). */
+export function pickFiles(accept: string): Promise<File[]> {
+	return new Promise((resolve) => {
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = accept;
+		input.multiple = true;
+		input.onchange = () => resolve(input.files ? Array.from(input.files) : []);
+		input.click();
+	});
+}
+
 export function readFileText(file: File): Promise<string> {
 	return file.text();
 }
