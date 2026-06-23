@@ -2,13 +2,22 @@
 
 import { BUILTIN_LABELS } from "../../gl/textures.ts";
 import type { BuiltinTexture, ImageAsset, TexFilter, TexWrap } from "../../state/types.ts";
+import { sanitizeAssetName } from "../../util/media.ts";
 import { TOOL_NAMES } from "./names.ts";
 import { registerTool } from "./registry.ts";
 import { text } from "./types.ts";
 
-function findAsset(assets: ImageAsset[], nameOrId: string): ImageAsset | undefined {
-	const n = nameOrId.toLowerCase();
-	return assets.find((a) => a.id === nameOrId || a.name.toLowerCase() === n);
+// Match an asset by id or by name. New uploads are sanitized at import time, but
+// match through the same cleaner so assets stored before that fix -- carrying
+// exotic spaces like U+202F (narrow no-break space) that the model can't
+// reproduce from the plain-looking name it sees in list_assets -- still resolve.
+export function normalizeName(s: string): string {
+	return sanitizeAssetName(s).toLowerCase();
+}
+
+export function findAsset(assets: ImageAsset[], nameOrId: string): ImageAsset | undefined {
+	const n = normalizeName(nameOrId);
+	return assets.find((a) => a.id === nameOrId || normalizeName(a.name) === n);
 }
 
 registerTool({

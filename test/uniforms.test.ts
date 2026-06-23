@@ -1,7 +1,8 @@
 // Unit tests for custom-uniform extraction from shader source. Covers the forms
 // the AI actually writes -- in particular `uniform float u = 1.5;` style baked
 // defaults and precision qualifiers, which used to be silently dropped (declared
-// inline, rendered, but never surfaced as a control -> the editor showed "(none)").
+// inline, rendered, but never surfaced as a control -> the editor showed "(none)"),
+// plus trailing `//` / `/* */` comments and de-duplicated header declarations.
 // DOM-free, so plain Node can exercise it:
 //   node --experimental-strip-types test/uniforms.test.ts
 
@@ -113,6 +114,46 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 	check(!assembled.includes("= 1.5"), "the float initializer is stripped from the assembled source");
 	check(!assembled.includes("vec3(1.0, 0.5, 0.2)"), "the vec initializer is stripped from the assembled source");
 	check(!/uniform[ \t]+highp/.test(assembled), "no leftover qualified declaration from the user body");
+}
+
+// ---- trailing line / block comments on a declaration are tolerated ---------
+// The natural `uniform float u_blur; // radius` used to break the regex, so the
+// control never appeared AND the line stayed inline (a later re-declare clashed).
+{
+	const src = [
+		'uniform vec3  u_bgColor;     // the "background black" shade',
+		"uniform float u_bgBlur;      // frosted blur radius (px)",
+		"uniform float u_block; /* radius */",
+		"// uniform float u_dead;     // commented-out: must be ignored",
+		"uniform sampler2D iChannel0; // sampler: handled separately, ignored",
+		"void mainImage(out vec4 o, in vec2 c){ o = vec4(u_bgColor, u_bgBlur + u_block, 1.0); }",
+	].join("\n");
+	const us = extractUniformDeclarations(src);
+	eq(us.map((u) => u.name).join(","), "u_bgColor,u_bgBlur,u_block", "commented decls extracted; dead/sampler ignored");
+	const assembled = assembleFragment(src, us, 0).source;
+	check(!/u_bgColor;[ \t]*\/\//.test(assembled), "commented declaration stripped from the body");
+	eq((assembled.match(/uniform float u_bgBlur;/g) ?? []).length, 1, "u_bgBlur declared exactly once");
+}
+
+// ---- an initializer AND a trailing comment together (the merge case) -------
+{
+	const us = extractUniformDeclarations("uniform float u_x = 1.5; // speed\nuniform vec3 u_t = vec3(0.5); /* tint */");
+	eq(us.length, 2, "decls with both an initializer and a trailing comment are extracted");
+	near(byName(us, "u_x").value[0], 1.5, "initializer parsed despite the trailing // comment");
+	near(byName(us, "u_t").value[0], 0.5, "vec initializer parsed despite the trailing /* */ comment");
+	const assembled = assembleFragment("uniform float u_x = 1.5; // speed\nvoid mainImage(out vec4 o,in vec2 c){o=vec4(u_x);}", us, 0).source;
+	check(!assembled.includes("= 1.5"), "initializer stripped even with a trailing comment");
+	check(!assembled.includes("// speed"), "trailing comment stripped from the body");
+}
+
+// ---- duplicate uniforms never produce a GLSL redefinition ------------------
+{
+	const dup: Uniform[] = [
+		{ name: "u_x", type: "float", value: [0], min: 0, max: 1, step: 0.01 },
+		{ name: "u_x", type: "float", value: [0], min: 0, max: 1, step: 0.01 },
+	];
+	const assembled = assembleFragment("void mainImage(out vec4 o,in vec2 c){o=vec4(u_x);}", dup, 0).source;
+	eq((assembled.match(/uniform float u_x;/g) ?? []).length, 1, "duplicate uniform collapsed to a single header declaration");
 }
 
 console.log(`uniforms.test.ts: ${passed} checks passed`);
