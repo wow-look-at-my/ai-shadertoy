@@ -158,8 +158,9 @@ asks the model to *"summarize this entire conversation in detail for a future
 instance of yourself to pick up,"* then starts a fresh chat that **begins with
 that summary**, replacing the long history.
 
-The live project state (current layers, passes, shapes, uniforms, last compile
-error) is always sent fresh, so the summary only needs to carry the *conversational*
+The live project state (current layers, passes, shapes, uniforms, the active
+layer's live GLSL source, last compile error) is always sent fresh, so the summary
+only needs to carry the *conversational*
 context — your goal, stylistic intent, what was tried and rejected, and what's left
 — not the shader code. The result is shown as a single collapsible **"Conversation
 compacted"** card; the next message continues from there with a much smaller (and
@@ -199,10 +200,12 @@ Declare your own controls right in the shader source —
 live slider (a colour picker for `vec3`/`vec4`) in the **Uniforms** tab. Add an
 optional default to bake in a starting value, e.g. `uniform float u_speed = 1.5;`
 or `uniform vec3 u_tint = vec3(1.0, 0.5, 0.2);` — the slider range widens to fit a
-default outside `0..1`, and a trailing `// comment` is fine. Custom uniforms are
-**shared across every pass and layer**, so the same `u_speed` drives them all. The
-AI uses `set_uniforms` only to adjust an existing control's range, default, or
-label — the `uniform` line in the source is what creates it.
+default outside `0..1`, and a trailing `// comment` is fine. Editing that default
+later (say `= 1.5` → `= 2.0`) updates the control. Custom uniforms are **shared
+across every pass and layer**, so the same `u_speed` drives them all. The AI uses
+`set_uniforms` only to adjust an existing control's range, default, or label — the
+`uniform` line in the source is what creates it, and it's a patch that touches only
+the named uniforms (it never resets the ones it leaves out).
 
 The **Uniforms** tab's **Copy uniforms** button copies every uniform as GLSL
 declarations with their current values baked in (e.g. `uniform vec3 u_tint =
@@ -236,8 +239,8 @@ for models with known pricing — **cost this turn** and **cost this session**.
 
 Requests use **prompt caching** to cut cost and latency: the stable system prompt
 and the growing conversation history are cached, while the fast-changing project
-state (shader size, uniforms, channels, last compile error) is sent as a separate
-trailing message so it never invalidates the cache. For Anthropic this uses
+state (the active layer's live source, uniforms, channels, last compile error) is
+sent as a separate trailing message so it never invalidates the cache. For Anthropic this uses
 `cache_control` breakpoints; for hosted OpenAI we send a stable `prompt_cache_key`
 and the server caches the matching prefix automatically. For self-hosted
 OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send
@@ -292,7 +295,7 @@ src/
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history / layers / cache / uniforms / assets / compact)
+test/                   # plain-Node unit tests (history / layers / cache / uniforms / set_uniforms / assets / compact)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

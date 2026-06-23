@@ -12,7 +12,7 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.setUniforms,
 		description:
-			"Set UI metadata/default values for custom uniforms declared in shader source. Add `uniform float/vec2/vec3/vec4 u_name;` to shader code first; those declarations automatically appear as live controls. This replaces metadata for the declared set; names not declared in shader source are ignored by the renderer sync. value length must match the type (float=1, vec2=2, vec3/color=3, vec4=4).",
+			"Set UI metadata/default values for custom uniforms declared in shader source. Add `uniform float/vec2/vec3/vec4 u_name;` to shader code first; those declarations automatically appear as live controls. This is a PATCH: only the uniforms you list are updated -- any uniform you DON'T list keeps its current value/range (omitting one never resets it). Names not declared in shader source are ignored by the renderer sync. value length must match the type (float=1, vec2=2, vec3/color=3, vec4=4). Usually you don't need this at all -- bake the default into the declaration instead (`uniform float u_speed = 1.5;`); reach for set_uniforms only to adjust a range/step/label or set a value programmatically.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -63,9 +63,16 @@ registerTool({
 				label: item["label"] ? String(item["label"]) : undefined,
 			});
 		}
-		const result = ctx.setUniforms(uniforms);
-		const decl = uniforms.map((u) => `uniform ${u.type === "color" ? "vec3" : u.type} ${u.name};`).join("\n");
-		const head = result.ok ? "Uniforms set." : `Uniforms set, but the shader no longer compiles:\n${result.log}`;
-		return { content: [text(`${head}\nDeclared:\n${decl}${errors.length ? `\nSkipped: ${errors.join("; ")}` : ""}`)], isError: !result.ok };
+		// PATCH semantics: merge the named uniforms over the current list so omitting
+		// a uniform never wipes it back to 0. Update-in-place by name; append any
+		// genuinely new ones (the renderer sync then drops any not declared in source).
+		const incoming = new Map(uniforms.map((u) => [u.name, u]));
+		const merged = ctx.project.uniforms.map((u) => incoming.get(u.name) ?? u);
+		for (const u of uniforms) if (!merged.some((m) => m.name === u.name)) merged.push(u);
+
+		const result = ctx.setUniforms(merged);
+		const decl = uniforms.map((u) => `${u.name} = [${u.value.join(", ")}]`).join("\n");
+		const head = result.ok ? "Uniforms updated (others left unchanged)." : `Uniforms updated, but the shader no longer compiles:\n${result.log}`;
+		return { content: [text(`${head}\nSet:\n${decl}${errors.length ? `\nSkipped: ${errors.join("; ")}` : ""}`)], isError: !result.ok };
 	},
 });
