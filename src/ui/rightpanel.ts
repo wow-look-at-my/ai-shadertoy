@@ -1,5 +1,5 @@
 // Right-hand editor panel. Tabs: Layers (the back-to-front stack + per-layer
-// geometry), the per-pass shader Code editor, the Passes render-graph (draggable
+// geometry), the per-pass shader Code editor, the Passes render-graph (auto-laid-out
 // pass nodes wired by their channel inputs), live Uniform controls (shared across
 // passes), the iChannel texture bindings for the selected pass, and Assets (the
 // shared media library -- upload images/videos for the AI to bind). All edits flow
@@ -8,7 +8,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
-import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
+import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
 import { layoutGraph, type LayoutResult, type NodePos } from "./graphlayout.ts";
@@ -602,7 +602,9 @@ async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<I
 	}
 	const asset: ImageAsset = {
 		id: uid("a_"),
-		name: uniqueAssetName(store.assets, file.name.replace(/\.[^.]+$/, "")),
+		// Clean exotic characters out of the filename first (U+202F etc.), then
+		// de-duplicate so the AI can address each asset unambiguously by name.
+		name: uniqueAssetName(store.assets, sanitizeAssetName(file.name.replace(/\.[^.]+$/, ""))),
 		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
 		dataUrl,
 		width,

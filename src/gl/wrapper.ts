@@ -23,14 +23,18 @@ export function glslType(t: UniformType): string {
 const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // iChannelN (any N) is a reserved input sampler name; the count is dynamic.
 const CHANNEL_NAME = /^iChannel\d+$/;
-// One custom-uniform declaration on its own line. Tolerates an optional precision
-// qualifier (highp/mediump/lowp) and an optional `= <default>` initializer so the
-// AI can bake a default value right into the declaration -- group 1 = type, group
-// 2 = name, group 3 = the initializer expression (without the `=`), if any. The
-// SAME regex drives both extraction and stripping, so whatever we surface as a
-// control is exactly what we remove from the user body (the header re-declares it,
-// without the initializer, which GLSL ES requires).
-const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=[ \t]*([^;\n]*?))?[ \t]*;[ \t]*$/gm;
+// One custom-uniform declaration on its own line. Tolerates, in order: an optional
+// precision qualifier (highp/mediump/lowp); an optional `= <default>` initializer so
+// the AI can bake a default value right into the declaration; and an optional
+// trailing `// ...` or single-line `/* ... */` comment after the `;`. Groups: 1 =
+// type, 2 = name, 3 = the initializer expression (without the `=`), if any. The SAME
+// regex drives both extraction and stripping, so whatever we surface as a control is
+// exactly what we remove from the user body (the header re-declares it without the
+// initializer, which GLSL ES requires). The comment tolerance matters because people
+// naturally annotate uniforms; when a comment broke the match the declaration was
+// neither hoisted into the header (the control never appeared) nor stripped from the
+// body (re-declaring it produced a GLSL redefinition).
+const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=[ \t]*([^;\n]*?))?[ \t]*;[ \t]*(?:\/\/[^\n]*|\/\*[^\n]*?\*\/[ \t]*)?$/gm;
 
 export function isValidUniformName(name: string): boolean {
 	if (!VALID_NAME.test(name)) return false;
@@ -128,8 +132,16 @@ const BUILTIN_NAMES = new Set([
 ]);
 
 function header(uniforms: Uniform[], channelCount: number): string {
+	// Dedupe by name: emitting the same `uniform` twice is a GLSL redefinition.
+	// The source-extracted list is already unique, but set_uniforms metadata can
+	// carry a duplicate, so guard here rather than trusting the caller.
+	const seen = new Set<string>();
 	const customDecls = uniforms
-		.filter((u) => isValidUniformName(u.name))
+		.filter((u) => {
+			if (!isValidUniformName(u.name) || seen.has(u.name)) return false;
+			seen.add(u.name);
+			return true;
+		})
 		.map((u) => `uniform ${glslType(u.type)} ${u.name};`)
 		.join("\n");
 	// Declare exactly the input samplers this pass has (iChannel0..N-1) plus a

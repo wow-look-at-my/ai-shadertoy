@@ -70,7 +70,18 @@ npm run build         # ts0 build -> dist/index.html
   the full GLSL ES 3.00 source around the user's `mainImage` for a pass, declaring
   exactly that pass's `iChannel0..N-1` + `iChannelResolution[N]` (channel count is a
   parameter — inputs are not capped at four) and emitting `#line 1` so compile
-  errors map to user line numbers. `textures.ts` (procedural built-ins).
+  errors map to user line numbers. Custom `uniform float/vec2/vec3/vec4 u_name;`
+  lines in the body are the source of truth: `extractUniformDeclarations` reads
+  them (so they become live controls) and `assembleFragment` hoists them into the
+  header (deduped — never a `redefinition`) while stripping them from the body.
+  The declaration may carry an **optional precision qualifier** (`highp`/`mediump`/
+  `lowp`) and an **optional `= <default>` initializer** (numeric literal or
+  `vecN(...)` constructor, single-arg splat) — `parseInitializer` seeds the
+  control's starting value and `rangeForValues` widens the slider to fit a baked
+  default outside 0..1; the header re-declares the uniform WITHOUT the initializer
+  (GLSL ES requires that). A **trailing `//` or single-line `/* */` comment after
+  the `;` is tolerated** (a natural thing to write that used to silently break both
+  extraction and stripping). `textures.ts` (procedural built-ins).
 - `src/ai/` — `providers.ts` translates the neutral conversation model to/from
   **Anthropic Messages** and **OpenAI Chat Completions** (both streamed, vision +
   tool use; `testConnection` + `listModels` power the Settings test button and
@@ -140,7 +151,10 @@ npm run build         # ts0 build -> dist/index.html
   per-pixel opacity mask). `makeCompositeLayer` builds a ready "over" layer,
   `makeMaskLayer` a geometry-passthrough mask; `ensureMaskCompositePass` adds the
   graph node that applies it; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`/
-  `MASK_COMPOSITE_SOURCE` are their default shaders. `src/util/media.ts` holds the file/webcam plumbing.
+  `MASK_COMPOSITE_SOURCE` are their default shaders. `src/util/media.ts` holds the
+  file/webcam plumbing plus `sanitizeAssetName` (folds exotic whitespace like
+  U+202F — macOS screenshot filenames — to a plain space and drops zero-width/bidi
+  marks, applied at upload so assets stay referenceable by their plain-looking name).
   `store.ts` (single owner of state + the renderer + persistence + `applyTool` +
   undo/redo) tracks `selectedLayerId` + `selectedPassId` + `selectedShapeId` (the
   active layer can be a layer's mask — `layerById`/`passById`/`eachLayer` recurse
