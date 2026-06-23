@@ -11,13 +11,13 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.initShader,
 		description:
-			"INITIALIZE the shader: write the WHOLE fragment shader from scratch. Use ONLY for the first shader of a project or a deliberate complete rewrite -- for ANY change to an existing shader use edit_shader instead (do not re-init). This tool is offered only on the first turn; once a shader exists it disappears. Provide the COMPLETE GLSL ES 3.00 body defining `void mainImage(out vec4 fragColor, in vec2 fragCoord)` (Shadertoy convention). Do NOT include #version, precision, the iChannel/iTime uniform declarations, or main() -- those are added automatically. After it compiles it is rendered and a screenshot plus compile log are returned to you.",
+			"INITIALIZE the shader: write the WHOLE fragment shader from scratch. Use ONLY for the first shader of a project or a deliberate complete rewrite -- for ANY change to an existing shader use edit_shader instead (do not re-init). This tool is offered only on the first turn; once a shader exists it disappears. Provide the COMPLETE GLSL ES 3.00 body defining `void mainImage(out vec4 fragColor, in vec2 fragCoord)` (Shadertoy convention). Do NOT include #version, precision, the iChannel/iTime uniform declarations, or main() -- those are added automatically. After it compiles it is rendered and the compile log is returned (set screenshot:true to get the rendered frame too).",
 		parameters: {
 			type: "object",
 			properties: {
 				source: { type: "string", description: "Full GLSL source containing at least mainImage()." },
 				note: { type: "string", description: "Optional one-line summary of the change." },
-				screenshot: { type: "boolean", description: "Attach the rendered frame to the result so you can verify it (default false; you are always shown the render when you finish)." },
+				screenshot: { type: "boolean", description: "Attach the rendered frame to the result so you can see it (default false). Set true when you want to check this change visually." },
 			},
 			required: ["source"],
 		},
