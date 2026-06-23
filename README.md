@@ -135,6 +135,16 @@ re-runs from that point (everything after is replaced). Deleting removes that
 exchange — a prompt and the reply it produced — and keeps the rest of the
 conversation intact.
 
+### Steer the AI mid-turn
+
+You don't have to wait for the AI to finish. While it's working, keep typing and
+hit **Send** (or Enter) to **steer** it: your note is added to the conversation
+and the AI picks it up at its next step — folding in your correction without
+starting a separate turn. Use it to redirect ("actually make it blue"), add a
+constraint, or answer a question it raised, all without losing the work in
+progress. **Stop** still cancels the turn and drops anything you queued but it
+hasn't read yet.
+
 ### Compact the chat
 
 A long session piles up prompts, tool calls, and (heavy) screenshots, steadily
