@@ -69,6 +69,34 @@ export function downloadFile(name: string, content: string | Blob, mime = "appli
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Copy text to the clipboard. Prefers the async Clipboard API (secure
+ * contexts), falling back to a hidden textarea + execCommand so it still works
+ * on plain-http origins / older browsers. Resolves true on success. */
+export async function copyText(text: string): Promise<boolean> {
+	try {
+		if (navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(text);
+			return true;
+		}
+	} catch {
+		// Permission denied or no secure context -- fall through to the legacy path.
+	}
+	try {
+		const ta = document.createElement("textarea");
+		ta.value = text;
+		ta.style.position = "fixed";
+		ta.style.opacity = "0";
+		document.body.appendChild(ta);
+		ta.focus();
+		ta.select();
+		const ok = document.execCommand("copy");
+		ta.remove();
+		return ok;
+	} catch {
+		return false;
+	}
+}
+
 export function pickFile(accept: string): Promise<File | null> {
 	return new Promise((resolve) => {
 		const input = document.createElement("input");
