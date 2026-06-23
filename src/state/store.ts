@@ -6,7 +6,7 @@
 import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
 import { channelsForSource, ensureMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, removeMaskCompositePass } from "./types.ts";
 import { shapeDef } from "../gl/shapes.ts";
-import { extractUniformDeclarations } from "../gl/wrapper.ts";
+import { extractUniformDeclarations, reconcileUniforms } from "../gl/wrapper.ts";
 import { getTool, text } from "../ai/tools/index.ts";
 import { buildCompactedMessages, shouldCompact, summarizeConversation } from "../ai/compact.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
@@ -57,6 +57,11 @@ export class Store {
 
 	private listeners = new Map<EventName, Set<(p: unknown) => void>>();
 	private saveDebounced = debounce(() => void this.saveProjectNow(), 700);
+	/** Per-uniform default last seen in shader source (name -> value), so the next
+	 * sync can distinguish a deliberately edited `= <default>` initializer from an
+	 * unchanged one. Session-only; reset on project switch / snapshot restore so
+	 * those always preserve the persisted/restored values. */
+	private declaredDefaults: Record<string, number[]> = {};
 
 	on(event: EventName, cb: (payload: unknown) => void): () => void {
 		let set = this.listeners.get(event);
@@ -251,16 +256,11 @@ export class Store {
 				}
 			}
 		});
-		const previous = new Map(this.project.uniforms.map((u) => [u.name, u]));
-		const next = declared.map((u) => {
-			const prev = previous.get(u.name);
-			if (!prev) return u;
-			const type = prev.type === "color" && u.type === "vec3" ? "color" : u.type;
-			const length = type === "float" ? 1 : type === "vec2" ? 2 : type === "vec4" ? 4 : 3;
-			const value = prev.value.slice(0, length);
-			while (value.length < length) value.push(0);
-			return { ...u, type, value, min: prev.min, max: prev.max, step: prev.step, label: prev.label };
-		});
+		const next = reconcileUniforms(declared, this.project.uniforms, this.declaredDefaults);
+		// Remember each uniform's declared default so the NEXT sync can tell a
+		// deliberately edited initializer (adopt it) from an unchanged one (preserve
+		// the live slider / set_uniforms value).
+		this.declaredDefaults = Object.fromEntries(declared.map((u) => [u.name, u.value.slice()]));
 		if (!uniformListsEqual(this.project.uniforms, next)) {
 			this.project.uniforms = next;
 			return true;
@@ -354,6 +354,8 @@ export class Store {
 		this.project.name = s.name;
 		this.project.layers = structuredClone(s.layers);
 		this.project.uniforms = structuredClone(s.uniforms);
+		// A restore must reproduce the snapshot exactly, never re-adopt an initializer.
+		this.declaredDefaults = {};
 		if (!this.layerById(this.selectedLayerId) || !this.passById(this.selectedPassId)) this.resetSelection();
 		if (this.selectedShapeId && !this.shapeInActiveLayer(this.selectedShapeId)) this.selectedShapeId = "";
 		this.applyProjectToRenderer();
@@ -775,6 +777,7 @@ export class Store {
 
 	private adoptProject(p: Project): void {
 		this.project = p;
+		this.declaredDefaults = {}; // fresh project: first sync preserves its persisted values
 		this.resetSelection();
 		setCurrentProjectId(p.id);
 		// History is per-project: starting fresh on the adopted project's state.

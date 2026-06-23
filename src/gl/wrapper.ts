@@ -114,6 +114,49 @@ export function extractUniformDeclarations(source: string): Uniform[] {
 	return out;
 }
 
+/** Number of value components a uniform of this type carries (color is a vec3). */
+export function uniformLength(type: UniformType): number {
+	return type === "float" ? 1 : type === "vec2" ? 2 : type === "vec4" ? 4 : 3;
+}
+
+function valuesEqual(a: number[], b: number[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}
+
+/** Reconcile the live control list against the uniforms DECLARED in shader source.
+ * `declared` is freshly extracted from the sources (each value/range comes from its
+ * `= <default>` initializer, or 0 + the canonical 0..1 range when bare). `previous`
+ * is the current control list, whose values may have been moved by a slider drag or
+ * a set_uniforms call. `lastDefaults` records, per name, the declared default seen on
+ * the LAST reconcile, so a deliberately CHANGED initializer can be told apart from an
+ * unchanged one.
+ *
+ * Per declared uniform:
+ *  - not previously present  -> take the declaration as-is (its baked default + range).
+ *  - its inline initializer changed since last time -> adopt the new default and refit
+ *    the range (the author rewrote the bake; honor it -- this is what makes editing a
+ *    `= <default>` actually take effect instead of being silently preserved at the old
+ *    value).
+ *  - otherwise -> keep the live value/range/label so a slider edit / set_uniforms value
+ *    survives an unrelated recompile; only the type + length follow the declaration.
+ * A uniform whose declaration was removed from source simply drops out (not in `declared`). */
+export function reconcileUniforms(declared: Uniform[], previous: Uniform[], lastDefaults: Record<string, number[]>): Uniform[] {
+	const prevByName = new Map(previous.map((u) => [u.name, u]));
+	return declared.map((decl) => {
+		const prev = prevByName.get(decl.name);
+		if (!prev) return decl;
+		const last = lastDefaults[decl.name];
+		if (last !== undefined && !valuesEqual(last, decl.value)) return decl; // initializer rewritten -> adopt it
+		const type = prev.type === "color" && decl.type === "vec3" ? "color" : decl.type;
+		const length = uniformLength(type);
+		const value = prev.value.slice(0, length);
+		while (value.length < length) value.push(0);
+		return { ...decl, type, value, min: prev.min, max: prev.max, step: prev.step, label: prev.label };
+	});
+}
+
 function stripUniformDeclarations(source: string): string {
 	return source.replace(CUSTOM_UNIFORM_RE, "");
 }

@@ -6,7 +6,7 @@
 // DOM-free, so plain Node can exercise it:
 //   node --experimental-strip-types test/uniforms.test.ts
 
-import { assembleFragment, extractUniformDeclarations, formatUniformDeclarations } from "../src/gl/wrapper.ts";
+import { assembleFragment, extractUniformDeclarations, formatUniformDeclarations, reconcileUniforms } from "../src/gl/wrapper.ts";
 import type { Uniform } from "../src/state/types.ts";
 
 let passed = 0;
@@ -192,6 +192,57 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 	const text = formatUniformDeclarations(noisy);
 	check(!text.includes("0.30000000000000004"), "float noise is trimmed (0.1 + 0.2)");
 	check(text.includes("vec2(0.3, 2.0)"), "integer component gets a decimal point so it stays a GLSL float");
+}
+
+// ---- reconcileUniforms: control list <- shader declarations -----------------
+// Reconciles the live control list against the uniforms declared in source. The
+// store calls this on every recompile; it must preserve slider / set_uniforms
+// values across UNRELATED edits, yet adopt a deliberately CHANGED initializer.
+{
+	const decl = (name: string, value: number[]): Uniform => ({ name, type: value.length === 1 ? "float" : value.length === 2 ? "vec2" : value.length === 4 ? "vec4" : "vec3", value, min: 0, max: 1, step: 0.01 });
+
+	// New uniform (not previously present) takes its declared default as-is.
+	{
+		const next = reconcileUniforms([decl("u_a", [0.5])], [], {});
+		near(byName(next, "u_a").value[0], 0.5, "new uniform adopts its declared default");
+	}
+
+	// Unchanged initializer + a live value (slider / set_uniforms) -> value preserved.
+	{
+		const previous = [decl("u_a", [0.7])]; // user dragged it to 0.7
+		const next = reconcileUniforms([decl("u_a", [0.5])], previous, { u_a: [0.5] });
+		near(byName(next, "u_a").value[0], 0.7, "unchanged initializer keeps the live value");
+	}
+
+	// GOTCHA 2: the initializer was edited (0.5 -> 1.5) -> adopt the new default.
+	{
+		const previous = [decl("u_speed", [0])]; // was bare (0)
+		const next = reconcileUniforms([decl("u_speed", [1.5])], previous, { u_speed: [0] });
+		near(byName(next, "u_speed").value[0], 1.5, "a changed initializer takes effect (not silently ignored)");
+	}
+
+	// No record of a prior default (fresh load / undo restore) -> preserve, never
+	// re-adopt the initializer over the persisted value.
+	{
+		const previous = [decl("u_a", [0.9])]; // persisted slider value
+		const next = reconcileUniforms([decl("u_a", [0.2])], previous, {}); // empty lastDefaults
+		near(byName(next, "u_a").value[0], 0.9, "with no remembered default, the persisted value is preserved");
+	}
+
+	// A color control stays a color when its vec3 declaration is unchanged.
+	{
+		const previous: Uniform[] = [{ name: "u_col", type: "color", value: [0.2, 0.4, 0.6], min: 0, max: 1, step: 0.01 }];
+		const next = reconcileUniforms([decl("u_col", [0, 0, 0])], previous, { u_col: [0, 0, 0] });
+		eq(byName(next, "u_col").type, "color", "a color control survives reconciliation as a color");
+		near(byName(next, "u_col").value[1], 0.4, "color value preserved");
+	}
+
+	// A declaration removed from source drops out of the control list.
+	{
+		const next = reconcileUniforms([decl("u_a", [0.5])], [decl("u_a", [0.5]), decl("u_gone", [0.3])], { u_a: [0.5], u_gone: [0.3] });
+		eq(next.length, 1, "a uniform whose declaration was removed drops out");
+		eq(next[0].name, "u_a", "only the still-declared uniform remains");
+	}
 }
 
 console.log(`uniforms.test.ts: ${passed} checks passed`);
