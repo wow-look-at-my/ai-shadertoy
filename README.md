@@ -99,8 +99,10 @@ sample `under`, `geometry`, `mask`, built-in textures, image assets, or the
 Passes execute in dependency order, and an input pointing at its own pass reads
 the *previous* frame (feedback, for trails / accumulation / ping-pong simulation).
 One pass is the layer's **output** (its composite). Passes can use an `rgba16f`
-target to keep HDR values for bloom/blur. Edit it visually in the **Passes** tab
-(draggable nodes wired by their inputs, scoped to the active layer), or let the AI
+target to keep HDR values for bloom/blur. Edit it visually in the **Passes** tab,
+where the graph is **automatically arranged** left-to-right in dependency order
+(you wire nodes by their inputs and pan/zoom the view, but node positions are
+managed for you — there's nothing to drag into place), or let the AI
 build it. Inputs per pass are not capped at four; use as many `iChannelN` inputs
 as the shader needs, up to the GPU limit.
 

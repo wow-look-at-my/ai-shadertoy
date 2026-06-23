@@ -945,8 +945,8 @@ textarea.code {
 	gap: 1px;
 	padding: 0 4px 0 9px;
 	border-bottom: 1px solid var(--line);
-	cursor: move;
-	touch-action: none;
+	/* Nodes are auto-laid out (not draggable); clicking the header selects the pass. */
+	cursor: pointer;
 }
 .gn-name {
 	font-weight: 600;
@@ -1013,17 +1013,6 @@ textarea.code {
 }
 .gn-row .gn-rm:hover {
 	opacity: 1;
-}
-.gn-addrow {
-	height: 24px;
-	display: flex;
-	align-items: center;
-	padding: 2px 9px 4px;
-}
-.gn-addrow .btn.tiny {
-	width: 100%;
-	color: var(--fg-dim);
-	font-size: 11px;
 }
 
 /* ---- textures header (per-pass) ---- */
