@@ -11,7 +11,7 @@ import { debounce, formatBytes, pickFile, uid } from "../util/misc.ts";
 import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
-import { layoutGraph, type NodePos } from "./graphlayout.ts";
+import { layoutGraph, type LayoutResult, type NodePos } from "./graphlayout.ts";
 import type { BuiltinTexture, Channel, ImageAsset, Layer, Pass, PassFormat, Shape, Uniform, UniformType } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -178,20 +178,37 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 const NODE_W = 196;
 const HEADER_H = 30;
 const ROW_H = 26;
-const ADDROW_H = 24;
+const CARD_BORDER = 2; // top+bottom 1px borders, so geometry matches the rendered card
 // Auto-layout spacing: the DAG is laid out left-to-right in dependency columns.
 const COL_GAP = 64; // horizontal gap between columns
 const ROW_GAP = 28; // vertical gap between stacked nodes in a column
 const GRAPH_MARGIN = 28; // padding before the first column/row
 
-// Per-node geometry (input count varies, so heights/ports are computed).
+// Per-node geometry. A node is a header plus one row per input pin (there is NO
+// add-row), so the card is HEADER_H + rows*ROW_H (+ borders). The single output
+// port sits at the card's vertical centre -- valid even with zero input rows, so
+// it never floats off the card.
 const inPortY = (i: number): number => HEADER_H + ROW_H / 2 + i * ROW_H;
-const outPortY = (pass: Pass): number => HEADER_H + (Math.max(pass.channels.length, 1) * ROW_H) / 2;
-const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + ADDROW_H + 6;
+const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + CARD_BORDER;
+const outPortY = (pass: Pass): number => nodeHeight(pass) / 2;
+
+/** Smooth cubic path through the given points (horizontal tangents at each),
+ * chained so a routed edge threads its waypoints between the columns it spans. */
+function edgePath(points: NodePos[]): string {
+	let d = `M ${points[0].x} ${points[0].y}`;
+	for (let k = 1; k < points.length; k++) {
+		const a = points[k - 1];
+		const b = points[k];
+		const dx = Math.max(36, Math.abs(b.x - a.x) * 0.5);
+		d += ` C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+	}
+	return d;
+}
 
 /** Auto-layout the active layer's passes: a left-to-right layered DAG layout
- * derived purely from the pass->pass edges (no stored coordinates). */
-function layoutPasses(passes: Pass[]): Map<string, NodePos> {
+ * derived purely from the pass->pass edges (no stored coordinates), plus routing
+ * waypoints for edges that span more than one column. */
+function layoutPasses(passes: Pass[]): LayoutResult {
 	const nodes = passes.map((p) => ({
 		id: p.id,
 		deps: p.channels.filter((c) => c.kind === "pass" && c.passId).map((c) => c.passId!),
@@ -238,13 +255,17 @@ function fitView(view: GraphView, passes: Pass[], pos: Map<string, NodePos>, gra
 
 function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => void, view: GraphView): void {
 	const passes = store.activeLayer().passes;
-	const pos = layoutPasses(passes);
-	const at = (id: string): NodePos => pos.get(id) ?? { x: GRAPH_MARGIN, y: GRAPH_MARGIN };
+	const layout = layoutPasses(passes);
+	const at = (id: string): NodePos => layout.pos.get(id) ?? { x: GRAPH_MARGIN, y: GRAPH_MARGIN };
 	const viewport = el("div", { class: "graph-viewport" });
 
-	// Edges (SVG) behind the nodes, inside the transformed viewport.
-	const w = Math.max(640, ...passes.map((p) => at(p.id).x + NODE_W + 60));
-	const h = Math.max(360, ...passes.map((p) => at(p.id).y + nodeHeight(p) + 60));
+	// Edges (SVG) behind the nodes, inside the transformed viewport. Bounds cover
+	// nodes AND routing waypoints so the SVG never clips a routed edge.
+	const xs = [640, ...passes.map((p) => at(p.id).x + NODE_W + 60)];
+	const ys = [360, ...passes.map((p) => at(p.id).y + nodeHeight(p) + 60)];
+	for (const pts of layout.routes.values()) for (const pt of pts) { xs.push(pt.x + 60); ys.push(pt.y + 60); }
+	const w = Math.max(...xs);
+	const h = Math.max(...ys);
 	const svgNS = "http://www.w3.org/2000/svg";
 	const svg = document.createElementNS(svgNS, "svg");
 	svg.setAttribute("class", "graph-edges");
@@ -261,13 +282,13 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 				const src = byId.get(c.passId);
 				if (!src) return;
 				const sp = at(src.id);
-				const sx = sp.x + NODE_W;
-				const sy = sp.y + outPortY(src);
-				const tx = tp.x;
-				const ty = tp.y + inPortY(i);
+				const start = { x: sp.x + NODE_W, y: sp.y + outPortY(src) };
+				const end = { x: tp.x, y: tp.y + inPortY(i) };
+				// Thread any routing waypoints so an edge spanning >1 column bends
+				// around the nodes in between instead of crossing them.
+				const waypoints = layout.routes.get(`${src.id}>${tgt.id}`) ?? [];
 				const path = document.createElementNS(svgNS, "path");
-				const dx = Math.max(40, Math.abs(tx - sx) * 0.5);
-				path.setAttribute("d", `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`);
+				path.setAttribute("d", edgePath([start, ...waypoints, end]));
 				path.setAttribute("class", src.id === tgt.id ? "edge feedback" : "edge");
 				svg.appendChild(path);
 			});
@@ -341,7 +362,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 		zoomBtn("−", "Zoom out", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1 / 1.2)),
 		zoomLabel,
 		zoomBtn("+", "Zoom in", () => zoomAt(view, graph.clientWidth / 2, graph.clientHeight / 2, 1.2)),
-		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, pos, graph); applyTransform(); } } }, "Fit"),
+		el("button", { class: "btn tiny", title: "Fit all passes", on: { click: () => { fitView(view, passes, layout.pos, graph); applyTransform(); } } }, "Fit"),
 	);
 
 	render(container, toolbar, graph);

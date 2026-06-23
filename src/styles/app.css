@@ -1014,17 +1014,6 @@ textarea.code {
 .gn-row .gn-rm:hover {
 	opacity: 1;
 }
-.gn-addrow {
-	height: 24px;
-	display: flex;
-	align-items: center;
-	padding: 2px 9px 4px;
-}
-.gn-addrow .btn.tiny {
-	width: 100%;
-	color: var(--fg-dim);
-	font-size: 11px;
-}
 
 /* ---- textures header (per-pass) ---- */
 .tex-head {
