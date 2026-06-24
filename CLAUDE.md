@@ -78,7 +78,10 @@ npm run build         # ts0 build -> dist/index.html
   `lowp`) and an **optional `= <default>` initializer** (numeric literal or
   `vecN(...)` constructor, single-arg splat) — `parseInitializer` seeds the
   control's starting value and `rangeForValues` widens the slider to fit a baked
-  default outside 0..1; the header re-declares the uniform WITHOUT the initializer
+  default outside 0..1. Float literals may carry the GLSL ES 3.00 single-precision
+  `f`/`F` suffix (`= 40.0f`, `vec3(1.0f, …)`); `glslLiteralToNumber` strips it before
+  `Number()` so an idiomatic baked default no longer silently parses to 0. The
+  header re-declares the uniform WITHOUT the initializer
   (GLSL ES requires that). A **trailing `//` or single-line `/* */` comment after
   the `;` is tolerated** (a natural thing to write that used to silently break both
   extraction and stripping). `reconcileUniforms(declared, previous, lastDefaults)`
