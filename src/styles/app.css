@@ -1533,3 +1533,27 @@ textarea.code {
 		grid-template-rows: 55vh 7px 80vh;
 	}
 }
+
+/* ---- ultrawide: three columns side-by-side ---- */
+/* On an ultrawide display the preview and editor sit next to each other rather
+   than stacked, so the workspace reads as chat | preview | editor. .main-col
+   flips from a row stack to a column split and the splitter becomes a vertical
+   (col-resize) handle driving --preview-w. The query is mirrored in app.ts
+   (THREE_COL_QUERY) -- keep the two in sync. */
+@media (min-width: 1600px) and (min-aspect-ratio: 2 / 1) {
+	.workspace {
+		grid-template-columns: minmax(320px, 0.5fr) minmax(720px, 3fr);
+	}
+	.main-col {
+		--preview-w: 50%;
+		grid-template-rows: minmax(0, 1fr);
+		grid-template-columns: var(--preview-w) 7px minmax(0, 1fr);
+	}
+	.v-splitter {
+		cursor: col-resize;
+		border-top: none;
+		border-bottom: none;
+		border-left: 1px solid var(--line);
+		border-right: 1px solid var(--line);
+	}
+}

@@ -1,7 +1,9 @@
 // Composes the whole UI: top bar and a two-column workspace -- chat on the
 // left, and a main column on the right that stacks the live preview ON TOP of
 // the editor (code / passes / uniforms / textures), separated by a draggable
-// splitter so the code gets the full width to read.
+// splitter so the code gets the full width to read. On ultrawide displays the
+// main column instead lays the preview and editor side-by-side (see
+// THREE_COL_QUERY / app.css), giving a chat | preview | editor three-column view.
 
 import { el } from "../util/dom.ts";
 import { createTopbar } from "./topbar.ts";
@@ -66,26 +68,41 @@ function isTextEntry(t: HTMLElement | null): boolean {
 	return false;
 }
 
-// Vertical resize of the preview / editor split. Updates --preview-h on the
-// main column; the canvas auto-resizes from its container each animation frame.
+// Must match the ultrawide media query in app.css. When it matches, .main-col is
+// a side-by-side column split and the handle resizes width; otherwise it is the
+// stacked row split and the handle resizes height.
+const THREE_COL_QUERY = "(min-width: 1600px) and (min-aspect-ratio: 2 / 1)";
+
+// Resize the preview / editor split. The boundary is horizontal in the stacked
+// (default) layout and vertical in the ultrawide three-column layout, so the
+// handle drives --preview-h (height %) or --preview-w (width %) accordingly.
+// The canvas auto-resizes from its container each animation frame either way.
 function wireSplitter(main: HTMLElement, handle: HTMLElement): void {
+	const ultrawide = window.matchMedia(THREE_COL_QUERY);
 	let dragging = false;
 	const onMove = (e: PointerEvent): void => {
 		if (!dragging) return;
 		const rect = main.getBoundingClientRect();
-		const pct = ((e.clientY - rect.top) / rect.height) * 100;
-		main.style.setProperty("--preview-h", `${Math.max(15, Math.min(85, pct))}%`);
+		if (ultrawide.matches) {
+			const pct = ((e.clientX - rect.left) / rect.width) * 100;
+			main.style.setProperty("--preview-w", `${Math.max(15, Math.min(85, pct))}%`);
+		} else {
+			const pct = ((e.clientY - rect.top) / rect.height) * 100;
+			main.style.setProperty("--preview-h", `${Math.max(15, Math.min(85, pct))}%`);
+		}
 	};
 	const onUp = (): void => {
 		dragging = false;
 		window.removeEventListener("pointermove", onMove);
 		window.removeEventListener("pointerup", onUp);
 		document.body.style.userSelect = "";
+		document.body.style.cursor = "";
 	};
 	handle.addEventListener("pointerdown", (e) => {
 		dragging = true;
 		e.preventDefault();
 		document.body.style.userSelect = "none";
+		document.body.style.cursor = ultrawide.matches ? "col-resize" : "row-resize";
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", onUp);
 	});
