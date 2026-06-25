@@ -3,6 +3,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { downloadFile } from "../util/misc.ts";
+import { encodeHalfRGBA } from "../util/exr.ts";
 import { createShapeGizmo } from "./shapegizmo.ts";
 import type { Store } from "../state/store.ts";
 import type { RenderStats } from "../gl/renderer.ts";
@@ -36,6 +37,17 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 	scaleSel.addEventListener("change", () => store.updateSettings({ renderScale: Number(scaleSel.value) }));
 	store.on("settings", () => (scaleSel.value = String(store.settings.renderScale)));
 
+	// Square-pixels toggle: forces an isotropic UV space (iResolution = short side)
+	// so `uv = fragCoord/iResolution.xy` keeps equal x/y scale and circles stay round.
+	const squareBtn = el("button", { class: "btn icon", title: "Square pixels: isotropic UVs (circles stay round)" }, icon("aspectRatio"));
+	const updateSquare = () => {
+		squareBtn.classList.toggle("on", store.settings.squarePixels);
+		squareBtn.setAttribute("aria-pressed", String(store.settings.squarePixels));
+	};
+	squareBtn.addEventListener("click", () => store.updateSettings({ squarePixels: !store.settings.squarePixels }));
+	updateSquare();
+	store.on("settings", updateSquare);
+
 	const errBadge = el("span", { class: "err-badge", title: "Shader does not compile" }, "compile error");
 	errBadge.hidden = true;
 	store.on("compile", (c) => {
@@ -48,18 +60,10 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 		{ class: "toolbar" },
 		playBtn,
 		el("button", { class: "btn icon", title: "Restart time", on: { click: () => store.renderer.reset() } }, icon("restart")),
-		el("button", {
-			class: "btn icon",
-			title: "Download a PNG screenshot",
-			on: {
-				click: () => {
-					const shot = store.renderer.screenshot(1920, "image/png", 1);
-					downloadFile(`${store.project.name.replace(/\s+/g, "_")}.png`, dataUrlToBlob(shot.dataUrl));
-				},
-			},
-		}, icon("download")),
+		createDownloadMenu(store),
 		errBadge,
 		el("span", { class: "spacer" }),
+		squareBtn,
 		scaleSel,
 	);
 
@@ -71,6 +75,55 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 	canvasWrap.appendChild(createShapeGizmo(store, canvas));
 
 	return el("section", { class: "preview" }, toolbar, canvasWrap, el("div", { class: "statbar" }, stats));
+}
+
+/** Download button that opens a small format menu: lossless PNG, lossless WebP,
+ * and — only when the output is an HDR (rgba16f) target — lossless 16-bit EXR.
+ * The menu is rebuilt on each open so the EXR option reflects the live output. */
+function createDownloadMenu(store: Store): HTMLElement {
+	const btn = el("button", { class: "btn icon", title: "Download a screenshot" }, icon("download"));
+	const menu = el("div", { class: "download-menu" });
+	menu.hidden = true;
+	const wrap = el("div", { class: "download-wrap" }, btn, menu);
+
+	const baseName = () => store.project.name.replace(/\s+/g, "_") || "shader";
+
+	const saveRaster = (mime: string, ext: string) => {
+		// quality 1 -> lossless for both PNG (ignored) and WebP (true VP8L lossless).
+		const shot = store.renderer.screenshot(1920, mime, 1);
+		downloadFile(`${baseName()}.${ext}`, dataUrlToBlob(shot.dataUrl));
+	};
+	const saveExr = () => {
+		const cap = store.renderer.captureFloat();
+		if (!cap) return; // output stopped being a float target between open and click
+		const bytes = encodeHalfRGBA(cap.width, cap.height, cap.data);
+		downloadFile(`${baseName()}.exr`, new Blob([bytes as BlobPart], { type: "image/x-exr" }));
+	};
+
+	const onDocDown = (e: PointerEvent) => {
+		if (!wrap.contains(e.target as Node)) close();
+	};
+	const close = () => {
+		if (menu.hidden) return;
+		menu.hidden = true;
+		document.removeEventListener("pointerdown", onDocDown, true);
+	};
+	const item = (label: string, note: string, run: () => void) =>
+		el("button", { class: "download-item", on: { click: () => { close(); run(); } } }, el("span", { class: "fmt" }, label), el("span", { class: "note" }, note));
+
+	const open = () => {
+		const items = [
+			item("PNG", "Lossless", () => saveRaster("image/png", "png")),
+			item("WebP", "Lossless", () => saveRaster("image/webp", "webp")),
+		];
+		if (store.renderer.hasFloatOutput()) items.push(item("EXR", "HDR · 16-bit float", saveExr));
+		render(menu, ...items);
+		menu.hidden = false;
+		document.addEventListener("pointerdown", onDocDown, true);
+	};
+
+	btn.addEventListener("click", () => (menu.hidden ? open() : close()));
+	return wrap;
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {

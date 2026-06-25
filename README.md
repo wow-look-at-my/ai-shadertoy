@@ -20,6 +20,9 @@ also wire up input channels — built-in textures, images, **videos**, the
   the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html`
   (no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
+- **Export the render.** The preview's download button offers lossless **PNG** and
+  lossless **WebP**, plus lossless **EXR** (16-bit float) whenever the output pass
+  is an HDR (`rgba16f`) target — so HDR renders leave the browser without clipping.
 - **Bring your own model.** Works with Anthropic (Claude) or any
   OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator
@@ -290,7 +293,8 @@ src/
   ai/                   # provider adapters (Anthropic + OpenAI), agent loop, tools
   state/                # types, central store, undo/redo history, IndexedDB persistence
   ui/                   # vanilla-DOM components: chat | (preview stacked over the
-                        #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets)
+                        #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets;
+                        #   ultrawide displays put preview & editor side-by-side -> 3 columns)
   util/                 # DOM helper, tiny markdown renderer, misc
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)

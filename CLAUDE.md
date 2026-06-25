@@ -66,7 +66,11 @@ npm run build         # ts0 build -> dist/index.html
   (`connectVideoInput` / `connectWebcamInput`; `setInputParams` changes
   filter/wrap without reloading; `dynamicKey()` lets the store skip redundant
   reloads). It also owns the clock, uniforms, and screenshot (average-colour
-  feedback). `wrapper.ts` assembles
+  feedback; the default screenshot encodes **WebP** now, smaller than JPEG, and
+  derives `mediaType` from the bytes `toDataURL` actually produced).
+  `captureFloat`/`hasFloatOutput` read the presented composite back as raw
+  half-float RGBA (`readPixels` with `HALF_FLOAT`, flipped top-down) when the
+  output pass is `rgba16f`, for lossless HDR/EXR export. `wrapper.ts` assembles
   the full GLSL ES 3.00 source around the user's `mainImage` for a pass, declaring
   exactly that pass's `iChannel0..N-1` + `iChannelResolution[N]` (channel count is a
   parameter — inputs are not capped at four) and emitting `#line 1` so compile
@@ -171,6 +175,9 @@ npm run build         # ts0 build -> dist/index.html
   file/webcam plumbing plus `sanitizeAssetName` (folds exotic whitespace like
   U+202F — macOS screenshot filenames — to a plain space and drops zero-width/bidi
   marks, applied at upload so assets stay referenceable by their plain-looking name).
+  `src/util/exr.ts` is a minimal dependency-free OpenEXR writer (single-part
+  scanline, NO_COMPRESSION, HALF channels) used to export an `rgba16f` render
+  losslessly; pure + DOM-free, unit-tested in `test/exr.test.ts`.
   `store.ts` (single owner of state + the renderer + persistence + `applyTool` +
   undo/redo) tracks `selectedLayerId` + `selectedPassId` + `selectedShapeId` (the
   active layer can be a layer's mask — `layerById`/`passById`/`eachLayer` recurse
@@ -198,8 +205,12 @@ npm run build         # ts0 build -> dist/index.html
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z / Ctrl+Y (deferring to native undo inside text
   fields). Unit-tested in `test/history.test.ts` (`npm run test`, run by CI).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
-  Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
-  splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
+  Layout is **chat | (preview stacked OVER the editor)** with a draggable
+  splitter (`app.ts`), so code gets the full column width. On **ultrawide** displays
+  (`min-width:1600px` + `min-aspect-ratio:2/1` — `THREE_COL_QUERY` in `app.ts`, mirrored
+  in `app.css`) the main column flips from a row stack to a side-by-side column split, so
+  the workspace reads as **chat | preview | editor** (the same splitter then resizes width
+  via `--preview-w` instead of height via `--preview-h`). The editor (`rightpanel.ts`)
   has six tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, a
   per-row mask button + an "editing mask" banner, add layers, and a per-layer
   geometry editor: add quad/circle + edit position/size/rotation/colour/corner/
@@ -217,7 +228,24 @@ npm run build         # ts0 build -> dist/index.html
   file reuses the existing asset), rename/delete; `store.renameAsset`, and
   the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
   The Code/Passes/Textures tabs are scoped to the active
-  layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
+  layer (the Layers tab selects it). `preview.ts`'s toolbar Download button opens a
+  small format menu (rebuilt on each open): lossless **PNG** and lossless **WebP**
+  (`toDataURL` quality 1) always, plus lossless **EXR** (16-bit HDR) only when the
+  output pass is `rgba16f` (`renderer.hasFloatOutput()` gates it; `captureFloat` +
+  `util/exr.ts` write the file). The toolbar also carries a **render scale** select
+  and a **square-pixels** toggle button (`settings.squarePixels`,
+  default **on**): when on, the renderer reports a **square `iResolution`** (the
+  short side, via `Renderer.setSquarePixels`) so the usual
+  `uv = fragCoord/iResolution.xy` has equal x/y scale — circles stay round. The
+  framebuffer is unchanged (it still fills the canvas), so the content isn't
+  stretched — it just tiles past `uv` 0..1 along the long axis. To keep that tiling
+  **centred** (not anchored bottom-left), the wrapper subtracts an `ai_fragOffset`
+  uniform = `(target − shortSide)/2` from `gl_FragCoord` before calling `mainImage`
+  (and the renderer shifts `iMouse` by the same offset to stay consistent), so
+  `uv = 0.5` lands at the true canvas centre. `ai_fragOffset` is 0 when the toggle
+  is off (identical to before). It does NOT touch geometry shapes (those are
+  normalized canvas coords).
+  `preview.ts` also mounts `shapegizmo.ts` over the
   canvas: an overlay that (in "edit mode" = active layer has shapes) hit-tests the
   active layer's shapes and draws a selection box + corner resize handles + a
   rotate handle, writing through `store.updateShape` (coalesced; rotation-aware
