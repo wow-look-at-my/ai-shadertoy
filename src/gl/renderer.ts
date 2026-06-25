@@ -118,6 +118,9 @@ export class Renderer {
 	private floatColorBuffer = false;
 	private floatLinear = false;
 	private maxTextureUnits = 16;
+	// The presented composite's output target, captured each renderFrame (the
+	// topmost visible layer's output pass) so HDR/EXR export can read it back.
+	private lastFinal: { fbo: WebGLFramebuffer; width: number; height: number; format: PassFormat } | null = null;
 
 	private renderScale = 1;
 	private startTime = performance.now();
@@ -687,6 +690,7 @@ export class Renderer {
 		const rendered = new Set<string>();
 		let finalTex: WebGLTexture | null = null;
 		let underTex = this.transparentTex;
+		this.lastFinal = null;
 
 		for (const layer of this.layers) {
 			if (!layer.visible) continue;
@@ -698,10 +702,11 @@ export class Renderer {
 				this.renderLayerPasses(layer.mask, t, H, rendered);
 			}
 			this.renderLayerPasses(layer, t, H, rendered);
-			const comp = this.layerOutputTex(layer);
-			if (!comp) continue; // layer produced nothing this frame
-			finalTex = comp;
-			underTex = comp; // becomes the next layer's "under"
+			const out = this.layerOutput(layer);
+			if (!out) continue; // layer produced nothing this frame
+			finalTex = out.tex;
+			this.lastFinal = { fbo: out.fbo, width: out.width, height: out.height, format: out.format };
+			underTex = out.tex; // becomes the next layer's "under"
 		}
 
 		// Present the topmost visible layer's composite (or clear if nothing drew).
@@ -738,10 +743,18 @@ export class Renderer {
 		}
 	}
 
+	/** The current-frame output Target of a layer (its output pass's texture + fbo
+	 * + dims + format), or null when the layer produced nothing this frame. */
+	private layerOutput(layer: RenderLayer): { tex: WebGLTexture; fbo: WebGLFramebuffer; width: number; height: number; format: PassFormat } | null {
+		const out = layer.passes.get(layer.outputPassId) ?? layer.order[layer.order.length - 1] ?? null;
+		if (!out || !out.a) return null;
+		const t = this.curr(out);
+		return { tex: t.tex, fbo: t.fbo, width: out.width, height: out.height, format: out.format };
+	}
+
 	/** The current-frame texture of a layer's output pass (or null if it has none). */
 	private layerOutputTex(layer: RenderLayer): WebGLTexture | null {
-		const out = layer.passes.get(layer.outputPassId) ?? layer.order[layer.order.length - 1] ?? null;
-		return out && out.a ? this.curr(out).tex : null;
+		return this.layerOutput(layer)?.tex ?? null;
 	}
 
 	private drawPass(p: RenderPass, t: number, H: number, rendered: Set<string>): void {
@@ -921,6 +934,34 @@ export class Renderer {
 			avgColor: avg,
 			nonBlack: avg[0] + avg[1] + avg[2] > 6,
 		};
+	}
+
+	/** True when the presented composite is backed by a real HDR (rgba16f) target,
+	 * so an EXR export would carry genuine float data (a "rgba16f" pass silently
+	 * falls back to rgba8 when the GPU lacks EXT_color_buffer_float). */
+	hasFloatOutput(): boolean {
+		this.renderFrame();
+		return !!this.lastFinal && this.lastFinal.format === "rgba16f" && this.floatColorBuffer;
+	}
+
+	/** Read the presented HDR composite back as half-float RGBA (top-down, the
+	 * exact rgba16f bits), for a lossless EXR export. Null when the output is not
+	 * a float target — gate on hasFloatOutput() first. */
+	captureFloat(): { width: number; height: number; data: Uint16Array } | null {
+		this.renderFrame();
+		const f = this.lastFinal;
+		if (!f || f.format !== "rgba16f" || !this.floatColorBuffer) return null;
+		const gl = this.gl;
+		const { fbo, width: w, height: h } = f;
+		const raw = new Uint16Array(w * h * 4);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+		gl.readPixels(0, 0, w, h, gl.RGBA, gl.HALF_FLOAT, raw);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		// GL reads bottom-up; flip to top-down so the EXR matches the on-screen image.
+		const data = new Uint16Array(w * h * 4);
+		const row = w * 4;
+		for (let y = 0; y < h; y++) data.set(raw.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+		return { width: w, height: h, data };
 	}
 
 	// ---- input --------------------------------------------------------------

@@ -20,6 +20,9 @@ also wire up input channels — built-in textures, images, **videos**, the
   the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html`
   (no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
+- **Export the render.** The preview's download button offers lossless **PNG** and
+  lossless **WebP**, plus lossless **EXR** (16-bit float) whenever the output pass
+  is an HDR (`rgba16f`) target — so HDR renders leave the browser without clipping.
 - **Bring your own model.** Works with Anthropic (Claude) or any
   OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator
