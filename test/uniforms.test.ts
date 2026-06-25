@@ -79,6 +79,28 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 	near(byName(us, "u_unit").max, 1, "1.0 default does not widen the range");
 }
 
+// ---- GLSL single-precision `f`/`F` suffix on float literals ----------------
+// GLSL ES 3.00 permits `1.5f` / `40.0F` / `1e3f`; `Number()` rejects the suffix,
+// so an idiomatic baked default like `uniform float u_r = 40.0f;` used to parse
+// to NaN and the control silently fell back to 0 (the "0 placeholder" symptom).
+{
+	const src = [
+		"uniform float u_blur = 40.0f;",
+		"uniform float u_gain = 1.5F;",
+		"uniform float u_exp = 2e3f;",
+		"uniform vec3 u_tint = vec3(1.0f, 0.5f, 0.25f);",
+		"void mainImage(out vec4 o, in vec2 c){ o = vec4(u_tint * u_gain, u_blur + u_exp); }",
+	].join("\n");
+	const us = extractUniformDeclarations(src);
+	near(byName(us, "u_blur").value[0], 40, "float `40.0f` suffix parsed (not 0)");
+	near(byName(us, "u_gain").value[0], 1.5, "float `1.5F` suffix parsed");
+	near(byName(us, "u_exp").value[0], 2000, "float `2e3f` exponent+suffix parsed");
+	const tint = byName(us, "u_tint");
+	near(tint.value[0], 1.0, "vec component `1.0f` suffix parsed");
+	near(tint.value[1], 0.5, "vec component `0.5f` suffix parsed");
+	near(tint.value[2], 0.25, "vec component `0.25f` suffix parsed");
+}
+
 // ---- precision qualifiers are tolerated ------------------------------------
 {
 	const us = extractUniformDeclarations("uniform highp float u_gain = 2.0;\nuniform mediump vec2 u_res;\nuniform lowp vec3 u_c;");
