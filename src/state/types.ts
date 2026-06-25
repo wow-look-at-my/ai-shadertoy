@@ -219,6 +219,7 @@ export interface Settings {
 	imageGen: ImageGenConfig;
 	proxyUrl: string; // CORS proxy base; requests become `${proxyUrl}${targetUrl}`
 	renderScale: number; // 0.25 .. 1
+	squarePixels: boolean; // report iResolution as the short side so UVs are isotropic (circles stay round)
 	autoScreenshot: boolean; // attach a render to the model after each shader change
 	screenshotMaxDim: number; // longest edge fed to the model
 	persistRequested: boolean;

@@ -208,6 +208,7 @@ const BUILTIN_NAMES = new Set([
 	"iMouse",
 	"iDate",
 	"iChannelResolution",
+	"ai_fragOffset",
 	"mainImage",
 	"main",
 ]);
@@ -242,6 +243,7 @@ uniform float iFrameRate;
 uniform int iFrame;
 uniform vec4 iMouse;
 uniform vec4 iDate;
+uniform vec2 ai_fragOffset;
 ${channelDecls}
 ${customDecls}
 `;
@@ -251,7 +253,9 @@ const FOOTER = `
 
 void main() {
 	vec4 ai_color = vec4(0.0, 0.0, 0.0, 1.0);
-	mainImage(ai_color, gl_FragCoord.xy);
+	// ai_fragOffset centres "square pixels" tiling (0 otherwise), so the shader sees
+	// a fragCoord whose origin is shifted to keep uv = fragCoord/iResolution centred.
+	mainImage(ai_color, gl_FragCoord.xy - ai_fragOffset);
 	ai_fragColor = ai_color;
 }
 `;

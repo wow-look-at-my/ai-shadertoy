@@ -36,6 +36,17 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 	scaleSel.addEventListener("change", () => store.updateSettings({ renderScale: Number(scaleSel.value) }));
 	store.on("settings", () => (scaleSel.value = String(store.settings.renderScale)));
 
+	// Square-pixels toggle: forces an isotropic UV space (iResolution = short side)
+	// so `uv = fragCoord/iResolution.xy` keeps equal x/y scale and circles stay round.
+	const squareBtn = el("button", { class: "btn icon", title: "Square pixels: isotropic UVs (circles stay round)" }, icon("aspectRatio"));
+	const updateSquare = () => {
+		squareBtn.classList.toggle("on", store.settings.squarePixels);
+		squareBtn.setAttribute("aria-pressed", String(store.settings.squarePixels));
+	};
+	squareBtn.addEventListener("click", () => store.updateSettings({ squarePixels: !store.settings.squarePixels }));
+	updateSquare();
+	store.on("settings", updateSquare);
+
 	const errBadge = el("span", { class: "err-badge", title: "Shader does not compile" }, "compile error");
 	errBadge.hidden = true;
 	store.on("compile", (c) => {
@@ -60,6 +71,7 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 		}, icon("download")),
 		errBadge,
 		el("span", { class: "spacer" }),
+		squareBtn,
 		scaleSel,
 	);
 

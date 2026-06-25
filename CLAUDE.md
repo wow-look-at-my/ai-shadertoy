@@ -221,7 +221,20 @@ npm run build         # ts0 build -> dist/index.html
   file reuses the existing asset), rename/delete; `store.renameAsset`, and
   the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
   The Code/Passes/Textures tabs are scoped to the active
-  layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
+  layer (the Layers tab selects it). `preview.ts`'s toolbar carries a **render
+  scale** select and a **square-pixels** toggle button (`settings.squarePixels`,
+  default **on**): when on, the renderer reports a **square `iResolution`** (the
+  short side, via `Renderer.setSquarePixels`) so the usual
+  `uv = fragCoord/iResolution.xy` has equal x/y scale — circles stay round. The
+  framebuffer is unchanged (it still fills the canvas), so the content isn't
+  stretched — it just tiles past `uv` 0..1 along the long axis. To keep that tiling
+  **centred** (not anchored bottom-left), the wrapper subtracts an `ai_fragOffset`
+  uniform = `(target − shortSide)/2` from `gl_FragCoord` before calling `mainImage`
+  (and the renderer shifts `iMouse` by the same offset to stay consistent), so
+  `uv = 0.5` lands at the true canvas centre. `ai_fragOffset` is 0 when the toggle
+  is off (identical to before). It does NOT touch geometry shapes (those are
+  normalized canvas coords).
+  `preview.ts` also mounts `shapegizmo.ts` over the
   canvas: an overlay that (in "edit mode" = active layer has shapes) hit-tests the
   active layer's shapes and draws a selection box + corner resize handles + a
   rotate handle, writing through `store.updateShape` (coalesced; rotation-aware
