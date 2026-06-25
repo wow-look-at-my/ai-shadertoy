@@ -884,7 +884,7 @@ export class Renderer {
 
 	// ---- screenshot ---------------------------------------------------------
 
-	screenshot(maxDim = 512, mime = "image/jpeg", quality = 0.85): Screenshot {
+	screenshot(maxDim = 512, mime = "image/webp", quality = 0.85): Screenshot {
 		this.renderFrame();
 		const sw = this.canvas.width;
 		const sh = this.canvas.height;
@@ -897,6 +897,10 @@ export class Renderer {
 		const ctx = off.getContext("2d")!;
 		ctx.drawImage(this.canvas, 0, 0, w, h);
 		const dataUrl = off.toDataURL(mime, quality);
+		// toDataURL silently falls back to PNG on browsers that can't encode the
+		// requested type, so derive mediaType from the bytes actually produced —
+		// a mediaType/payload mismatch would make the vision API reject the image.
+		const mediaType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? mime;
 
 		const img = ctx.getImageData(0, 0, w, h).data;
 		let r = 0,
@@ -911,7 +915,7 @@ export class Renderer {
 		const avg: [number, number, number] = [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
 		return {
 			dataUrl,
-			mediaType: mime,
+			mediaType,
 			width: w,
 			height: h,
 			avgColor: avg,
