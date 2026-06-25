@@ -198,8 +198,12 @@ npm run build         # ts0 build -> dist/index.html
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z / Ctrl+Y (deferring to native undo inside text
   fields). Unit-tested in `test/history.test.ts` (`npm run test`, run by CI).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
-  Layout is **chat | (preview stacked OVER the editor)** with a draggable vertical
-  splitter (`app.ts`), so code gets the full column width. The editor (`rightpanel.ts`)
+  Layout is **chat | (preview stacked OVER the editor)** with a draggable
+  splitter (`app.ts`), so code gets the full column width. On **ultrawide** displays
+  (`min-width:1600px` + `min-aspect-ratio:2/1` — `THREE_COL_QUERY` in `app.ts`, mirrored
+  in `app.css`) the main column flips from a row stack to a side-by-side column split, so
+  the workspace reads as **chat | preview | editor** (the same splitter then resizes width
+  via `--preview-w` instead of height via `--preview-h`). The editor (`rightpanel.ts`)
   has six tabs: **Layers** (the back→front stack — reorder/show-hide/opacity, a
   per-row mask button + an "editing mask" banner, add layers, and a per-layer
   geometry editor: add quad/circle + edit position/size/rotation/colour/corner/

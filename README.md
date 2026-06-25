@@ -290,7 +290,8 @@ src/
   ai/                   # provider adapters (Anthropic + OpenAI), agent loop, tools
   state/                # types, central store, undo/redo history, IndexedDB persistence
   ui/                   # vanilla-DOM components: chat | (preview stacked over the
-                        #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets)
+                        #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets;
+                        #   ultrawide displays put preview & editor side-by-side -> 3 columns)
   util/                 # DOM helper, tiny markdown renderer, misc
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
