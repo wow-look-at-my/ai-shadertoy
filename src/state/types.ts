@@ -214,17 +214,12 @@ export interface ImageGenConfig {
 	useProxy: boolean;
 }
 
-// Preview framing: "fill" stretches the canvas to the whole preview pane;
-// the rest letterbox the canvas to a fixed aspect ratio (centred) so the render
-// keeps its proportions as the pane is resized.
-export type PreviewAspect = "fill" | "16:9" | "4:3" | "1:1";
-
 export interface Settings {
 	chat: ChatConfig;
 	imageGen: ImageGenConfig;
 	proxyUrl: string; // CORS proxy base; requests become `${proxyUrl}${targetUrl}`
 	renderScale: number; // 0.25 .. 1
-	previewAspect: PreviewAspect; // how the canvas is framed in the preview pane
+	squarePixels: boolean; // report iResolution as the short side so UVs are isotropic (circles stay round)
 	autoScreenshot: boolean; // attach a render to the model after each shader change
 	screenshotMaxDim: number; // longest edge fed to the model
 	persistRequested: boolean;

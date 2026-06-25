@@ -120,6 +120,10 @@ export class Renderer {
 	private maxTextureUnits = 16;
 
 	private renderScale = 1;
+	// "Square pixels": report a square iResolution (the short side) to user shaders
+	// so the common `uv = fragCoord/iResolution.xy` has equal x/y scale (circles
+	// stay round). The framebuffer is unchanged, so the image still fills the canvas.
+	private squarePixels = false;
 	private startTime = performance.now();
 	private pausedAt = 0;
 	private paused = false;
@@ -634,6 +638,11 @@ export class Renderer {
 		this.renderFrame();
 	}
 
+	setSquarePixels(on: boolean): void {
+		this.squarePixels = on;
+		this.renderFrame();
+	}
+
 	private resize(): void {
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		const cssW = this.canvas.clientWidth || 640;
@@ -750,7 +759,12 @@ export class Renderer {
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.curr(p).fbo);
 		gl.viewport(0, 0, p.width, p.height);
 
-		this.setFloat3(p, "iResolution", p.width, p.height, 1);
+		// Square-pixels mode feeds a square iResolution (the short side); otherwise
+		// the true target size. fragCoord still spans the full target, so uv just
+		// extends past 1 along the long axis instead of stretching the content.
+		const resSide = this.squarePixels ? Math.min(p.width, p.height) : 0;
+		if (resSide > 0) this.setFloat3(p, "iResolution", resSide, resSide, 1);
+		else this.setFloat3(p, "iResolution", p.width, p.height, 1);
 		this.setFloat1(p, "iTime", t);
 		this.setFloat1(p, "iTimeDelta", 1 / 60);
 		this.setFloat1(p, "iFrameRate", this.fps || 60);

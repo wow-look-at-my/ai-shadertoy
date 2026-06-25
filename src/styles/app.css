@@ -503,6 +503,10 @@ textarea:focus {
 	-webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z'/%3E%3C/svg%3E");
 	mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z'/%3E%3C/svg%3E");
 }
+.icon-aspectRatio {
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M19,12H17V15H14V17H19V12M7,9H10V7H5V12H7V9M21,3H3C1.89,3%201,3.89%201,5V19A2,2%200%200,0%203,21H21A2,2%200%200,0%2023,19V5C23,3.89%2022.1,3%2021,3M21,19H3V5H21V19Z'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M19,12H17V15H14V17H19V12M7,9H10V7H5V12H7V9M21,3H3C1.89,3%201,3.89%201,5V19A2,2%200%200,0%203,21H21A2,2%200%200,0%2023,19V5C23,3.89%2022.1,3%2021,3M21,19H3V5H21V19Z'/%3E%3C/svg%3E");
+}
 
 .icon-pause {
 	-webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M14,19H18V5H14M6,19H10V5H6V19Z'/%3E%3C/svg%3E");
@@ -687,26 +691,8 @@ textarea:focus {
 .canvas-wrap {
 	flex: 1;
 	min-height: 0;
-	/* Query container so the stage can size itself in cqw/cqh units, and a flex
-	   box so the letterboxed stage is centred within the pane. */
-	container-type: size;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	overflow: hidden;
-	background: #000 repeating-conic-gradient(#0b0e14 0% 25%, #10141d 0% 50%) 50% / 22px 22px;
-}
-/* Carries the canvas + gizmo overlay. Letterboxed to a fixed aspect ratio: the
-   largest box of that ratio that fits the pane (--preview-arf = width / height).
-   The .fill variant ignores the ratio and stretches to the whole pane. */
-.canvas-stage {
 	position: relative;
-	width: min(100cqw, 100cqh * var(--preview-arf, 1.7778));
-	height: min(100cqh, 100cqw / var(--preview-arf, 1.7778));
-}
-.canvas-stage.fill {
-	width: 100%;
-	height: 100%;
+	background: #000 repeating-conic-gradient(#0b0e14 0% 25%, #10141d 0% 50%) 50% / 22px 22px;
 }
 canvas.gl {
 	display: block;
@@ -786,9 +772,6 @@ canvas.gl {
 }
 .scale {
 	width: 64px;
-}
-.aspect {
-	width: 72px;
 }
 .err-badge {
 	background: #2a1418;
