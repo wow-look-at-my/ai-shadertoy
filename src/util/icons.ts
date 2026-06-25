@@ -8,7 +8,7 @@
 
 // The available glyph names. Keep in lockstep with the `.icon-<name>` rules in
 // app.css. Order is irrelevant.
-const ICON_NAMES = ["pause", "play", "restart", "download", "camera", "wrench", "check", "close", "refresh", "eye", "eyeOff", "chevronUp", "chevronDown", "mask", "undo", "redo", "pencil", "trash", "compress"] as const;
+const ICON_NAMES = ["pause", "play", "restart", "download", "camera", "wrench", "check", "close", "refresh", "eye", "eyeOff", "chevronUp", "chevronDown", "mask", "undo", "redo", "pencil", "trash", "compress", "aspectRatio"] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
 
