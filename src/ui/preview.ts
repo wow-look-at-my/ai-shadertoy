@@ -6,6 +6,14 @@ import { downloadFile } from "../util/misc.ts";
 import { createShapeGizmo } from "./shapegizmo.ts";
 import type { Store } from "../state/store.ts";
 import type { RenderStats } from "../gl/renderer.ts";
+import type { PreviewAspect } from "../state/types.ts";
+
+// Width / height for each preserved aspect ratio (CSS letterboxes to this).
+const ASPECT_RATIO: Record<Exclude<PreviewAspect, "fill">, number> = {
+	"16:9": 16 / 9,
+	"4:3": 4 / 3,
+	"1:1": 1,
+};
 
 export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElement {
 	const playBtn = el("button", { class: "btn icon", title: "Play / Pause (space)" });
@@ -36,6 +44,21 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 	scaleSel.addEventListener("change", () => store.updateSettings({ renderScale: Number(scaleSel.value) }));
 	store.on("settings", () => (scaleSel.value = String(store.settings.renderScale)));
 
+	const aspectSel = el(
+		"select",
+		{ class: "aspect", title: "Preview aspect ratio" },
+		...(
+			[
+				["16:9", "16:9"],
+				["4:3", "4:3"],
+				["1:1", "1:1"],
+				["fill", "Fill"],
+			] as const
+		).map(([v, label]) => el("option", { value: v }, label)),
+	);
+	aspectSel.value = store.settings.previewAspect;
+	aspectSel.addEventListener("change", () => store.updateSettings({ previewAspect: aspectSel.value as PreviewAspect }));
+
 	const errBadge = el("span", { class: "err-badge", title: "Shader does not compile" }, "compile error");
 	errBadge.hidden = true;
 	store.on("compile", (c) => {
@@ -60,15 +83,32 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 		}, icon("download")),
 		errBadge,
 		el("span", { class: "spacer" }),
+		aspectSel,
 		scaleSel,
 	);
 
 	updatePlay();
 	store.on("project", updatePlay);
 
-	const canvasWrap = el("div", { class: "canvas-wrap" });
-	canvasWrap.appendChild(canvas);
-	canvasWrap.appendChild(createShapeGizmo(store, canvas));
+	// The stage carries the aspect-ratio framing; the canvas and gizmo overlay both
+	// fill it 1:1, so the gizmo's canvas-relative math stays correct when letterboxed.
+	const stage = el("div", { class: "canvas-stage" });
+	stage.appendChild(canvas);
+	stage.appendChild(createShapeGizmo(store, canvas));
+	const canvasWrap = el("div", { class: "canvas-wrap" }, stage);
+
+	const applyAspect = (a: PreviewAspect): void => {
+		stage.classList.toggle("fill", a === "fill");
+		if (a !== "fill") stage.style.setProperty("--preview-arf", String(ASPECT_RATIO[a]));
+		// Repaint so a change takes effect immediately even while paused (the RAF
+		// loop would otherwise pick up the new layout only on the next frame).
+		store.renderer.renderFrame();
+	};
+	applyAspect(store.settings.previewAspect);
+	store.on("settings", () => {
+		aspectSel.value = store.settings.previewAspect;
+		applyAspect(store.settings.previewAspect);
+	});
 
 	return el("section", { class: "preview" }, toolbar, canvasWrap, el("div", { class: "statbar" }, stats));
 }

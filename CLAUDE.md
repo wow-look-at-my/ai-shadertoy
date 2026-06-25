@@ -218,7 +218,14 @@ npm run build         # ts0 build -> dist/index.html
   file reuses the existing asset), rename/delete; `store.renameAsset`, and
   the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
   The Code/Passes/Textures tabs are scoped to the active
-  layer (the Layers tab selects it). `preview.ts` mounts `shapegizmo.ts` over the
+  layer (the Layers tab selects it). `preview.ts`'s toolbar carries a **render
+  scale** select and a **preview aspect** select (`settings.previewAspect`:
+  `16:9`/`4:3`/`1:1`/`fill`, default `16:9`). The canvas + gizmo live in a
+  `.canvas-stage` that the CSS **letterboxes** to that ratio (via container-query
+  units + a single `--preview-arf` = width/height) and centres in the `.canvas-wrap`
+  pane; `fill` stretches the stage to the whole pane (the old behaviour). Because
+  the canvas and the gizmo overlay both fill the stage 1:1, the gizmo math is
+  unchanged. `preview.ts` also mounts `shapegizmo.ts` over the
   canvas: an overlay that (in "edit mode" = active layer has shapes) hit-tests the
   active layer's shapes and draws a selection box + corner resize handles + a
   rotate handle, writing through `store.updateShape` (coalesced; rotation-aware

@@ -6,9 +6,11 @@
 // The overlay only captures pointer events when the active layer has geometry
 // (edit mode); on a pure-shader layer it is pointer-events:none, so the shader's
 // iMouse keeps working. Coordinates: shapes are normalized 0..1 with y UP (origin
-// bottom-left, matching fragCoord); the canvas fills .canvas-wrap 1:1, so screen
+// bottom-left, matching fragCoord); the canvas fills .canvas-stage 1:1, so screen
 // CSS pixels map directly. Rotation is rigid in pixel space; the CSS box rotates
-// by -rotation (CSS y is flipped vs the shader's y-up).
+// by -rotation (CSS y is flipped vs the shader's y-up). The canvas and this
+// overlay both fill .canvas-stage 1:1 (which may be letterboxed inside the pane),
+// so measuring the canvas rect keeps the math correct regardless of framing.
 
 import { el } from "../util/dom.ts";
 import type { Shape } from "../state/types.ts";

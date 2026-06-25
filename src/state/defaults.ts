@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	},
 	proxyUrl: "https://proxy.pazer.ai/",
 	renderScale: 1,
+	previewAspect: "16:9",
 	autoScreenshot: false,
 	screenshotMaxDim: 512,
 	persistRequested: false,

@@ -687,8 +687,26 @@ textarea:focus {
 .canvas-wrap {
 	flex: 1;
 	min-height: 0;
-	position: relative;
+	/* Query container so the stage can size itself in cqw/cqh units, and a flex
+	   box so the letterboxed stage is centred within the pane. */
+	container-type: size;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
 	background: #000 repeating-conic-gradient(#0b0e14 0% 25%, #10141d 0% 50%) 50% / 22px 22px;
+}
+/* Carries the canvas + gizmo overlay. Letterboxed to a fixed aspect ratio: the
+   largest box of that ratio that fits the pane (--preview-arf = width / height).
+   The .fill variant ignores the ratio and stretches to the whole pane. */
+.canvas-stage {
+	position: relative;
+	width: min(100cqw, 100cqh * var(--preview-arf, 1.7778));
+	height: min(100cqh, 100cqw / var(--preview-arf, 1.7778));
+}
+.canvas-stage.fill {
+	width: 100%;
+	height: 100%;
 }
 canvas.gl {
 	display: block;
@@ -768,6 +786,9 @@ canvas.gl {
 }
 .scale {
 	width: 64px;
+}
+.aspect {
+	width: 72px;
 }
 .err-badge {
 	background: #2a1418;
