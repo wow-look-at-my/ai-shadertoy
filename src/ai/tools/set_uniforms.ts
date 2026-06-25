@@ -12,7 +12,7 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.setUniforms,
 		description:
-			"Set UI metadata/default values for custom uniforms declared in shader source. Add `uniform float/vec2/vec3/vec4 u_name;` to shader code first; those declarations automatically appear as live controls. This is a PATCH: only the uniforms you list are updated -- any uniform you DON'T list keeps its current value/range (omitting one never resets it). Names not declared in shader source are ignored by the renderer sync. value length must match the type (float=1, vec2=2, vec3/color=3, vec4=4). Usually you don't need this at all -- bake the default into the declaration instead (`uniform float u_speed = 1.5;`); reach for set_uniforms only to adjust a range/step/label or set a value programmatically.",
+			"Adjust UI metadata (range/step/label) for custom uniforms, or programmatically change an EXISTING uniform's value mid-session. This is NOT how you give a new uniform its starting value -- bake that into the declaration in the SAME edit (`uniform float u_speed = 1.5;`), which is one step instead of two and avoids the control sitting at 0 in between. The uniform must already be declared in shader source (names not declared there are ignored by the renderer sync). This is a PATCH: only the uniforms you list are updated -- any uniform you DON'T list keeps its current value/range (omitting one never resets it). value length must match the type (float=1, vec2=2, vec3/color=3, vec4=4).",
 		parameters: {
 			type: "object",
 			properties: {
