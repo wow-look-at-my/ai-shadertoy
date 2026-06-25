@@ -81,6 +81,7 @@ export class Store {
 
 		this.settings = mergeSettings(loadSettingsRaw());
 		this.renderer.setRenderScale(this.settings.renderScale);
+		this.renderer.setSquarePixels(this.settings.squarePixels);
 		void requestPersistence().then((granted) => {
 			if (granted && !this.settings.persistRequested) {
 				this.settings.persistRequested = true;
@@ -770,6 +771,7 @@ export class Store {
 		this.settings = { ...this.settings, ...patch };
 		saveSettings(this.settings);
 		this.renderer.setRenderScale(this.settings.renderScale);
+		this.renderer.setSquarePixels(this.settings.squarePixels);
 		this.emit("settings", this.settings);
 	}
 
