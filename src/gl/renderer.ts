@@ -759,18 +759,27 @@ export class Renderer {
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.curr(p).fbo);
 		gl.viewport(0, 0, p.width, p.height);
 
-		// Square-pixels mode feeds a square iResolution (the short side); otherwise
-		// the true target size. fragCoord still spans the full target, so uv just
-		// extends past 1 along the long axis instead of stretching the content.
+		// Square-pixels mode feeds a square iResolution (the short side) so the usual
+		// uv = fragCoord/iResolution.xy is isotropic (circles stay round). To keep the
+		// content CENTERED (not anchored bottom-left) when it tiles past the short
+		// side, we also shift the fragCoord the shader sees by ai_fragOffset =
+		// (target - side)/2, so uv = 0.5 lands at the true canvas centre. iMouse is
+		// shifted by the same offset so it stays consistent with fragCoord.
 		const resSide = this.squarePixels ? Math.min(p.width, p.height) : 0;
+		const offX = resSide > 0 ? (p.width - resSide) / 2 : 0;
+		const offY = resSide > 0 ? (p.height - resSide) / 2 : 0;
 		if (resSide > 0) this.setFloat3(p, "iResolution", resSide, resSide, 1);
 		else this.setFloat3(p, "iResolution", p.width, p.height, 1);
+		this.setFloat2(p, "ai_fragOffset", offX, offY);
 		this.setFloat1(p, "iTime", t);
 		this.setFloat1(p, "iTimeDelta", 1 / 60);
 		this.setFloat1(p, "iFrameRate", this.fps || 60);
 		this.setInt1(p, "iFrame", this.frame);
-		const my = H - this.mouse.y;
-		this.setFloat4(p, "iMouse", this.mouse.x, my, (this.mouse.pressed ? 1 : -1) * this.mouse.downX, (this.mouse.everDown ? 1 : -1) * (H - this.mouse.downY));
+		const mx = this.mouse.x - offX;
+		const my = H - this.mouse.y - offY;
+		const dx = this.mouse.downX - offX;
+		const dy = H - this.mouse.downY - offY;
+		this.setFloat4(p, "iMouse", mx, my, (this.mouse.pressed ? 1 : -1) * dx, (this.mouse.everDown ? 1 : -1) * dy);
 		const d = new Date();
 		this.setFloat4(p, "iDate", d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds());
 
@@ -873,6 +882,10 @@ export class Renderer {
 	private setInt1(p: RenderPass, n: string, x: number): void {
 		const l = this.loc(p, n);
 		if (l) this.gl.uniform1i(l, x);
+	}
+	private setFloat2(p: RenderPass, n: string, x: number, y: number): void {
+		const l = this.loc(p, n);
+		if (l) this.gl.uniform2f(l, x, y);
 	}
 	private setFloat3(p: RenderPass, n: string, x: number, y: number, z: number): void {
 		const l = this.loc(p, n);
