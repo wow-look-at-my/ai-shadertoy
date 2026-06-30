@@ -166,8 +166,10 @@ ${activeLayerSources(p, ctx.activeLayerId)}`;
 // ---- text-tools mode -------------------------------------------------------
 
 // How each tool is invoked as an XML tag. Only the tools actually offered this
-// turn (after gating) are listed, so e.g. init_shader disappears once a shader
-// exists. Keyed by the TOOL_NAMES constants.
+// turn are listed; the offered set is byte-stable across a conversation (so the
+// prompt-cache prefix doesn't shift), so init_shader stays listed throughout and
+// is refused at execution time once a shader exists. Keyed by the TOOL_NAMES
+// constants.
 const XML_USAGE: Record<string, string> = {
 	[TOOL_NAMES.initShader]: "<init_shader>\n...complete GLSL source (mainImage + helpers) for the OUTPUT pass...\n</init_shader>",
 	[TOOL_NAMES.editShader]: "<edit_shader><pass>Effect</pass><old>exact snippet</old><new>replacement</new></edit_shader>   (<pass> optional, defaults to the output pass; add <replace_all>true</replace_all> to replace every occurrence)",

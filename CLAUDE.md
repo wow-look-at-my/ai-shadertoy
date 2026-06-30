@@ -124,7 +124,15 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ai/tools/` — **one tool per file**, each colocating its JSON-schema `def`
   and `execute`, self-registering into `registry.ts`. The store builds a
   `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
-  `toolDefs({ imageGen, allowInitShader })` gates the offered set. Tools are
+  `toolDefs({ imageGen })` gates the offered set — note it carries only STABLE
+  per-session settings, NOT a per-turn `allowInitShader`: the advertised tools
+  array must stay byte-identical across a conversation or the prompt-cache prefix
+  before the Anthropic `system` cache breakpoint shifts and every turn is billed
+  uncached. `init_shader` is therefore ALWAYS advertised and instead refuses at
+  **execution** time once a shader exists (`shader_authored.ts` `shaderAuthored`,
+  checked in `init_shader.ts`'s `execute`, returning an `isError` result pointing
+  the model at `edit_shader`) — the safety is preserved without changing the bytes.
+  Tools are
   **layer- and pass-aware**: pass/geometry tools act on the **active layer**
   (`ctx.resolvePass`/`ctx.passes()` are active-layer-scoped; `select_layer`
   switches it). Layer stack: `add_layer` (adds on top, becomes active, pre-wired
@@ -155,8 +163,9 @@ npm run build         # ts0 build -> dist/index.html
   API; `text` (for models/endpoints without it) describes the catalogue as
   forgiving XML tags (`textToolInstructions`, keyed by `TOOL_NAMES`), parses them
   out of the reply (`texttools.ts`), and feeds results back as a plain user
-  message. `init_shader` is recomputed each iteration so it drops out once the
-  shader is authored.
+  message. `init_shader` stays in the advertised/described set the whole
+  conversation (the set is byte-stable for prompt-cache reasons) and is refused at
+  execution time once a shader exists, in both tool modes.
 - `src/state/` — `types.ts`: a `Project` is a **layer stack** — `layers: Layer[]`
   drawn back→front; each `Layer` has its own `passes: Pass[]` + `outputPassId`
   (its composite) **plus** `shapes: Shape[]` (geometry), and `visible`/`opacity`.

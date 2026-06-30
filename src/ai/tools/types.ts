@@ -74,10 +74,13 @@ export interface ToolContext {
 	compileError(): string | null;
 }
 
-/** Gates which tools are offered to the model on a given turn. */
+/** Gates which tools are offered to the model on a given turn. NOTE: the offered
+ * tool set must stay byte-stable across a conversation for prompt caching, so
+ * this only carries STABLE per-session settings (e.g. imageGen). The
+ * "shader already authored" check is enforced at init_shader's EXECUTION time
+ * instead (see shader_authored.ts), not by dropping the tool from this set. */
 export interface ToolAvailability {
 	imageGen: boolean;
-	allowInitShader: boolean;
 }
 
 export interface Tool {

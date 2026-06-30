@@ -243,7 +243,12 @@ for models with known pricing — **cost this turn** and **cost this session**.
 Requests use **prompt caching** to cut cost and latency: the stable system prompt
 and the growing conversation history are cached, while the fast-changing project
 state (the active layer's live source, uniforms, channels, last compile error) is
-sent as a separate trailing message so it never invalidates the cache. For Anthropic this uses
+sent as a separate trailing message so it never invalidates the cache. The
+advertised tool set is held **byte-stable for the whole conversation** for the
+same reason — the tools sit in the cached prefix (before the cache breakpoint), so
+changing them mid-conversation would invalidate the cache every turn; `init_shader`
+stays advertised throughout and simply refuses at execution time once a shader
+already exists (use `edit_shader`). For Anthropic this uses
 `cache_control` breakpoints; for hosted OpenAI we send a stable `prompt_cache_key`
 and the server caches the matching prefix automatically. For self-hosted
 OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send
