@@ -10,7 +10,7 @@ import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
 import { hasCompactionSummary, shouldCompact } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
-import { hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
+import { cachePct, hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
 import { ProviderError } from "../ai/providers.ts";
@@ -103,7 +103,11 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let costTurn = 0;
 	let lastTps = 0;
 	let lastCtxPct = 0;
-	let lastCachePct = 0;
+	// Cached share of the last request's input prompt, ONLY from the server-reported
+	// cache count: a number (incl. 0) is a real server figure; `undefined` means the
+	// endpoint didn't report cache info, so we show "n/a" rather than a guess. Never
+	// estimated.
+	let lastCachePct: number | undefined;
 	let haveStats = false;
 
 	function fmtCost(c: number): string {
@@ -120,7 +124,10 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const item = (label: string, title: string): HTMLElement => el("span", { class: "cs-item", title }, label);
 		const ctxLabel = `${lastCtxPct < 10 ? lastCtxPct.toFixed(1) : lastCtxPct.toFixed(0)}% ctx`;
 		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), item(ctxLabel, "Share of the model's context window used (last request)")];
-		if (lastCachePct > 0) {
+		// Tri-state: undefined => the endpoint reported no cache count, so we hide
+		// the indicator entirely (never a guessed value). A real number — including
+		// an explicit server-reported 0 — is shown verbatim.
+		if (lastCachePct !== undefined) {
 			const cacheLabel = `${lastCachePct < 10 ? lastCachePct.toFixed(1) : lastCachePct.toFixed(0)}% cached`;
 			parts.push(sep(), item(cacheLabel, "Share of the input prompt served from the prompt cache (last request)"));
 		}
@@ -404,10 +411,15 @@ export function createChat(deps: ChatDeps): HTMLElement {
 							costTurn += c;
 							costTotal += c;
 						}
-						const totalIn = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+						// Cache counts are tri-state: undefined => server didn't report.
+						// Coalesce to 0 only for the context-window total (we still know
+						// the uncached input). The cache % comes from the pure `cachePct`
+						// helper, which stays undefined ("n/a") unless the server gave a
+						// cache-read count — never estimated.
+						const totalIn = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
 						const ctx = modelContextWindow(model);
 						if (ctx > 0) lastCtxPct = (totalIn / ctx) * 100;
-						lastCachePct = totalIn > 0 ? (usage.cacheReadTokens / totalIn) * 100 : 0;
+						lastCachePct = cachePct(usage);
 						if (usage.outputTokens > 0 && durationMs > 0) lastTps = (usage.outputTokens / durationMs) * 1000;
 						haveStats = true;
 						renderStats();

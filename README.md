@@ -237,8 +237,19 @@ Note that Opus 4.8 / 4.7 reject `temperature`, so it is omitted for those models
 ## Cost & usage
 
 The chat panel shows a small live indicator: output **tokens/sec**, **context
-window used**, **% cached** (when any of the prompt was served from cache), and —
-for models with known pricing — **cost this turn** and **cost this session**.
+window used**, **% cached**, and — for models with known pricing — **cost this
+turn** and **cost this session**.
+
+The **% cached** rate and the spend figure are shown **only from the true,
+server-reported usage** — they are never estimated or inferred. If the endpoint
+reports how many prompt tokens were served from cache, that exact number is used
+(an explicit `0` shows as `0% cached`); if it reports no cache count at all (some
+local OpenAI-compatible servers omit it), the **% cached** indicator is hidden
+rather than guessed. Likewise, cost is a true calculation: the real input,
+output, cache-read, and cache-write token counts multiplied by the model's known
+published rates (cache writes bill at ~1.25× the base input rate, cache reads at
+~0.1×). It is not an estimate — but it is only shown for models with a known
+price; unrecognized endpoints show tokens only, no dollar figure.
 
 Requests use **prompt caching** to cut cost and latency: the stable system prompt
 and the growing conversation history are cached, while the fast-changing project
@@ -249,13 +260,7 @@ and the server caches the matching prefix automatically. For self-hosted
 OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send
 `cache_prompt: true` to opt into KV-cache prefix reuse — these extra fields are
 sent only to non-hosted endpoints, since hosted OpenAI/Azure reject unknown body
-fields. Ollama in particular **does** reuse the prompt prefix across turns (so
-after a turn ends, the next message reprocesses only the new tail — typically
-95%+ of the prompt is cached), but it doesn't report cached tokens in its OpenAI
-response; the **% cached** indicator is therefore estimated from the leading
-prompt prefix shared with the previous request (validated against Ollama's own
-cache counters to within ~1–2%). Cost figures are estimates from a built-in price table — accurate for
-Claude models, and tokens-only (no dollar figure) for unrecognized endpoints.
+fields.
 
 ## Persistence & sharing
 

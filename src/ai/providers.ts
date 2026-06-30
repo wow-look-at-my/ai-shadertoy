@@ -184,8 +184,16 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 			const u = (msg["message"] as Record<string, unknown> | undefined)?.["usage"] as Record<string, unknown> | undefined;
 			if (u) {
 				turn.usage.inputTokens = (u["input_tokens"] as number) ?? 0;
-				turn.usage.cacheReadTokens = (u["cache_read_input_tokens"] as number) ?? 0;
-				turn.usage.cacheWriteTokens = (u["cache_creation_input_tokens"] as number) ?? 0;
+				// Anthropic's `input_tokens` is the UNCACHED remainder only — it
+				// already excludes cache_read_input_tokens and cache_creation_input_tokens,
+				// so the three sum to the full prompt and there is nothing to subtract
+				// (no double-counting). Cache counts are server-truth: a number (incl. 0)
+				// when reported, left undefined when the field is absent so the UI shows
+				// "n/a" rather than a guessed value. Never estimated.
+				const cacheRead = u["cache_read_input_tokens"];
+				const cacheWrite = u["cache_creation_input_tokens"];
+				turn.usage.cacheReadTokens = typeof cacheRead === "number" ? cacheRead : undefined;
+				turn.usage.cacheWriteTokens = typeof cacheWrite === "number" ? cacheWrite : undefined;
 				turn.usage.outputTokens = (u["output_tokens"] as number) ?? 0;
 			}
 		} else if (type === "content_block_start") {
@@ -344,11 +352,19 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 		}
 		const u = msg["usage"] as Record<string, unknown> | undefined;
 		if (u) {
+			// Cached prompt tokens come ONLY from what the server reports —
+			// `prompt_tokens_details.cached_tokens` present => real count (incl. 0);
+			// absent (Ollama/local OpenAI-compatible servers omit it) => leave
+			// cacheReadTokens undefined so the UI shows "n/a", never a guess. We do
+			// not estimate cache hits from the prompt prefix anymore.
 			const details = u["prompt_tokens_details"] as Record<string, unknown> | undefined;
-			const cached = (details?.["cached_tokens"] as number) ?? 0;
+			const reportedCached = details?.["cached_tokens"];
+			const cached = typeof reportedCached === "number" ? reportedCached : undefined;
 			const prompt = (u["prompt_tokens"] as number) ?? 0;
-			turn.usage.inputTokens = Math.max(0, prompt - cached);
+			turn.usage.inputTokens = Math.max(0, prompt - (cached ?? 0));
 			turn.usage.cacheReadTokens = cached;
+			// OpenAI-compatible servers don't report/bill a separate cache-write
+			// count; treat it as 0 (no write charge), not "unknown".
 			turn.usage.cacheWriteTokens = 0;
 			turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
 		}
@@ -385,44 +401,14 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 		turn.toolCalls.push({ id: c.id || `call_${i}`, name: c.name, input: safeJson(c.args) });
 	}
 	turn.durationMs = firstTokenAt ? performance.now() - firstTokenAt : 0;
-	estimateLocalCacheReads(cfg, opts, oaMessages, turn.usage);
 	emit(opts, { type: "done", stopReason: turn.stopReason });
 	return turn;
 }
 
-// Ollama (and some other self-hosted OpenAI-compatible servers) reuse the prompt
-// PREFIX from a KV cache but DON'T report cached tokens in their OpenAI `usage`
-// (it carries only prompt/completion/total). So the usage meter would always read
-// 0% cached for them even though caching IS happening. Estimate exactly what a
-// prefix cache reuses: the leading fraction this request shares with the previous
-// one for the same conversation, scaled by the real prompt-token count. This only
-// fills in a value the server omitted -- it never overrides a reported cache count
-// (so hosted OpenAI, which reports cached_tokens, is untouched), and it is keyed by
-// the per-conversation cacheKey so unrelated projects don't cross-contaminate.
-// Pure core (unit-tested): the leading fraction of `cur` that is byte-identical to
-// `prev`, scaled by the real prompt-token count -- i.e. the tokens a prefix KV
-// cache reuses. Validated against Ollama's reported `cached n_tokens` to within
-// ~1-2% on real two-turn conversations.
-export function estimateCachedFromPrefix(prev: string | undefined, cur: string, totalTokens: number): number {
-	if (!prev || !cur || totalTokens <= 0) return 0;
-	let i = 0;
-	const n = Math.min(prev.length, cur.length);
-	while (i < n && prev.charCodeAt(i) === cur.charCodeAt(i)) i++;
-	return Math.min(totalTokens, Math.round(totalTokens * (i / cur.length)));
-}
-
-const lastLocalPrompt = new Map<string, string>();
-function estimateLocalCacheReads(cfg: ChatConfig, opts: StreamOptions, messages: unknown[], usage: Usage): void {
-	if (isHostedOpenAI(cfg) || usage.cacheReadTokens > 0 || !opts.cacheKey) return;
-	const serialized = JSON.stringify(messages);
-	const prev = lastLocalPrompt.get(opts.cacheKey);
-	lastLocalPrompt.set(opts.cacheKey, serialized);
-	const total = usage.inputTokens; // == prompt_tokens here (cacheReadTokens is 0)
-	const cached = estimateCachedFromPrefix(prev, serialized, total);
-	if (cached <= 0) return;
-	usage.cacheReadTokens = cached;
-	usage.inputTokens = Math.max(0, total - cached);
-}
+// Note: the prompt-cache hit rate is shown ONLY from the server-reported cache
+// count. We do NOT estimate cached tokens from the prompt prefix (or anything
+// else) — an endpoint that omits the count (e.g. Ollama/local servers) shows
+// "n/a" for cached, never a guessed value. An explicit server-reported 0 means 0%.
 
 // ---- dispatch + helpers -----------------------------------------------------
 
@@ -526,7 +512,9 @@ function emit(opts: StreamOptions, ev: StreamEvent): void {
 }
 
 function emptyUsage(): Usage {
-	return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+	// cacheRead/cacheWrite default to undefined ("server didn't report"); the
+	// provider paths set real numbers (incl. 0) only when the server reports them.
+	return { inputTokens: 0, outputTokens: 0 };
 }
 
 function safeJson(s: string): unknown {

@@ -55,10 +55,27 @@ export function hasPricing(model: string): boolean {
 }
 
 /** Cost in USD for one request's usage, or null when the model's pricing is
- * unknown. Cache-read tokens bill at the read discount, cache-write tokens at the
- * write premium, the rest at the base input rate. */
+ * unknown. Computed purely from the server-reported token counts: base input at
+ * the full rate, cache-read tokens at the read discount, cache-write tokens at the
+ * write premium, output at the output rate. Cache counts the server didn't report
+ * (`undefined`) contribute 0 — we never estimate/infer cached tokens to feed this. */
 export function messageCost(model: string, u: Usage): number | null {
 	const rate = lookup(model).rate;
 	if (!rate) return null;
-	return (u.inputTokens * rate.in + u.outputTokens * rate.out + u.cacheReadTokens * rate.cacheRead + u.cacheWriteTokens * rate.cacheWrite) / PER_M;
+	const cacheRead = u.cacheReadTokens ?? 0;
+	const cacheWrite = u.cacheWriteTokens ?? 0;
+	return (u.inputTokens * rate.in + u.outputTokens * rate.out + cacheRead * rate.cacheRead + cacheWrite * rate.cacheWrite) / PER_M;
+}
+
+/** Share (0..100) of the input prompt served from the prompt cache, computed
+ * ONLY from the server-reported cache-read count — never estimated/inferred.
+ * Returns `undefined` when the endpoint reported no cache-read count (the UI then
+ * shows "n/a"/hides the indicator); a real number — including an explicit 0 when
+ * the server reported 0 cached tokens — otherwise. The denominator is the full
+ * prompt (uncached input + cache-read + cache-write), so the value reflects the
+ * true cache-hit rate of the request. */
+export function cachePct(u: Usage): number | undefined {
+	if (u.cacheReadTokens === undefined) return undefined;
+	const totalIn = u.inputTokens + u.cacheReadTokens + (u.cacheWriteTokens ?? 0);
+	return totalIn > 0 ? (u.cacheReadTokens / totalIn) * 100 : 0;
 }
