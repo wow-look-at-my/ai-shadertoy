@@ -16,7 +16,12 @@ jobs:
         with:
           node-version: "22.13"
       - name: Enable pnpm via corepack
-        run: corepack enable
+        # Node's bundled corepack has stale signing keys and fails pnpm's
+        # registry signature check ("Cannot find matching keyid"); install the
+        # latest corepack first. See nodejs/corepack#612.
+        run: |
+          npm install --global corepack@latest
+          corepack enable
       # ts0 is a public git dev dependency; pnpm runs git outside the checked-out
       # tree to fetch it. Runners have no SSH key, so rewrite ssh -> anonymous
       # https for the public repo before installing.
