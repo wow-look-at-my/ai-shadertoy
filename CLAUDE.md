@@ -10,8 +10,12 @@ self-contained `index.html` via `ts0`. See `README.md` for user-facing docs.
 
 ## Build / check
 
-This project uses **pnpm** (not npm), with a committed `pnpm-lock.yaml` and a
-`packageManager` field pinning the pnpm version; enable it with `corepack enable`.
+This project uses **pnpm 11** (not npm; needs Node >=22.13), with a committed
+`pnpm-lock.yaml` and a `packageManager` field (`pnpm@11.9.0`) pinning the pnpm
+version; enable it with `corepack enable`. pnpm-only settings live in
+`pnpm-workspace.yaml` (pnpm 11 no longer reads the `pnpm` field of package.json) —
+`allowBuilds` lists the deps permitted to run install scripts (ts0; esbuild is
+denied), the successor to pnpm 10's `onlyBuiltDependencies`.
 
 ```sh
 pnpm install

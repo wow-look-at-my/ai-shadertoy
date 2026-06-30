@@ -282,8 +282,8 @@ single JSON file (API keys excluded by default).
 
 ## Develop
 
-Requires Node 22+ and [pnpm](https://pnpm.io/) (a committed `pnpm-lock.yaml`
-pins the deps; enable it with `corepack enable`).
+Requires Node >=22.13 (pnpm 11's floor) and [pnpm](https://pnpm.io/) (a
+committed `pnpm-lock.yaml` pins the deps; enable it with `corepack enable`).
 
 ```sh
 pnpm install

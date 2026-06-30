@@ -17,11 +17,6 @@
 	"engines": {
 		"node": ">=22.0.0"
 	},
-	"packageManager": "pnpm@10.33.0",
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"ts0"
-		]
-	},
+	"packageManager": "pnpm@11.9.0",
 	"license": "MIT"
 }
