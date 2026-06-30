@@ -8,14 +8,20 @@
 		"typecheck": "tsc --noEmit",
 		"test": "node --experimental-strip-types --test test/*.test.ts",
 		"build": "ts0 build",
-		"check": "npm run typecheck && npm run test && npm run build"
+		"check": "pnpm run typecheck && pnpm run test && pnpm run build"
 	},
 	"devDependencies": {
-		"ts0": "git+https://github.com/wow-look-at-my/ts0.git",
+		"ts0": "git+https://github.com/wow-look-at-my/ts0.git#072e71b450a7ac2d1a3257dd795c0bed6866ed0a",
 		"typescript": "^5.7.0"
 	},
 	"engines": {
 		"node": ">=22.0.0"
+	},
+	"packageManager": "pnpm@10.33.0",
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"ts0"
+		]
 	},
 	"license": "MIT"
 }

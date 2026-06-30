@@ -282,14 +282,15 @@ single JSON file (API keys excluded by default).
 
 ## Develop
 
-Requires Node 22+.
+Requires Node 22+ and [pnpm](https://pnpm.io/) (a committed `pnpm-lock.yaml`
+pins the deps; enable it with `corepack enable`).
 
 ```sh
-npm install
-npm run typecheck      # tsc --noEmit
-npm run test           # node strip-types unit tests (test/)
-npm run build          # -> dist/index.html (single file)
-npm run check          # all three of the above
+pnpm install
+pnpm run typecheck     # tsc --noEmit
+pnpm test              # node strip-types unit tests (test/)
+pnpm run build         # -> dist/index.html (single file)
+pnpm run check         # all three of the above
 ```
 
 Open `dist/index.html` directly in a browser — it has no external dependencies.

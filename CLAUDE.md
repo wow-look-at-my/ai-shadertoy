@@ -10,10 +10,13 @@ self-contained `index.html` via `ts0`. See `README.md` for user-facing docs.
 
 ## Build / check
 
+This project uses **pnpm** (not npm), with a committed `pnpm-lock.yaml` and a
+`packageManager` field pinning the pnpm version; enable it with `corepack enable`.
+
 ```sh
-npm install
-npm run typecheck     # tsc --noEmit (HTML entries are NOT type-checked by ts0, so run this)
-npm run build         # ts0 build -> dist/index.html
+pnpm install
+pnpm run typecheck    # tsc --noEmit (HTML entries are NOT type-checked by ts0, so run this)
+pnpm run build        # ts0 build -> dist/index.html
 ```
 
 - This is a **Node/TypeScript** project. Do NOT apply `go-toolchain` here.
@@ -27,7 +30,7 @@ npm run build         # ts0 build -> dist/index.html
   the only thing that reads it.
 - `tsconfig.json` configures the **type-checker**. ts0's HTML-entry build path
   does NOT run `tsc` (it bundles with esbuild, which strips types without
-  checking), so `npm run typecheck` (which CI runs) is our only type safety, and
+  checking), so `pnpm run typecheck` (which CI runs) is our only type safety, and
   it — plus the editor/IDE — needs `tsconfig.json`. Don't delete it.
 - Keep the code `node --experimental-strip-types`-clean (no TS parameter
   properties etc.) so the modules can be exercised by plain Node test scripts.
@@ -219,7 +222,7 @@ npm run build         # ts0 build -> dist/index.html
   resets on project switch (`adoptProject`) and is gated off while `busy`. The
   store emits `"history"`; the topbar renders Undo/Redo buttons and `app.ts` binds
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z / Ctrl+Y (deferring to native undo inside text
-  fields). Unit-tested in `test/history.test.ts` (`npm run test`, run by CI).
+  fields). Unit-tested in `test/history.test.ts` (`pnpm test`, run by CI).
 - `src/ui/` — vanilla-DOM components via the `el()` helper in `src/util/dom.ts`.
   Layout is **chat | (preview stacked OVER the editor)** with a draggable
   splitter (`app.ts`), so code gets the full column width. On **ultrawide** displays
@@ -368,7 +371,7 @@ npm run build         # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml`: build (npm ci, tsc, `npm test`, ts0 build)
+`.github/workflows/ci.yml`: build (corepack enable, `pnpm install --frozen-lockfile`, `pnpm run typecheck`, `pnpm test`, `pnpm run build`)
 then deploy — publishes the single file as a **public** per-branch buildhost site via GHA
 OIDC (`X-Public-Site: true`) to `sites.pazer.build/ai-shadertoy/branch/<branch>/`.
 Models the buildhost repo's `buildhost-publish-site` action, inlined through
