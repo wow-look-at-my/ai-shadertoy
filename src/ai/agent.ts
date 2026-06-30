@@ -8,12 +8,8 @@
 //   plain user message. No tool_use/tool_result blocks (which the API would
 //   reject when no tools were sent).
 //
-// The offered tool set is recomputed each iteration but is byte-STABLE across a
-// conversation (it carries only stable per-session settings). It deliberately
-// does NOT drop init_shader once a shader exists -- shrinking the tools array
-// mid-conversation would shift the prompt-cache prefix before the system cache
-// breakpoint and bill every turn uncached. init_shader instead refuses at
-// execution time when a shader already exists (see tools/init_shader.ts).
+// In both modes the offered tool set is recomputed each iteration, so
+// init_shader drops out once the shader has been authored.
 
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef, Usage } from "./types.ts";
