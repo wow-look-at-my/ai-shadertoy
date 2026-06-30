@@ -770,7 +770,7 @@ function renderAssets(store: Store, container: HTMLElement): void {
 
 	render(
 		container,
-		el("p", { class: "muted small" }, "Shared media library across all your shaders. Upload or drag in images or videos (several at once); the AI can bind them to a pass input (it sees them via list_assets, and you can wire any input to one in the Textures tab)."),
+		el("p", { class: "muted small" }, "Shared media library across all your shaders. Upload or drag in images or videos (several at once); the AI can bind them to a pass input (it sees them via read what:assets, and you can wire any input to one in the Textures tab)."),
 		assets.length ? el("div", { class: "asset-grid" }, ...cards) : el("p", { class: "muted" }, "No assets yet. Upload or drag in images or videos and the AI can use them."),
 		el(
 			"div",

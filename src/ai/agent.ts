@@ -8,8 +8,9 @@
 //   plain user message. No tool_use/tool_result blocks (which the API would
 //   reject when no tools were sent).
 //
-// In both modes the offered tool set is recomputed each iteration, so
-// init_shader drops out once the shader has been authored.
+// The offered tool set is byte-stable across the whole conversation (the only
+// conditional is the stable per-session image-generation gate), so the prompt
+// cache prefix never shifts mid-conversation.
 
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef, Usage } from "./types.ts";
@@ -124,8 +125,9 @@ export async function runAgent(
 			// Permission-gated tools: ask the user before they take effect. A
 			// denial is fed back to the model instead of running the tool.
 			const tool = getTool(tc.name);
-			if (tool?.requiresPermission) {
-				const input = (tc.input ?? {}) as Record<string, unknown>;
+			const input = (tc.input ?? {}) as Record<string, unknown>;
+			const gated = tool && (typeof tool.requiresPermission === "function" ? tool.requiresPermission(input) : tool.requiresPermission === true);
+			if (tool && gated) {
 				const prompt = tool.permissionPrompt ? tool.permissionPrompt(input) : `Allow ${tc.name} to run?`;
 				const granted = await cb.requestPermission({ name: tc.name, prompt, input });
 				if (!granted) {
