@@ -319,16 +319,28 @@ npm run build         # ts0 build -> dist/index.html
   compatible endpoints (any non-hosted base URL — `isHostedOpenAI`) additionally
   get `cache_prompt: true` to opt into KV-cache prefix reuse (llama.cpp et al.);
   never sent to hosted OpenAI/Azure, which 400 on unknown fields. 2 Anthropic
-  breakpoints/request (max is 4); ephemeral 5-min TTL. Local servers (Ollama) DO
-  reuse the prompt prefix across turns but omit cached-token counts from their
-  OpenAI `usage`; `estimateCachedFromPrefix` (providers.ts, unit-tested in
-  `test/cache.test.ts`) fills `cacheReadTokens` from the leading prefix shared with
-  the previous request for that conversation (keyed by `cacheKey`), so the **%
-  cached** meter reflects reality — it never overrides a server-reported count.
-  Verified against a live Ollama: turn-2 cache is ~95–98% and the estimate tracks
-  it within ~1–2%.
-- The chat panel shows a usage indicator (tokens/sec, context %, **% cached** when
-  any prompt cache was hit, cost this turn + session). `Usage` is captured per
+  breakpoints/request (max is 4); ephemeral 5-min TTL.
+- **Usage accounting is server-truth only — never estimated.** The **% cached**
+  indicator and the spend figure come *exclusively* from the token counts the
+  endpoint reports; the app does not estimate or infer either from the prompt
+  prefix or anything else. `Usage.cacheReadTokens`/`cacheWriteTokens` are **tri-state**
+  (`number | undefined`): a number (including an explicit server-reported `0`) is a
+  real count, while `undefined` means the endpoint omitted cache info entirely (e.g.
+  Ollama/local OpenAI-compatible servers). Anthropic's `input_tokens` already
+  *excludes* `cache_read_input_tokens` and `cache_creation_input_tokens` (so the
+  three sum to the full prompt — nothing to subtract); OpenAI's `prompt_tokens`
+  *includes* cached tokens, so the uncached remainder is `prompt − cached`.
+  `pricing.ts` `cachePct(usage)` returns the cache-hit % (undefined when the server
+  omitted the count) and `messageCost(model, usage)` prices each class at its
+  published rate — base input × in-rate, `cache_read` at the read discount (≈0.1×
+  base for Anthropic), `cache_creation` at the write premium (1.25× base for the
+  5-minute ephemeral cache), output × out-rate — summed, never double-counted. A
+  cache-WRITE turn is therefore billed at the write premium, not the read discount.
+  Unknown-model pricing yields no cost (tokens-only display). The pure helpers are
+  unit-tested in `test/cache.test.ts`.
+- The chat panel shows a usage indicator (tokens/sec, context %, **% cached** —
+  shown only when the server reported a cache-read count, including an explicit 0;
+  hidden ("n/a") when omitted — cost this turn + session). `Usage` is captured per
   response; cost/context come from `pricing.ts` (tokens-only when the model's
   pricing is unknown).
 
