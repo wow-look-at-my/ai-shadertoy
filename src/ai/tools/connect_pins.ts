@@ -25,12 +25,13 @@ registerTool({
 	def: {
 		name: TOOL_NAMES.connectPins,
 		description:
-			"Connect a graph source pin to a pass input pin in the ACTIVE layer. `from` can be none, under, geometry, mask, webcam, pass:<pass name>, builtin:<texture>, or asset:<asset name>. `to` is the target pass name (defaults to the active layer's output pass) and `input` is the target input index. This is the graph wiring tool; masks are just a mask source pin sampled by graph shader math.",
+			"Connect a graph source pin to a pass input pin within a layer. `from` can be none, under, geometry, mask, webcam, pass:<pass name>, builtin:<texture>, or asset:<asset name>. `to` is the target pass name (defaults to the layer's output pass) and `input` is the target input index. `layer` (name/id/stack index) defaults to the top layer. This is the graph wiring tool; masks are just a mask source pin sampled by graph shader math.",
 		parameters: {
 			type: "object",
 			properties: {
 				from: { type: "string", description: "Source pin: none, under, geometry, mask, webcam, pass:<name>, builtin:<name>, or asset:<name>." },
-				to: { type: "string", description: "Target pass name; defaults to the active layer's output pass." },
+				to: { type: "string", description: "Target pass name; defaults to the layer's output pass." },
+				layer: { type: "string", description: "Layer ref (name/id/stack index; default: the top layer)." },
 				input: { type: "integer", description: "Target input index, e.g. 0 for iChannel0." },
 				filter: { type: "string", enum: ["linear", "nearest"] },
 				wrap: { type: "string", enum: ["repeat", "clamp", "mirror"] },
@@ -41,8 +42,10 @@ registerTool({
 	execute: (ctx, input) => {
 		const index = Number(input["input"]);
 		if (!(index >= 0 && index < ctx.renderer.maxInputs())) return { content: [text(`input must be 0..${ctx.renderer.maxInputs() - 1}.`)], isError: true };
-		const target = ctx.resolvePass(input["to"] ? String(input["to"]) : undefined);
-		if (!target) return { content: [text(`No target pass named "${String(input["to"])}" in the active layer. Use list_passes.`)], isError: true };
+		const layer = ctx.resolveLayer(input["layer"] !== undefined ? String(input["layer"]) : undefined);
+		if (!layer) return { content: [text(`No layer "${String(input["layer"])}". read what:layers to list them.`)], isError: true };
+		const target = ctx.resolvePass(layer, input["to"] ? String(input["to"]) : undefined);
+		if (!target) return { content: [text(`No target pass named "${String(input["to"])}" in layer "${layer.name}". read what:passes to list them.`)], isError: true };
 		if (index >= target.channels.length) return { content: [text(`${target.name} has no iChannel${index} input. Reference iChannel${index} in its shader first, then connect_pins can wire it.`)], isError: true };
 
 		const filter = (input["filter"] as TexFilter) ?? "linear";
@@ -63,8 +66,8 @@ registerTool({
 		}
 		if (from.startsWith("pass:")) {
 			const srcName = from.slice(5).trim();
-			const src = ctx.resolvePass(srcName);
-			if (!src) return { content: [text(`No source pass named "${srcName}". Use list_passes.`)], isError: true };
+			const src = ctx.resolvePass(layer, srcName);
+			if (!src) return { content: [text(`No source pass named "${srcName}" in layer "${layer.name}". read what:passes to list them.`)], isError: true };
 			ctx.connectPin(target.id, index, { kind: "pass", passId: src.id, builtin: undefined, assetId: undefined, filter, wrap });
 			const fb = src.id === target.id ? " (feedback: previous frame)" : "";
 			return { content: [text(`Connected pass "${src.name}"${fb} -> ${target.name} input ${index}.`)] };
@@ -78,7 +81,7 @@ registerTool({
 		if (from.startsWith("asset:")) {
 			const assetName = from.slice(6).trim();
 			const asset = findAsset(ctx.assets, assetName);
-			if (!asset) return { content: [text(`No asset named "${assetName}". Use list_assets.`)], isError: true };
+			if (!asset) return { content: [text(`No asset named "${assetName}". read what:assets to list them.`)], isError: true };
 			const isVideo = asset.kind === "video";
 			ctx.connectPin(target.id, index, { kind: isVideo ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined, filter, wrap });
 			return { content: [text(`Connected ${isVideo ? "video" : "image"} asset "${asset.name}" -> ${target.name} input ${index}.`)] };

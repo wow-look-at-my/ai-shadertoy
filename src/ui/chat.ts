@@ -8,25 +8,14 @@ import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
-import { hasCompactionSummary, shouldCompact } from "../ai/compact.ts";
+import { shouldCompact } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
 import { hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
-import { toolDefs, TOOL_NAMES } from "../ai/tools/index.ts";
+import { toolDefs } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
 import { ProviderError } from "../ai/providers.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
-
-// init_shader is offered only until the AI has authored the shader this
-// conversation (first turn / after a reset); after that, edits only. A
-// compaction summary counts as authored -- the original init_shader tool_use is
-// gone from the history, but the shader exists, so we must keep offering edits
-// only (else the model could init_shader and wipe the work).
-function authoredShader(messages: Message[]): boolean {
-	const isShaderTool = (n: string) => n === TOOL_NAMES.initShader || n === TOOL_NAMES.editShader;
-	if (hasCompactionSummary(messages)) return true;
-	return messages.some((m) => m.role === "assistant" && ((m.textTools?.some(isShaderTool) ?? false) || m.blocks.some((b) => b.type === "tool_use" && isShaderTool(b.name))));
-}
 
 // Short label for the undo entry that wraps an agent turn: the text of the latest
 // real user prompt (ignoring text-mode tool-result messages and compaction
@@ -386,9 +375,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			await runAgent(
 				store.settings,
 				() => buildSystemPrompt(),
-				() => buildProjectState({ project: store.project, activeLayerId: store.activeLayer().id, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
+				() => buildProjectState({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
 				store.project.messages,
-				() => toolDefs({ imageGen: store.settings.imageGen.enabled, allowInitShader: !authoredShader(store.project.messages) }),
+				() => toolDefs({ imageGen: store.settings.imageGen.enabled }),
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,

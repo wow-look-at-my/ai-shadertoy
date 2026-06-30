@@ -16,19 +16,32 @@ export type ShotBlock = ImageBlock & { _avg: string };
 
 /** The capabilities a tool is allowed to use. Provided by the store. The document
  * is a back-to-front stack of layers; each layer is its own graph of passes plus
- * geometry. Pass-scoped methods operate on the ACTIVE layer (switch it with
- * `selectLayer`); most edit tools take an optional pass name and default to that
- * layer's output pass (resolved via `resolvePass`). */
+ * geometry. Tools target objects by an EXPLICIT ref passed in the call (there is
+ * no "active" object): a layer ref is a name | id | stack index, a pass ref is a
+ * name | id resolved within a layer, a shape ref is an index within a layer.
+ * `resolveLayer`/`resolvePass`/`resolveShape` are the uniform entry points; they
+ * never consult the editor's UI selection. */
 export interface ToolContext {
 	settings: Settings;
 	project: Project;
 	assets: ImageAsset[];
 	renderer: Renderer;
-	// ---- layers ----
+	// ---- ref resolution (no "active" state -- everything is explicit) ----
 	layers(): Layer[];
-	activeLayerId(): string;
-	/** Resolve a layer by id or name; no argument = the active layer. */
-	resolveLayer(nameOrId?: string): Layer | null;
+	/** Resolve a layer by name, id, or stack index (0 = bottom/back). No argument
+	 * (or empty) = the top layer (the visible composite). */
+	resolveLayer(ref?: string | number): Layer | null;
+	/** Resolve a pass by name or id within `layer`; no argument = its output pass. */
+	resolvePass(layer: Layer, ref?: string): Pass | null;
+	/** Resolve a shape by 0-based index within `layer`. */
+	resolveShape(layer: Layer, index: number): Shape | null;
+	/** The default target layer when a tool allows an omitted layer (the top one). */
+	defaultLayer(): Layer | null;
+	/** True if `layer`'s output pass still holds an UNAUTHORED default source (the
+	 * fresh-project shader or the composite template) -- so seeding it via
+	 * create_object won't overwrite real work. */
+	isOutputUnauthored(layer: Layer): boolean;
+	// ---- layers ----
 	/** Add a new layer on top of the stack; returns it (name de-duplicated). */
 	addLayer(name: string, shapes?: Shape[]): Layer;
 	removeLayer(layerId: string): { ok: boolean; error?: string };
@@ -36,31 +49,21 @@ export interface ToolContext {
 	reorderLayer(layerId: string, toIndex: number): void;
 	setLayerVisible(layerId: string, visible: boolean): void;
 	setLayerOpacity(layerId: string, opacity: number): void;
-	/** Add (or focus) a layer's mask and make it the active layer for editing;
-	 * returns the mask layer. The mask's alpha attenuates the layer per-pixel. */
+	/** Add (or focus) a layer's mask; returns the mask layer. The mask's alpha
+	 * attenuates the layer per-pixel. */
 	addMask(layerId: string): Layer | null;
 	removeMask(layerId: string): void;
-	/** Make a layer active so the pass-scoped methods below target its graph. */
-	selectLayer(layerId: string): void;
 	// ---- geometry ----
 	addShape(layerId: string, kind: ShapeKind, patch?: Partial<Shape>): Shape | null;
 	updateShape(layerId: string, shapeId: string, patch: Partial<Shape>): void;
 	removeShape(layerId: string, shapeId: string): void;
-	// ---- passes (within the active layer) ----
-	passes(): Pass[];
-	outputPassId(): string;
-	selectedPassId(): string;
-	/** Resolve a pass by id or name within the active layer; no argument = its
-	 * output pass. */
-	resolvePass(nameOrId?: string): Pass | null;
+	// ---- passes ----
 	setPassSource(passId: string, src: string, compile?: boolean): CompileResult;
-	/** Create a new pass in the active layer; returns it (name is de-duplicated). */
-	addPass(name: string, source: string, format?: PassFormat): Pass;
+	/** Create a new pass in a layer; returns it (name is de-duplicated). */
+	addPass(name: string, source: string, format: PassFormat, layerId: string): Pass;
 	removePass(passId: string): { ok: boolean; error?: string };
-	renamePassById(passId: string, name: string): void;
 	setOutputPass(passId: string): void;
 	setPassFormat(passId: string, format: PassFormat): void;
-	selectPass(passId: string): void;
 	setUniforms(uniforms: Uniform[]): CompileResult;
 	connectPin(passId: string, index: number, patch: Partial<Channel>): void;
 	/** Rename the current shader (the project name shown in the top bar). */
@@ -74,10 +77,11 @@ export interface ToolContext {
 	compileError(): string | null;
 }
 
-/** Gates which tools are offered to the model on a given turn. */
+/** Gates which tools are offered to the model. The ONLY gate is the stable
+ * per-session image-generation setting (it does not flip mid-conversation), so
+ * the advertised tool set stays byte-identical across a conversation. */
 export interface ToolAvailability {
 	imageGen: boolean;
-	allowInitShader: boolean;
 }
 
 export interface Tool {
@@ -85,9 +89,11 @@ export interface Tool {
 	def: ToolDef;
 	/** Whether the tool is offered this turn (default: always). */
 	available?(opts: ToolAvailability): boolean;
-	/** When true, the agent asks the user to approve the call before it runs;
-	 * a denial is fed back to the model instead of executing. */
-	requiresPermission?: boolean;
+	/** When true (or when the predicate returns true for this call's input), the
+	 * agent asks the user to approve the call before it runs; a denial is fed back
+	 * to the model instead of executing. A predicate lets a generic tool gate only
+	 * some inputs (e.g. edit_object gates only type:project renames). */
+	requiresPermission?: boolean | ((input: Record<string, unknown>) => boolean);
 	/** Human-readable description of the pending action for the approval prompt
 	 * (e.g. `Rename the shader to "Foo"?`). Falls back to a generic message. */
 	permissionPrompt?(input: Record<string, unknown>): string;

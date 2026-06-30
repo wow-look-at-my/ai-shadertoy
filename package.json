@@ -6,7 +6,7 @@
 	"type": "module",
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"test": "node --experimental-strip-types test/history.test.ts && node --experimental-strip-types test/layers.test.ts && node --experimental-strip-types test/cache.test.ts && node --experimental-strip-types test/uniforms.test.ts && node --experimental-strip-types test/set_uniforms.test.ts && node --experimental-strip-types test/assets.test.ts && node --experimental-strip-types test/compact.test.ts && node --experimental-strip-types test/graphlayout.test.ts && node --experimental-strip-types test/exr.test.ts",
+		"test": "node --experimental-strip-types test/history.test.ts && node --experimental-strip-types test/layers.test.ts && node --experimental-strip-types test/cache.test.ts && node --experimental-strip-types test/uniforms.test.ts && node --experimental-strip-types test/set_uniforms.test.ts && node --experimental-strip-types test/tools.test.ts && node --experimental-strip-types test/assets.test.ts && node --experimental-strip-types test/compact.test.ts && node --experimental-strip-types test/graphlayout.test.ts && node --experimental-strip-types test/exr.test.ts",
 		"build": "ts0 build",
 		"check": "npm run typecheck && npm run test && npm run build"
 	},

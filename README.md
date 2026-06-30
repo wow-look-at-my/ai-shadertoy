@@ -33,25 +33,30 @@ also wire up input channels — built-in textures, images, **videos**, the
 ## How it works
 
 1. You type a request in the chat (e.g. *"a swirling plasma in purples and gold"*).
-2. The AI calls the `init_shader` tool with GLSL ES 3.00 source (Shadertoy-style
-   `void mainImage(out vec4 fragColor, in vec2 fragCoord)`).
+2. The AI calls `create_object` to author the first shader: GLSL ES 3.00 source
+   (Shadertoy-style `void mainImage(out vec4 fragColor, in vec2 fragCoord)`).
 3. The app compiles it, renders it live on a WebGL2 canvas, and feeds a
    **screenshot + compile log** back to the model so it can self-correct.
 4. The model iterates until it both compiles and looks right. You can tweak the
    code, parameters, and textures by hand at any time.
 
-The AI's tools: `init_shader` (the first shader / a full rewrite of the output
-pass), `edit_shader` (targeted snippet replacements — the usual way it changes an
-existing shader, so it doesn't retype the whole thing), `add_pass` / `remove_pass`
-/ `list_passes` / `set_output_pass` (build and inspect the per-layer render graph),
-`add_layer` / `remove_layer` / `reorder_layer` / `set_layer` / `select_layer` /
-`list_layers` (manage the layer stack), `add_shape` / `edit_shape` / `remove_shape`
-/ `list_shapes` (place and tweak geometry), `set_uniforms` (live slider parameters,
-shared across all passes), `rename_shader` (rename the current shader),
-`connect_pins` (wire a shader-declared input to `under`, `geometry`, `mask`, a
-built-in texture, an asset, the webcam, or another pass's output), `list_assets`,
-`capture_screenshot`, and (optional) `generate_texture`.
-Pass and geometry tools act on the **active layer** (`select_layer` switches it).
+The AI works through a small set of **generic, parameterized tools** — there's no
+"active" layer to track; it names the layer/pass/shape it means in each call (by
+name, id, stack index, or shape index):
+- `read` — inspect anything: a pass's source + bindings + compile error, a layer's
+  render graph, or the lists of layers / passes / shapes / assets / uniforms.
+- `create_object` — add a `layer` (on top), a `pass` (named = a new pass; unnamed =
+  author the layer's output pass, i.e. the first shader), a `shape`, or a `mask`.
+- `destroy_object` — remove a layer / pass / shape / mask.
+- `edit_object` — change properties (not source): layer name/visibility/opacity/
+  draw-order/output-pass, pass format, shape transform/colour, or the project name
+  (a rename, which asks for your approval).
+- `edit_shader` — targeted snippet replacements (the usual way it changes a shader,
+  so it doesn't retype the whole thing).
+- `connect_pins` — wire a shader-declared input to `under`, `geometry`, `mask`, a
+  built-in texture, an asset, the webcam, or another pass's output.
+- `set_uniforms` — live slider parameters, shared across all passes.
+- `capture_screenshot`, and (optional) `generate_texture`.
 
 ### Layers (node-graph compositing)
 
@@ -79,16 +84,16 @@ appends a visible `Masked Composite` pass wired `iChannel0 = under`,
 `result = mix(under, thisComposite, mask.alpha)`. This is the clean way to reveal
 a layer (say a texture) through a shape — e.g. a circle with full falloff makes a
 soft radial-gradient mask. The mask button on a layer row adds one (seeded with a
-soft circle) and lets you edit its geometry like any layer; the AI uses `add_mask`
-/ `remove_mask`.
+soft circle) and lets you edit its geometry like any layer; the AI uses
+`create_object type:mask` / `destroy_object type:mask`.
 
 The **Layers** tab is the stack: reorder (front/back), show/hide, set opacity, add
 layers, and edit each layer's shapes (position, size, rotation, colour, rounded
 corners). You can also **manipulate shapes directly on the canvas** — click a shape
 in the active layer to select it, then drag the body to move it, the corner
 handles to resize, or the top handle to rotate (the shader's `iMouse` keeps
-working on layers that have no geometry). Or let the AI drive it (`add_layer`,
-`add_shape`, `edit_shape`, `reorder_layer`, …). Existing single-shader projects
+working on layers that have no geometry). Or let the AI drive it (`create_object`,
+`edit_object`, …). Existing single-shader projects
 load as one "Base" layer, so nothing changes until you add more.
 
 ### Multi-pass render graph (within a layer)
@@ -123,15 +128,16 @@ nothing is uploaded anywhere — the frames stay on your GPU.
 Upload media to the shared **Assets** tab — a library of images and videos that
 lives across all your shaders, independent of any channel. Upload (or drag and
 drop) one or several files at once — identical files are de-duplicated, so
-re-adding the same image is a no-op — and the AI can see them (`list_assets`) and
+re-adding the same image is a no-op — and the AI can see them (`read what:assets`) and
 bind them to a pass input on its own (`connect_pins from=asset:<name>`); rename an
 asset to give the AI a clear handle, or delete it to remove it everywhere it's
 used. (You can still upload straight into a channel from the Textures tab — that
 file lands in the same library.)
 
-Some tools require your approval before they take effect. When the AI calls one
-(currently `rename_shader`), the chat shows an **Approve / Deny** prompt and the
-action only runs if you approve; a denial is reported back to the model.
+Some tool calls require your approval before they take effect. When the AI makes one
+(currently `edit_object type:project` — renaming the shader), the chat shows an
+**Approve / Deny** prompt and the action only runs if you approve; a denial is
+reported back to the model.
 
 Models without native function calling still work: switch **Settings → Tool
 calling** to **Text tags** and the model drives the same tools via forgiving XML
@@ -242,8 +248,8 @@ for models with known pricing — **cost this turn** and **cost this session**.
 
 Requests use **prompt caching** to cut cost and latency: the stable system prompt
 and the growing conversation history are cached, while the fast-changing project
-state (the active layer's live source, uniforms, channels, last compile error) is
-sent as a separate trailing message so it never invalidates the cache. For Anthropic this uses
+state (each layer's live output-pass source, uniforms, channels, last compile error)
+is sent as a separate trailing message so it never invalidates the cache. For Anthropic this uses
 `cache_control` breakpoints; for hosted OpenAI we send a stable `prompt_cache_key`
 and the server caches the matching prefix automatically. For self-hosted
 OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send

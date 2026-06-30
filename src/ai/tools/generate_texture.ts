@@ -20,8 +20,9 @@ registerTool({
 			properties: {
 				prompt: { type: "string", description: "Description of the texture to generate. Prefer seamless/tileable where relevant." },
 				name: { type: "string", description: "Short name for the asset." },
-				index: { type: "integer", description: "Optional channel 0-3 to bind the result to." },
-				pass: { type: "string", description: "Pass to bind into when index is set (default: the output pass)." },
+				index: { type: "integer", description: "Optional channel index to bind the result to." },
+				layer: { type: "string", description: "Layer ref (name/id/stack index) to bind into when index is set (default: the top layer)." },
+				pass: { type: "string", description: "Pass to bind into when index is set (default: the layer's output pass)." },
 			},
 			required: ["prompt"],
 		},
@@ -45,7 +46,8 @@ registerTool({
 		const blocks: Array<TextBlock | ImageBlock> = [text(`Generated texture "${asset.name}" (${asset.width}x${asset.height}).`)];
 		const idx = Number(input["index"]);
 		if (idx >= 0 && idx < ctx.renderer.maxInputs()) {
-			const target = ctx.resolvePass(input["pass"] ? String(input["pass"]) : undefined);
+			const layer = ctx.resolveLayer(input["layer"] !== undefined ? String(input["layer"]) : undefined);
+			const target = layer ? ctx.resolvePass(layer, input["pass"] ? String(input["pass"]) : undefined) : null;
 			if (target) {
 				ctx.connectPin(target.id, idx, { kind: "image", assetId: asset.id, builtin: undefined, passId: undefined, filter: "linear", wrap: "repeat" });
 				blocks[0] = text(`Generated texture "${asset.name}" and bound it to ${target.name}.iChannel${idx}.`);

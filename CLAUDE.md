@@ -106,9 +106,9 @@ npm run build         # ts0 build -> dist/index.html
   (the stable, cacheable base — it does NOT list tool schemas, those go in the
   request's `tools` field for native models) and `buildProjectState()` (the
   volatile per-edit project state, kept OUT of the cached prefix and sent as a
-  trailing message — it includes the **live GLSL source of the ACTIVE layer's
-  passes** so the model edits against ground truth without a `get_shader` round-trip
-  and sees any edits the user made between turns) plus `textToolInstructions` for
+  trailing message — it includes the **live GLSL source of each layer's OUTPUT
+  pass** so the model edits against ground truth without a `read` round-trip and
+  sees any edits the user made between turns) plus `textToolInstructions` for
   text mode. `pricing.ts` maps a
   model id to its rates + context window for the chat cost / context indicator.
   `compact.ts` is conversation **compaction**: `summarizeConversation` asks the
@@ -124,39 +124,55 @@ npm run build         # ts0 build -> dist/index.html
 - `src/ai/tools/` — **one tool per file**, each colocating its JSON-schema `def`
   and `execute`, self-registering into `registry.ts`. The store builds a
   `ToolContext` (the only surface a tool may touch) and dispatches via `getTool`.
-  `toolDefs({ imageGen, allowInitShader })` gates the offered set. Tools are
-  **layer- and pass-aware**: pass/geometry tools act on the **active layer**
-  (`ctx.resolvePass`/`ctx.passes()` are active-layer-scoped; `select_layer`
-  switches it). Layer stack: `add_layer` (adds on top, becomes active, pre-wired
-  under+geometry "over"), `remove_layer`, `list_layers`, `reorder_layer` (the draw
-  order), `set_layer` (name/visible/opacity), `select_layer`, `add_mask` /
-  `remove_mask` (mask a layer by another layer's alpha; `add_mask` seeds a soft
-  circle and makes the MASK the active layer to edit). Geometry:
-  `add_shape` / `edit_shape` / `remove_shape` / `list_shapes` (kinds from the
-  `shapes.ts` registry; `geometry_util.ts` parses shape fields — degrees→radians,
-  rgba). Within a layer: `init_shader`, `edit_shader` (forgiving exact-snippet
-  replace; optional `pass`), `add_pass` / `remove_pass` / `list_passes` /
-  `set_output_pass`, `get_shader`, `set_uniforms` (shared across ALL layers; a
-  **PATCH** that merges by name — only the named uniforms are updated, omitting one
-  never resets it, so the model never resends the whole list), `rename_shader`
-  (permission-gated), `connect_pins`
-  (`from: none|under|geometry|mask|builtin:<name>|pass:<name>|webcam|asset:<name>`;
-  texture input pins are inferred from `iChannelN` references in the shader),
-  `list_assets`, `capture_screenshot`,
-  `generate_texture` (gated on image-gen).
-- **Permission-gated tools**: a tool can set `requiresPermission: true` (+ an
-  optional `permissionPrompt(input)` for the prompt text) in its registration.
-  Before running such a call the agent loop awaits `cb.requestPermission(...)`;
-  the chat UI renders an Approve/Deny card (Stop counts as deny) and a denial is
-  fed back to the model as a tool result instead of executing. `rename_shader` is
-  the first user of this; it renames via `ctx.renameProject`. Works in both tool
-  modes (the gate lives in the shared execute loop).
+  `toolDefs({ imageGen })` gates the offered set. The surface is **generic and
+  parameterized** — there is **no "active" layer/pass for tools**; every tool
+  targets its object by an EXPLICIT ref in the call. A **layer ref** = name | id |
+  stack index (0 = bottom/back; omitted = the top layer); a **pass ref** = name |
+  id within a layer (omitted = its output pass); a **shape ref** = index within a
+  layer. `ctx.resolveLayer(ref)` / `ctx.resolvePass(layer, ref)` /
+  `ctx.resolveShape(layer, i)` are the uniform resolvers (the store keeps
+  `selectedLayerId`/etc. only for the **human UI editor**; tools never read it).
+  The **nine tools**:
+    - **read** `{what: pass|graph|passes|layers|shapes|assets|uniforms, layer?, pass?}` —
+      the one inspection tool (`describe.ts` formats it). Replaces `get_shader` +
+      every `list_*`.
+    - **create_object** `{type: layer|pass|shape|mask, layer?, …}` — add a thing
+      (adding a child names its parent `layer`). A `type:pass` with a `name` ADDS a
+      pass; with NO name it AUTHORS the layer's output pass from `source` (the old
+      `init_shader` — refused once the pass is authored, via `ctx.isOutputUnauthored`,
+      so it can't overwrite real work; this replaces the old `allowInitShader`
+      turn-gating with an execution-time check so the tool set stays byte-stable).
+    - **destroy_object** `{type: layer|pass|shape|mask, layer?, pass?, shape?}` — the
+      store guards stay (can't remove the only layer/pass; removing a pass clears
+      channels referencing it).
+    - **edit_object** `{type: layer|pass|shape|project, …}` — change PROPERTIES (not
+      source): layer name/visible/opacity/output_pass/order|move, pass format, shape
+      transform/colour, project name. Only `type:project` is permission-gated.
+    - **edit_shader** (forgiving exact-snippet replace; optional `layer`/`pass`),
+      **connect_pins** (graph wiring; optional `layer`;
+      `from: none|under|geometry|mask|builtin:<name>|pass:<name>|webcam|asset:<name>`;
+      input pins are inferred from `iChannelN` references), **set_uniforms** (shared
+      across ALL layers; a **PATCH** that merges by name — omitting one never resets
+      it), **capture_screenshot**, **generate_texture** (the lone gated tool — the
+      stable per-session image-gen setting). `geometry_util.ts` parses shape fields
+      (degrees→radians, rgba); `describe.ts` formats read output.
+  The advertised set is **byte-stable across a whole conversation** (only
+  `generate_texture` is conditional, on the stable per-session `imageGen` flag), so
+  the prompt-cache prefix never shifts mid-conversation.
+- **Permission-gated tools**: a tool sets `requiresPermission` to `true` OR to a
+  **predicate** `(input) => boolean` (+ an optional `permissionPrompt(input)`).
+  Before running a gated call the agent loop awaits `cb.requestPermission(...)`; the
+  chat UI renders an Approve/Deny card (Stop counts as deny) and a denial is fed back
+  to the model instead of executing. `edit_object` is the user: its predicate gates
+  only `type:project` (the shader rename, via `ctx.renameProject`), not layer/pass/
+  shape edits. Works in both tool modes (the gate lives in the shared execute loop).
 - **Tool modes** (`chat.toolMode`): `native` uses the provider's function-calling
   API; `text` (for models/endpoints without it) describes the catalogue as
   forgiving XML tags (`textToolInstructions`, keyed by `TOOL_NAMES`), parses them
-  out of the reply (`texttools.ts`), and feeds results back as a plain user
-  message. `init_shader` is recomputed each iteration so it drops out once the
-  shader is authored.
+  out of the reply (`texttools.ts`), and feeds results back as a plain user message.
+  Most tags carry JSON; `edit_shader` and `create_object` (when it carries GLSL) use
+  sub-tags so raw GLSL needs no escaping. The advertised/described set is identical
+  every turn (no per-turn drop-out).
 - `src/state/` — `types.ts`: a `Project` is a **layer stack** — `layers: Layer[]`
   drawn back→front; each `Layer` has its own `passes: Pass[]` + `outputPassId`
   (its composite) **plus** `shapes: Shape[]` (geometry), and `visible`/`opacity`.
@@ -226,7 +242,7 @@ npm run build         # ts0 build -> dist/index.html
   images/videos with no channel binding (multi-select `pickFiles` OR drag-and-drop
   onto the panel; identical bytes are content-deduped by `dataUrl`, so re-adding a
   file reuses the existing asset), rename/delete; `store.renameAsset`, and
-  the AI sees them via `list_assets` / binds via `connect_pins from=asset:<name>`).
+  the AI sees them via `read what:assets` / binds via `connect_pins from=asset:<name>`).
   The Code/Passes/Textures tabs are scoped to the active
   layer (the Layers tab selects it). `preview.ts`'s toolbar Download button opens a
   small format menu (rebuilt on each open): lossless **PNG** and lossless **WebP**
