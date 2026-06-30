@@ -1,32 +1,20 @@
 // Tool registry entry point. Importing this module registers every tool (each
 // tool file self-registers on import). Import order = registration/offer order.
+//
+// The surface is GENERIC: four verbs (read / create_object / destroy_object /
+// edit_object) that target any layer/pass/shape by explicit ref, plus the kept
+// "good general" tools. The advertised set is byte-stable across a conversation
+// (the only conditional is the stable per-session image-generation gate).
 
-import "./init_shader.ts";
+import "./read.ts";
+import "./create_object.ts";
+import "./destroy_object.ts";
+import "./edit_object.ts";
 import "./edit_shader.ts";
-import "./add_pass.ts";
-import "./remove_pass.ts";
-import "./list_passes.ts";
-import "./set_output_pass.ts";
-import "./get_shader.ts";
-import "./set_uniforms.ts";
-import "./rename_shader.ts";
 import "./connect_pins.ts";
-import "./list_assets.ts";
+import "./set_uniforms.ts";
 import "./capture_screenshot.ts";
 import "./generate_texture.ts";
-// Layer stack + geometry (the node-graph "Photoshop").
-import "./list_layers.ts";
-import "./add_layer.ts";
-import "./remove_layer.ts";
-import "./reorder_layer.ts";
-import "./set_layer.ts";
-import "./select_layer.ts";
-import "./add_mask.ts";
-import "./remove_mask.ts";
-import "./list_shapes.ts";
-import "./add_shape.ts";
-import "./edit_shape.ts";
-import "./remove_shape.ts";
 
 export { TOOL_NAMES } from "./names.ts";
 export type { ToolName } from "./names.ts";

@@ -35,18 +35,27 @@ function opt(s: string): string | undefined {
 function parseInner(name: string, inner: string): unknown {
 	const trimmed = inner.trim();
 	switch (name) {
-		case TOOL_NAMES.initShader:
-			return { source: stripFence(trimmed) };
 		case TOOL_NAMES.editShader:
-			return { old: innerTag(inner, "old"), new: innerTag(inner, "new"), pass: opt(innerTag(inner, "pass")), replace_all: /<replace_all>\s*true/i.test(inner) };
-		case TOOL_NAMES.addPass:
-			return { name: innerTag(inner, "name"), format: opt(innerTag(inner, "format")), source: opt(stripFence(innerTag(inner, "source"))) };
+			return { old: innerTag(inner, "old"), new: innerTag(inner, "new"), layer: opt(innerTag(inner, "layer")), pass: opt(innerTag(inner, "pass")), replace_all: /<replace_all>\s*true/i.test(inner) };
+		case TOOL_NAMES.createObject: {
+			// create_object accepts plain JSON, OR sub-tags so a pass's GLSL `source`
+			// needs no JSON escaping. Prefer sub-tags when a <source>/<type> is present.
+			if (/<(type|source|layer|name|format)\b/i.test(inner)) {
+				const out: Record<string, unknown> = { type: opt(innerTag(inner, "type")) ?? "pass" };
+				const layer = opt(innerTag(inner, "layer"));
+				const nm = opt(innerTag(inner, "name"));
+				const fmt = opt(innerTag(inner, "format"));
+				const src = opt(stripFence(innerTag(inner, "source")));
+				if (layer) out["layer"] = layer;
+				if (nm) out["name"] = nm;
+				if (fmt) out["format"] = fmt;
+				if (src) out["source"] = src;
+				return out;
+			}
+			return tryJson(trimmed);
+		}
 		case TOOL_NAMES.setUniforms:
 			return { uniforms: tryJson(trimmed) };
-		case TOOL_NAMES.getShader:
-			return { pass: opt(innerTag(inner, "pass")) };
-		case TOOL_NAMES.listPasses:
-		case TOOL_NAMES.listAssets:
 		case TOOL_NAMES.screenshot:
 			return {};
 		default:
