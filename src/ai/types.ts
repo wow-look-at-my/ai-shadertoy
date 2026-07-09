@@ -33,8 +33,13 @@ export interface ToolCall {
 export interface Usage {
 	inputTokens: number; // input tokens billed at the full rate (uncached)
 	outputTokens: number;
-	cacheReadTokens: number; // served from the prompt cache (Anthropic; OpenAI cached prompt tokens)
-	cacheWriteTokens: number; // written to the prompt cache this request (Anthropic only)
+	// Prompt-cache token counts, ONLY ever the values the server reports. A number
+	// (including 0) is a real server-reported count; `undefined` means the endpoint
+	// did not report cache info at all (e.g. Ollama/local OpenAI-compatible servers
+	// omit it). These are NEVER estimated/inferred — the UI shows "n/a" (not a
+	// guessed value) when undefined, and an explicit 0 means 0% cached.
+	cacheReadTokens?: number; // served from the prompt cache (Anthropic cache_read; OpenAI cached prompt tokens)
+	cacheWriteTokens?: number; // written to the prompt cache this request (Anthropic cache_creation)
 }
 
 export interface AssistantTurn {

@@ -47,6 +47,18 @@ function componentCount(type: UniformType): number {
 	return type === "float" ? 1 : type === "vec2" ? 2 : type === "vec3" ? 3 : 4;
 }
 
+/** Parse one GLSL numeric literal to a JS number. GLSL ES 3.00 allows a trailing
+ * single-precision suffix on float literals (`1.5f`, `40.0F`, `1e3f`) that JS
+ * `Number()` rejects -- without tolerating it an idiomatic baked default like
+ * `uniform float u_radius = 40.0f;` parsed to NaN and the control silently fell
+ * back to 0 (a "0 placeholder" the model then had to chase with set_uniforms).
+ * The suffix is only stripped from decimal/exponent literals, so hex int literals
+ * (which can legitimately end in f, e.g. 0x1f) are left intact for Number(). */
+function glslLiteralToNumber(s: string): number {
+	const t = s.trim();
+	return /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]?$/.test(t) ? Number(t.replace(/[fF]$/, "")) : Number(t);
+}
+
 /** Parse a GLSL initializer expression into component values, or null if it isn't
  * a plain numeric literal / vecN(...) constructor we can evaluate. Single-argument
  * vector constructors splat (vec3(0.5) -> [0.5,0.5,0.5]); too-few args pad with 0. */
@@ -55,14 +67,14 @@ function parseInitializer(type: UniformType, expr: string | undefined): number[]
 	const n = componentCount(type);
 	const e = expr.trim();
 	if (type === "float") {
-		const v = Number(e);
+		const v = glslLiteralToNumber(e);
 		return Number.isFinite(v) ? [v] : null;
 	}
 	const m = e.match(/^vec[234][ \t]*\(([^)]*)\)$/);
 	if (!m) return null;
 	const args = m[1].split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 	if (args.length === 0) return null;
-	const nums = args.map(Number);
+	const nums = args.map(glslLiteralToNumber);
 	if (nums.some((x) => !Number.isFinite(x))) return null;
 	if (nums.length === 1) return new Array(n).fill(nums[0]);
 	return Array.from({ length: n }, (_, i) => nums[i] ?? 0);
@@ -196,6 +208,7 @@ const BUILTIN_NAMES = new Set([
 	"iMouse",
 	"iDate",
 	"iChannelResolution",
+	"ai_fragOffset",
 	"mainImage",
 	"main",
 ]);
@@ -230,6 +243,7 @@ uniform float iFrameRate;
 uniform int iFrame;
 uniform vec4 iMouse;
 uniform vec4 iDate;
+uniform vec2 ai_fragOffset;
 ${channelDecls}
 ${customDecls}
 `;
@@ -239,7 +253,9 @@ const FOOTER = `
 
 void main() {
 	vec4 ai_color = vec4(0.0, 0.0, 0.0, 1.0);
-	mainImage(ai_color, gl_FragCoord.xy);
+	// ai_fragOffset centres "square pixels" tiling (0 otherwise), so the shader sees
+	// a fragCoord whose origin is shifted to keep uv = fragCoord/iResolution centred.
+	mainImage(ai_color, gl_FragCoord.xy - ai_fragOffset);
 	ai_fragColor = ai_color;
 }
 `;

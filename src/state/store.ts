@@ -4,7 +4,7 @@
 // Also implements tool execution for the agent.
 
 import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
-import { channelsForSource, ensureMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, removeMaskCompositePass } from "./types.ts";
+import { channelsForSource, ensureMaskCompositePass, LAYER_COMPOSITE_SOURCE, makeCompositeLayer, makeMaskLayer, makePass, makeShape, MASK_SOURCE, removeMaskCompositePass } from "./types.ts";
 import { shapeDef } from "../gl/shapes.ts";
 import { extractUniformDeclarations, reconcileUniforms } from "../gl/wrapper.ts";
 import { getTool, text } from "../ai/tools/index.ts";
@@ -54,6 +54,9 @@ export class Store {
 	/** Undo/redo over project snapshots. Reset whenever the active project
 	 * changes so history never crosses project boundaries. */
 	history!: History<ProjectSnapshot>;
+	/** The fresh-project default shader source, kept so a tool can tell whether a
+	 * layer's output pass is still the UNAUTHORED default (vs real authored work). */
+	private defaultShaderSource = "";
 
 	private listeners = new Map<EventName, Set<(p: unknown) => void>>();
 	private saveDebounced = debounce(() => void this.saveProjectNow(), 700);
@@ -77,10 +80,12 @@ export class Store {
 
 	async init(renderer: Renderer, defaultShaderSource: string): Promise<void> {
 		this.renderer = renderer;
+		this.defaultShaderSource = defaultShaderSource;
 		renderer.onStats = (s) => this.emit("stats", s);
 
 		this.settings = mergeSettings(loadSettingsRaw());
 		this.renderer.setRenderScale(this.settings.renderScale);
+		this.renderer.setSquarePixels(this.settings.squarePixels);
 		void requestPersistence().then((granted) => {
 			if (granted && !this.settings.persistRequested) {
 				this.settings.persistRequested = true;
@@ -770,6 +775,7 @@ export class Store {
 		this.settings = { ...this.settings, ...patch };
 		saveSettings(this.settings);
 		this.renderer.setRenderScale(this.settings.renderScale);
+		this.renderer.setSquarePixels(this.settings.squarePixels);
 		this.emit("settings", this.settings);
 	}
 
@@ -902,19 +908,16 @@ export class Store {
 			assets: this.assets,
 			renderer: this.renderer,
 			layers: () => this.project.layers,
-			activeLayerId: () => this.activeLayer().id,
-			resolveLayer: (nameOrId) => this.resolveLayer(nameOrId),
-			passes: () => this.activeLayer().passes,
-			outputPassId: () => this.activeLayer().outputPassId,
-			selectedPassId: () => this.selectedPassId,
-			resolvePass: (nameOrId) => this.resolvePass(nameOrId),
+			resolveLayer: (ref) => this.resolveLayerRef(ref),
+			resolvePass: (layer, ref) => this.resolvePassRef(layer, ref),
+			resolveShape: (layer, index) => layer.shapes[index] ?? null,
+			defaultLayer: () => this.topLayer(),
+			isOutputUnauthored: (layer) => this.isOutputUnauthored(layer),
 			setPassSource: (id, s, c) => this.setPassSource(id, s, c),
-			addPass: (name, source, format) => this.addPass(name, source, format),
+			addPass: (name, source, format, layerId) => this.addPass(name, source, format, layerId),
 			removePass: (id) => this.removePass(id),
-			renamePassById: (id, name) => this.renamePass(id, name),
 			setOutputPass: (id) => this.setOutputPass(id),
 			setPassFormat: (id, fmt) => this.setPassFormat(id, fmt),
-			selectPass: (id) => this.selectPass(id),
 			setUniforms: (u) => this.setUniforms(u),
 			connectPin: (id, i, p) => this.connectPin(id, i, p),
 			addLayer: (name, shapes) => this.addLayer(name, shapes),
@@ -925,7 +928,6 @@ export class Store {
 			setLayerOpacity: (id, o) => this.setLayerOpacity(id, o),
 			addMask: (id) => this.addMask(id),
 			removeMask: (id) => this.removeMask(id),
-			selectLayer: (id) => this.selectLayer(id),
 			addShape: (layerId, kind, patch) => this.addShape(layerId, kind, patch),
 			updateShape: (layerId, shapeId, patch) => this.updateShape(layerId, shapeId, patch),
 			removeShape: (layerId, shapeId) => this.removeShape(layerId, shapeId),
@@ -937,28 +939,41 @@ export class Store {
 		};
 	}
 
-	/** Resolve a layer by id or name; default (no arg) = the active layer. */
-	private resolveLayer(nameOrId?: string): Layer | null {
-		if (!nameOrId) return this.activeLayer() ?? null;
-		const n = nameOrId.toLowerCase();
-		return this.layerById(nameOrId) ?? this.project.layers.find((l) => l.name.toLowerCase() === n) ?? null;
+	/** The default tool target layer when a tool allows an omitted layer ref: the
+	 * top layer (the visible composite). Distinct from the editor's UI selection. */
+	private topLayer(): Layer | null {
+		return this.project.layers[this.project.layers.length - 1] ?? null;
 	}
 
-	/** Resolve a pass by id or name within the active layer; default = the active
-	 * layer's output pass. Falls back to a global id/name match. */
-	private resolvePass(nameOrId?: string): Pass | null {
-		const layer = this.activeLayer();
-		if (!nameOrId) return layer.passes.find((p) => p.id === layer.outputPassId) ?? layer.passes[0] ?? null;
-		return this.passById(nameOrId) ?? this.passByNameIn(layer, nameOrId) ?? this.passByNameAnywhere(nameOrId) ?? null;
-	}
-
-	private passByNameAnywhere(name: string): Pass | undefined {
-		const n = name.toLowerCase();
-		for (const l of this.project.layers) {
-			const p = l.passes.find((x) => x.name.toLowerCase() === n);
-			if (p) return p;
+	/** Resolve a layer for a TOOL by explicit ref: name, id, or stack index
+	 * (0 = bottom/back). No ref = the top layer. Never consults the UI selection. */
+	private resolveLayerRef(ref?: string | number): Layer | null {
+		if (ref === undefined || ref === "") return this.topLayer();
+		if (typeof ref === "number" && Number.isInteger(ref)) return this.project.layers[ref] ?? null;
+		const s = String(ref);
+		// A bare integer string is a stack index.
+		if (/^\d+$/.test(s.trim())) {
+			const byIndex = this.project.layers[Number(s.trim())];
+			if (byIndex) return byIndex;
 		}
-		return undefined;
+		const n = s.toLowerCase();
+		return this.layerById(s) ?? this.project.layers.find((l) => l.name.toLowerCase() === n) ?? null;
+	}
+
+	/** Resolve a pass for a TOOL by name or id WITHIN `layer`; no ref = its output
+	 * pass. Falls back to a global id match (ids are unique) so a raw id works. */
+	private resolvePassRef(layer: Layer, ref?: string): Pass | null {
+		if (!ref) return layer.passes.find((p) => p.id === layer.outputPassId) ?? layer.passes[0] ?? null;
+		return layer.passes.find((p) => p.id === ref) ?? this.passByNameIn(layer, ref) ?? this.passById(ref) ?? null;
+	}
+
+	/** True if `layer`'s output pass still holds an UNAUTHORED default source (the
+	 * fresh-project shader or the composite template), so seeding it is safe. */
+	private isOutputUnauthored(layer: Layer): boolean {
+		const out = layer.passes.find((p) => p.id === layer.outputPassId);
+		if (!out) return false;
+		const src = out.source.trim();
+		return src === this.defaultShaderSource.trim() || src === LAYER_COMPOSITE_SOURCE.trim() || src === MASK_SOURCE.trim();
 	}
 
 	async applyTool(name: string, input: unknown): Promise<ToolResult> {

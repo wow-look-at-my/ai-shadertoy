@@ -503,6 +503,10 @@ textarea:focus {
 	-webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z'/%3E%3C/svg%3E");
 	mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z'/%3E%3C/svg%3E");
 }
+.icon-aspectRatio {
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M19,12H17V15H14V17H19V12M7,9H10V7H5V12H7V9M21,3H3C1.89,3%201,3.89%201,5V19A2,2%200%200,0%203,21H21A2,2%200%200,0%2023,19V5C23,3.89%2022.1,3%2021,3M21,19H3V5H21V19Z'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M19,12H17V15H14V17H19V12M7,9H10V7H5V12H7V9M21,3H3C1.89,3%201,3.89%201,5V19A2,2%200%200,0%203,21H21A2,2%200%200,0%2023,19V5C23,3.89%2022.1,3%2021,3M21,19H3V5H21V19Z'/%3E%3C/svg%3E");
+}
 
 .icon-pause {
 	-webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M14,19H18V5H14M6,19H10V5H6V19Z'/%3E%3C/svg%3E");
@@ -768,6 +772,48 @@ canvas.gl {
 }
 .scale {
 	width: 64px;
+}
+.download-wrap {
+	position: relative;
+	display: inline-flex;
+}
+.download-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	min-width: 172px;
+	padding: 4px;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.download-item {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 7px 9px;
+	background: transparent;
+	border: none;
+	border-radius: 5px;
+	color: var(--fg);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.download-item:hover {
+	background: var(--bg-3);
+}
+.download-item .fmt {
+	font-weight: 600;
+}
+.download-item .note {
+	color: var(--fg-dim);
+	font-size: 11px;
 }
 .err-badge {
 	background: #2a1418;
@@ -1531,5 +1577,29 @@ textarea.code {
 	}
 	.main-col {
 		grid-template-rows: 55vh 7px 80vh;
+	}
+}
+
+/* ---- ultrawide: three columns side-by-side ---- */
+/* On an ultrawide display the preview and editor sit next to each other rather
+   than stacked, so the workspace reads as chat | preview | editor. .main-col
+   flips from a row stack to a column split and the splitter becomes a vertical
+   (col-resize) handle driving --preview-w. The query is mirrored in app.ts
+   (THREE_COL_QUERY) -- keep the two in sync. */
+@media (min-width: 1600px) and (min-aspect-ratio: 2 / 1) {
+	.workspace {
+		grid-template-columns: minmax(320px, 0.5fr) minmax(720px, 3fr);
+	}
+	.main-col {
+		--preview-w: 50%;
+		grid-template-rows: minmax(0, 1fr);
+		grid-template-columns: var(--preview-w) 7px minmax(0, 1fr);
+	}
+	.v-splitter {
+		cursor: col-resize;
+		border-top: none;
+		border-bottom: none;
+		border-left: 1px solid var(--line);
+		border-right: 1px solid var(--line);
 	}
 }

@@ -14,22 +14,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
-      # The lockfile pins the public ts0 dev dependency as a git+ssh URL (npm
-      # canonicalizes GitHub URLs to ssh). Runners have no SSH key, so rewrite
-      # ssh -> anonymous https for the public repo before installing.
+          node-version: "22.13"
+      - name: Enable pnpm via corepack
+        # Node's bundled corepack has stale signing keys and fails pnpm's
+        # registry signature check ("Cannot find matching keyid"); install the
+        # latest corepack first. See nodejs/corepack#612.
+        run: |
+          npm install --global corepack@latest
+          corepack enable
+      # ts0 is a public git dev dependency; pnpm runs git outside the checked-out
+      # tree to fetch it. Runners have no SSH key, so rewrite ssh -> anonymous
+      # https for the public repo before installing.
       - name: Use HTTPS for git dependencies
         run: |
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
       - name: Type-check
-        run: npx tsc --noEmit
+        run: pnpm run typecheck
       - name: Unit tests
-        run: npm test
+        run: pnpm test
       - name: Build single-file bundle
-        run: npx ts0 build
+        run: pnpm run build
       - uses: actions/upload-artifact@v4
         with:
           name: site

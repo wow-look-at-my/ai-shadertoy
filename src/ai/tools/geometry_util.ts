@@ -1,6 +1,6 @@
 // Shared helpers for the geometry tools: parse AI-supplied shape fields into a
 // Shape patch (degrees -> radians, colour arrays, clamping) and describe shapes
-// for tool output. Not a tool itself -- imported by add_shape / edit_shape / etc.
+// for tool output. Not a tool itself -- imported by create_object / edit_object / read.
 
 import type { Shape } from "../../state/types.ts";
 import { SHAPE_LABELS } from "../../gl/shapes.ts";
