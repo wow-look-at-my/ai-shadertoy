@@ -21,6 +21,9 @@ permissions:
   actions: read
   pull-requests: write
   id-token: write
+  checks: read
+  artifact-metadata: write
+  deployments: write
 
 jobs:
   build:
