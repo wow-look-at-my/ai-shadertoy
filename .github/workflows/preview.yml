@@ -21,6 +21,14 @@ permissions:
   actions: read
   pull-requests: write
   id-token: write
+  # Required by the reusable buildhost-preview.yml: a caller that does not
+  # grant everything the called workflow declares is rejected with
+  # startup_failure and zero jobs. `checks: read` has been required since
+  # 2026-07-20 (wow-look-at-my/actions#130) and was missing here;
+  # `artifact-metadata: write` is required now that buildhost-publish-site
+  # records what it uploaded as part of publishing rather than optionally.
+  checks: read
+  artifact-metadata: write
 
 jobs:
   build:
