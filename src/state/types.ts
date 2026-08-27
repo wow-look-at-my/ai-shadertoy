@@ -188,7 +188,7 @@ export interface Project {
 	updatedAt: number;
 }
 
-export type ProviderId = "anthropic" | "openai";
+export type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama-cloud";
 
 export type ToolMode = "native" | "text";
 
@@ -217,7 +217,10 @@ export interface ImageGenConfig {
 export interface Settings {
 	chat: ChatConfig;
 	imageGen: ImageGenConfig;
-	proxyUrl: string; // CORS proxy base; requests become `${proxyUrl}?url=<encoded target>`
+	/** CORS proxy TEMPLATE. `{{.url}}` is replaced with the percent-encoded
+	 * target, `{{.rawurl}}` with the target verbatim; a template with neither
+	 * token has the target appended (the pre-template prefix form). */
+	proxyUrl: string;
 	renderScale: number; // 0.25 .. 1
 	squarePixels: boolean; // report iResolution as the short side so UVs are isotropic (circles stay round)
 	autoScreenshot: boolean; // attach a render to the model after each shader change

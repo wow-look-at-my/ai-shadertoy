@@ -225,8 +225,12 @@ in, since the copied text re-extracts to the exact same controls.
 
 Open the app, click **Settings**, and add:
 
-- **Provider** — Anthropic (Claude) or OpenAI-compatible.
-- **Model** — defaults to `claude-opus-4-8`. Presets are provided; any model id is allowed.
+- **Provider** — Anthropic (Claude), OpenRouter, Ollama Cloud, or any
+  OpenAI-compatible endpoint. Each brings its own base URL, model presets and
+  CORS handling, so picking one and pasting a key is enough.
+- **Model** — defaults to `claude-opus-4-8`. Presets are provided; any model id is
+  allowed. OpenRouter and Ollama Cloud publish their catalogues without a key, so
+  the model list fills itself before you paste one.
 - **API key** — stored only in your browser's `localStorage`.
 
 Use **Test connection** to run a tiny real inference (it prompts the model for a
@@ -234,11 +238,21 @@ one-word reply and shows it), confirming the key, model, base URL, and (CORS)
 connectivity all work before you start chatting.
 
 If direct browser calls are blocked by CORS, tick **Route chat through CORS
-proxy**. The default is `https://proxy.pazer.ai/`, which works as shipped: the
-target rides as a URL-encoded `?url=` query parameter, so a request becomes
-`https://proxy.pazer.ai/?url=https%3A%2F%2Fapi.anthropic.com%2Fv1%2Fmessages`.
-Any proxy that reads the same `?url=` parameter works too; a query string on the
-proxy URL itself is preserved.
+proxy**. Ollama Cloud sends no CORS headers at all, so choosing it ticks the box
+for you and says why; you can still untick it.
+
+The proxy setting is a **template** naming where the target URL goes, so any
+proxy shape works:
+
+| Template | Request becomes |
+| --- | --- |
+| `https://proxy.pazer.ai/?url={{.url}}` (default) | `https://proxy.pazer.ai/?url=https%3A%2F%2Fapi.anthropic.com%2Fv1%2Fmessages` |
+| `https://cors.example.com/{{.rawurl}}` | `https://cors.example.com/https://api.anthropic.com/v1/messages` |
+
+`{{.url}}` inserts the target percent-encoded (what a query parameter needs) and
+`{{.rawurl}}` inserts it verbatim (what a path-prefix proxy needs). A setting
+with neither token has the target appended, which is the older prefix form, so a
+proxy URL saved before templates existed keeps working.
 
 Anthropic browser calls send `anthropic-dangerous-direct-browser-access: true`.
 Note that Opus 4.8 / 4.7 reject `temperature`, so it is omitted for those models.
@@ -305,7 +319,7 @@ index.html              # ts0 HTML entry (links CSS, loads main.ts)
 src/
   main.ts               # bootstrap: renderer + store + UI
   gl/                   # WebGL2 renderer, shader assembly, procedural textures
-  ai/                   # provider adapters (Anthropic + OpenAI), agent loop, tools
+  ai/                   # provider adapters (Anthropic + OpenAI wire), agent loop, tools
   state/                # types, central store, undo/redo history, IndexedDB persistence
   ui/                   # vanilla-DOM components: chat | (preview stacked over the
                         #   editor: Layers / Code / Passes graph / Uniforms / Textures / Assets;

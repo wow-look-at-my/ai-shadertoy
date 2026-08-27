@@ -14,6 +14,7 @@ import { cachePct, hasPricing, messageCost, modelContextWindow } from "../ai/pri
 import { toolDefs } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
 import { ProviderError } from "../ai/providers.ts";
+import { PROVIDERS } from "../state/defaults.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -236,10 +237,10 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		});
 	}
 
-	// Anthropic always needs a key; OpenAI-compatible endpoints may be keyless
-	// (e.g. a local Ollama server), so don't block those.
+	// Every hosted provider needs a key; only the generic OpenAI-compatible one
+	// may be keyless (e.g. a local Ollama server), so don't block that.
 	function ensureReady(): boolean {
-		if (store.settings.chat.provider === "anthropic" && !store.settings.chat.apiKey) {
+		if (PROVIDERS[store.settings.chat.provider].needsKey && !store.settings.chat.apiKey) {
 			alert("Add your API key in Settings first.");
 			deps.openSettings();
 			return false;

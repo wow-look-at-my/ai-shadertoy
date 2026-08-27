@@ -4,7 +4,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
-import { MODEL_PRESETS } from "../state/defaults.ts";
+import { MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
 import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -15,7 +15,7 @@ export interface SettingsModal {
 }
 
 export function createSettings(store: Store): SettingsModal {
-	const provider = el("select", {}, el("option", { value: "anthropic" }, "Anthropic (Claude)"), el("option", { value: "openai" }, "OpenAI-compatible"));
+	const provider = el("select", {}, ...(Object.keys(PROVIDERS) as ProviderId[]).map((id) => el("option", { value: id }, PROVIDERS[id].label)));
 	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
 	// Model id: free-text combobox backed by <datalist>. Autofill/capitalize/
 	// correct/spellcheck off so a model id is never mangled or flagged. The key
@@ -32,7 +32,8 @@ export function createSettings(store: Store): SettingsModal {
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
 	const useProxy = el("input", { type: "checkbox" });
-	const proxyUrl = el("input", { type: "text", placeholder: "https://proxy.pazer.ai/" });
+	const proxyUrl = el("input", { type: "text", placeholder: "https://proxy.pazer.ai/?url={{.url}}" });
+	const proxyHint = el("span", { class: "hint" });
 	const autoScreenshot = el("input", { type: "checkbox" });
 	const shotDim = el("input", { type: "number", attrs: { min: "128", max: "1024", step: "64" } });
 
@@ -65,7 +66,9 @@ export function createSettings(store: Store): SettingsModal {
 		const merged = [...new Set([...fetchedModels, ...MODEL_PRESETS[p]])];
 		modelList.replaceChildren(...merged.map((m) => el("option", { value: m })));
 	};
-	const canFetchModels = () => apiKey.value.trim().length > 0 || (provider.value === "openai" && baseUrl.value.trim().length > 0);
+	// OpenRouter and Ollama Cloud serve their model list unauthenticated, so the
+	// combobox can fill itself before a key is entered.
+	const canFetchModels = () => apiKey.value.trim().length > 0 || (provider.value === "openai" && baseUrl.value.trim().length > 0) || !PROVIDERS[provider.value as ProviderId].needsKeyForModels;
 	const refreshModels = async () => {
 		if (!canFetchModels()) {
 			modelStatus.textContent = "";
@@ -89,15 +92,33 @@ export function createSettings(store: Store): SettingsModal {
 	apiKey.addEventListener("input", refreshModelsDebounced);
 	baseUrl.addEventListener("input", refreshModelsDebounced);
 
+	// A provider whose endpoint sends no CORS headers cannot be called directly
+	// from a page, so picking it ticks the proxy on rather than leaving the user
+	// to find the toggle after a failed request. Ticking the real checkbox (and
+	// saying why) keeps it visible and still overridable.
+	const applyProxyRequirement = () => {
+		const info = PROVIDERS[provider.value as ProviderId];
+		if (info.needsProxy) useProxy.checked = true;
+		proxyHint.textContent = info.needsProxy ? `${info.label} sends no CORS headers, so the proxy carries its requests.` : "Use if direct browser calls are blocked by CORS.";
+	};
+
 	const refreshModelList = () => {
 		const p = provider.value as ProviderId;
 		fetchedModels = []; // provider changed; the previous list no longer applies
 		applyModelOptions();
+		// The old provider's model id is left in the box and would fail on the new
+		// one. Replace it only when it is some provider's preset -- an id the user
+		// typed is theirs and stays put.
+		const current = model.value.trim();
+		const isSomePreset = Object.values(MODEL_PRESETS).some((list) => list.includes(current));
+		if (isSomePreset && !PROVIDERS[p].models.includes(current)) model.value = PROVIDERS[p].models[0];
 		tempHint.textContent = p === "anthropic" ? "Ignored for Opus 4.8/4.7 (those reject temperature)." : "";
+		baseUrl.placeholder = `(optional) ${PROVIDERS[p].baseUrl}`;
 		modelStatus.textContent = "";
 	};
 	provider.addEventListener("change", () => {
 		refreshModelList();
+		applyProxyRequirement();
 		void refreshModels();
 	});
 
@@ -121,8 +142,8 @@ export function createSettings(store: Store): SettingsModal {
 
 	const field = (label: string, control: HTMLElement, hint?: string) => el("label", { class: "field" }, el("span", { class: "field-label" }, label), control, hint ? el("span", { class: "hint" }, hint) : "");
 	// Checkbox + label on one line, hint underneath.
-	const checkField = (label: string, control: HTMLElement, hint?: string) =>
-		el("div", { class: "field check-field" }, el("label", { class: "check-row" }, control, el("span", { class: "field-label" }, label)), hint ? el("span", { class: "hint" }, hint) : "");
+	const checkField = (label: string, control: HTMLElement, hint?: string | HTMLElement) =>
+		el("div", { class: "field check-field" }, el("label", { class: "check-row" }, control, el("span", { class: "field-label" }, label)), hint ? (typeof hint === "string" ? el("span", { class: "hint" }, hint) : hint) : "");
 	const modelField = el("div", { class: "field" }, el("span", { class: "field-label" }, "Model"), el("div", { class: "model-row" }, model, modelRefreshBtn), modelStatus);
 
 	const body = el(
@@ -138,8 +159,8 @@ export function createSettings(store: Store): SettingsModal {
 		tempHint,
 		el("div", { class: "test-row" }, testBtn, testResult),
 		el("h3", {}, "Networking"),
-		checkField("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
-		field("CORS proxy URL", proxyUrl, "The target rides as a ?url= query parameter."),
+		checkField("Route chat through CORS proxy", useProxy, proxyHint),
+		field("CORS proxy URL", proxyUrl, "A template: {{.url}} takes the encoded target (query-style proxies), {{.rawurl}} takes it verbatim (prefix-style). No token = the target is appended."),
 		el("h3", {}, "Vision feedback"),
 		checkField("Attach a render to every shader change", autoScreenshot, "Off by default: the AI pulls a render only when it wants one (screenshot:true or capture_screenshot). Turn this on to attach a render to every shader change."),
 		field("Screenshot max edge (px)", shotDim),
@@ -184,6 +205,7 @@ export function createSettings(store: Store): SettingsModal {
 		temperature.value = String(s.chat.temperature);
 		useProxy.checked = s.chat.useProxy;
 		proxyUrl.value = s.proxyUrl;
+		applyProxyRequirement();
 		autoScreenshot.checked = s.autoScreenshot;
 		shotDim.value = String(s.screenshotMaxDim);
 		igEnabled.checked = s.imageGen.enabled;

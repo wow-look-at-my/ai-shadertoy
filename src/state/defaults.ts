@@ -5,14 +5,83 @@ import { channelsForSource, emptyChannel, ensureMaskCompositePass, makeLayer, ma
 import { isShapeKind } from "../gl/shapes.ts";
 import { uid } from "../util/misc.ts";
 
-// Model presets per provider. Free-text entry is still allowed in Settings; these
-// are just the convenient picks. Anthropic defaults to Opus 4.8 (the most capable
-// current model). Fable 5 is intentionally omitted: it forces always-on thinking,
-// whose replay rules the simple browser tool-loop here does not implement.
-export const MODEL_PRESETS: Record<ProviderId, string[]> = {
-	anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-7"],
-	openai: ["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "o4-mini"],
+export interface ProviderInfo {
+	label: string;
+	/** Which request/response translation providers.ts uses. Everything except
+	 * Anthropic speaks OpenAI Chat Completions. */
+	wire: "anthropic" | "openai";
+	/** Used when the user leaves the base-URL override blank. */
+	baseUrl: string;
+	/** The endpoint sends no `access-control-allow-origin`, so a browser cannot
+	 * read its reply and the CORS proxy has to carry the request. Measured
+	 * against the live endpoints, not assumed -- see README. */
+	needsProxy: boolean;
+	/** Convenient picks for the model combobox; free text is still accepted, and
+	 * the refresh button replaces these with the provider's own list. */
+	models: string[];
+	/** The models endpoint rejects an unauthenticated request, so the combobox
+	 * cannot fill itself until a key is entered. OpenRouter and Ollama Cloud
+	 * both serve their catalogue openly. */
+	needsKeyForModels: boolean;
+	/** Chat requires an API key. Only the generic OpenAI-compatible provider can
+	 * legitimately run keyless, against a local server. */
+	needsKey: boolean;
+}
+
+// Anthropic defaults to Opus 4.8 (the most capable current model). Fable 5 is
+// intentionally omitted: it forces always-on thinking, whose replay rules the
+// simple browser tool-loop here does not implement.
+export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
+	anthropic: {
+		label: "Anthropic (Claude)",
+		wire: "anthropic",
+		baseUrl: "https://api.anthropic.com",
+		needsProxy: false,
+		models: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-7"],
+		needsKeyForModels: true,
+		needsKey: true,
+	},
+	openai: {
+		label: "OpenAI-compatible",
+		wire: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		needsProxy: false,
+		models: ["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "o4-mini"],
+		needsKeyForModels: true,
+		needsKey: false,
+	},
+	openrouter: {
+		label: "OpenRouter",
+		wire: "openai",
+		baseUrl: "https://openrouter.ai/api/v1",
+		needsProxy: false,
+		models: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "openai/gpt-5.6-terra", "google/gemini-3.7-flash", "z-ai/glm-5.3", "deepseek/deepseek-v4-pro"],
+		needsKeyForModels: false,
+		needsKey: true,
+	},
+	"ollama-cloud": {
+		label: "Ollama Cloud",
+		wire: "openai",
+		baseUrl: "https://ollama.com/v1",
+		needsProxy: true,
+		models: ["kimi-k2.7-code", "glm-5.3-flash", "deepseek-v4-pro:0813", "gpt-oss:120b", "qwen3.5:397b", "minimax-m3"],
+		needsKeyForModels: false,
+		needsKey: true,
+	},
 };
+
+export const MODEL_PRESETS: Record<ProviderId, string[]> = {
+	anthropic: PROVIDERS.anthropic.models,
+	openai: PROVIDERS.openai.models,
+	openrouter: PROVIDERS.openrouter.models,
+	"ollama-cloud": PROVIDERS["ollama-cloud"].models,
+};
+
+/** The base URL a request actually uses: the user's override, else the
+ * provider's own default. */
+export function providerBaseUrl(provider: ProviderId, override: string): string {
+	return override.trim() || PROVIDERS[provider].baseUrl;
+}
 
 export const DEFAULT_SETTINGS: Settings = {
 	chat: {
@@ -33,7 +102,7 @@ export const DEFAULT_SETTINGS: Settings = {
 		size: "512x512",
 		useProxy: false,
 	},
-	proxyUrl: "https://proxy.pazer.ai/",
+	proxyUrl: "https://proxy.pazer.ai/?url={{.url}}",
 	renderScale: 1,
 	squarePixels: true,
 	autoScreenshot: false,
@@ -41,14 +110,30 @@ export const DEFAULT_SETTINGS: Settings = {
 	persistRequested: false,
 };
 
+/** A proxy setting saved before templates existed is a bare base URL, and which
+ * rule it meant depended on the version that saved it: the pazer proxy reads a
+ * `?url=` parameter, everything else was joined as a prefix. Rewrite it into the
+ * template that reproduces exactly that, so the Settings field states the rule
+ * instead of leaving it implicit. */
+export function migrateProxyTemplate(value: string): string {
+	const v = value.trim();
+	if (!v) return DEFAULT_SETTINGS.proxyUrl;
+	if (/\{\{\s*\.(rawurl|url)\s*\}\}/.test(v)) return v;
+	const base = v.replace(/\/+$/, "");
+	if (/(^|\/\/|\.)proxy\.pazer\.ai(\/|:|$)/i.test(base)) return `${base}/?url={{.url}}`;
+	return `${base}/{{.rawurl}}`;
+}
+
 export function mergeSettings(partial: Partial<Settings> | null): Settings {
 	if (!partial) return structuredClone(DEFAULT_SETTINGS);
-	return {
+	const merged: Settings = {
 		...DEFAULT_SETTINGS,
 		...partial,
 		chat: { ...DEFAULT_SETTINGS.chat, ...(partial.chat ?? {}) },
 		imageGen: { ...DEFAULT_SETTINGS.imageGen, ...(partial.imageGen ?? {}) },
 	};
+	merged.proxyUrl = migrateProxyTemplate(merged.proxyUrl);
+	return merged;
 }
 
 export const STARTER_UNIFORMS: Uniform[] = [];

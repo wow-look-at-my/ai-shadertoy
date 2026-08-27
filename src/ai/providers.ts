@@ -5,6 +5,7 @@
 
 import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
+import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
 
 export class ProviderError extends Error {
@@ -21,6 +22,28 @@ export class ProviderError extends Error {
 /** Wrap a target URL with the CORS proxy when enabled. */
 function endpoint(url: string, settings: Settings, useProxy: boolean): string {
 	return useProxy ? proxied(url, settings.proxyUrl) : url;
+}
+
+/** Whether the chat request goes through the proxy: the user's toggle, OR the
+ * provider needing it regardless. Ollama Cloud sends no CORS headers at all, so
+ * a direct browser call cannot work; forcing it on there is what makes picking
+ * the provider enough to start chatting. The Settings toggle reflects this, so
+ * it is stated rather than hidden. */
+function chatUsesProxy(cfg: ChatConfig): boolean {
+	return cfg.useProxy || PROVIDERS[cfg.provider].needsProxy;
+}
+
+/** The chat base URL: the user's override, else the provider's own default. */
+function chatBase(cfg: ChatConfig): string {
+	return withScheme(providerBaseUrl(cfg.provider, cfg.baseUrl)).replace(/\/+$/, "");
+}
+
+/** The URL a chat request actually goes to -- provider path, base URL and proxy
+ * composed. Exported so a test can assert the composition without a request. */
+export function chatEndpoint(settings: Settings): string {
+	const cfg = settings.chat;
+	const path = PROVIDERS[cfg.provider].wire === "anthropic" ? "/v1/messages" : "/chat/completions";
+	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
 async function* sseEvents(res: Response, signal?: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
@@ -128,8 +151,7 @@ function anthropicEffort(model: string): string | undefined {
 
 async function streamAnthropic(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
-	const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
-	const url = endpoint(`${base}/v1/messages`, settings, cfg.useProxy);
+	const url = chatEndpoint(settings);
 	const body: Record<string, unknown> = {
 		model: cfg.model,
 		max_tokens: cfg.maxTokens,
@@ -296,8 +318,7 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 
 async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
-	const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
-	const url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
+	const url = chatEndpoint(settings);
 	const oaMessages = toOpenAIMessages(system, messages, state);
 	const body: Record<string, unknown> = {
 		model: cfg.model,
@@ -321,7 +342,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 	// lenient local servers that don't use it just ignore it.
 	if (!isHostedOpenAI(cfg)) body["cache_prompt"] = true;
 
-	const headers: Record<string, string> = { "content-type": "application/json" };
+	const headers: Record<string, string> = { "content-type": "application/json", ...openaiExtraHeaders(cfg) };
 	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	let res: Response;
 	try {
@@ -411,7 +432,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 // ---- dispatch + helpers -----------------------------------------------------
 
 export function streamChat(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Promise<AssistantTurn> {
-	if (settings.chat.provider === "anthropic") return streamAnthropic(settings, system, state, messages, tools, opts);
+	if (PROVIDERS[settings.chat.provider].wire === "anthropic") return streamAnthropic(settings, system, state, messages, tools, opts);
 	return streamOpenAI(settings, system, state, messages, tools, opts);
 }
 
@@ -427,20 +448,18 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	if (!cfg.model.trim()) return { ok: false, message: "No model set." };
 
 	const prompt = 'Respond with one word: "Hi"';
-	const isAnthropic = cfg.provider === "anthropic";
+	const isAnthropic = PROVIDERS[cfg.provider].wire === "anthropic";
 	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a
 	// likely cause when the request actually fails.
 	const keyNote = cfg.apiKey.trim() ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {
-		const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
-		url = endpoint(`${base}/v1/messages`, settings, cfg.useProxy);
+		url = chatEndpoint(settings);
 		headers = { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
 	} else {
-		const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
-		url = endpoint(`${base}/chat/completions`, settings, cfg.useProxy);
-		headers = { "content-type": "application/json" };
+		url = chatEndpoint(settings);
+		headers = { "content-type": "application/json", ...openaiExtraHeaders(cfg) };
 		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	}
 	const body = JSON.stringify({ model: cfg.model, max_tokens: 64, messages: [{ role: "user", content: prompt }] });
@@ -480,15 +499,14 @@ export async function listModels(settings: Settings): Promise<string[]> {
 	const cfg = settings.chat;
 	let url: string;
 	const headers: Record<string, string> = {};
-	if (cfg.provider === "anthropic") {
-		const base = withScheme(cfg.baseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
-		url = endpoint(`${base}/v1/models?limit=1000`, settings, cfg.useProxy);
+	if (PROVIDERS[cfg.provider].wire === "anthropic") {
+		url = endpoint(`${chatBase(cfg)}/v1/models?limit=1000`, settings, chatUsesProxy(cfg));
 		headers["x-api-key"] = cfg.apiKey;
 		headers["anthropic-version"] = "2023-06-01";
 		headers["anthropic-dangerous-direct-browser-access"] = "true";
 	} else {
-		const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
-		url = endpoint(`${base}/models`, settings, cfg.useProxy);
+		url = endpoint(`${chatBase(cfg)}/models`, settings, chatUsesProxy(cfg));
+		Object.assign(headers, openaiExtraHeaders(cfg));
 		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	}
 
@@ -546,25 +564,38 @@ function corsHint(e: unknown, cfg: ChatConfig): ProviderError {
 	const msg = e instanceof Error ? e.message : String(e);
 	if (e instanceof DOMException && e.name === "AbortError") return new ProviderError("Request cancelled.");
 	const ollama = ollamaCorsHint(cfg);
-	const hint = ollama ?? (cfg.useProxy ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
+	const hint = ollama ?? (chatUsesProxy(cfg) ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
 	return new ProviderError(`Network error: ${msg}`, undefined, hint);
 }
 
-// Detect a local Ollama endpoint by its default port / name (for the CORS hint).
+// Detect a LOCAL Ollama endpoint by its default port / name (for the CORS hint).
+// Ollama Cloud is a hosted service with no OLLAMA_ORIGINS to set, and it rides
+// the proxy instead, so the hint must not fire for it.
 function isOllamaEndpoint(cfg: ChatConfig): boolean {
 	if (cfg.provider !== "openai") return false;
 	const url = (cfg.baseUrl || "").toLowerCase();
 	return /:11434(\b|\/|$)/.test(url) || url.includes("ollama");
 }
 
-// The hosted OpenAI / Azure OpenAI APIs reject unknown body fields with a 400, so
-// caching extensions like `cache_prompt` must not be sent to them. An empty or
-// api.openai.com base URL is hosted; any other (custom) base URL is treated as a
-// self-hosted / OpenAI-compatible server where those fields are appropriate.
+// A hosted API rejects unknown body fields with a 400, so caching extensions
+// like `cache_prompt` must not be sent to one. Only the generic
+// "OpenAI-compatible" provider pointed at a custom base URL is treated as a
+// self-hosted server (llama.cpp, Ollama, LM Studio) where those fields belong;
+// OpenRouter and Ollama Cloud are hosted services and never get them.
 function isHostedOpenAI(cfg: ChatConfig): boolean {
+	if (cfg.provider !== "openai") return true;
 	const url = (cfg.baseUrl || "").trim().toLowerCase();
 	if (!url) return true; // default is api.openai.com
 	return /(^|\/\/|\.)api\.openai\.com(\/|:|$)/.test(url) || url.includes(".openai.azure.com");
+}
+
+// OpenRouter attributes a request to the calling app through these two headers
+// and lists it among that model's apps. Both are on OpenRouter's CORS
+// allow-headers list, so they cost no extra preflight failure.
+function openaiExtraHeaders(cfg: ChatConfig): Record<string, string> {
+	if (cfg.provider !== "openrouter") return {};
+	const referer = typeof location === "undefined" ? "" : location.origin;
+	return { "x-title": "AI Shadertoy", ...(referer ? { "http-referer": referer } : {}) };
 }
 
 // Ollama (and similar local OpenAI-compatible servers) reject browser requests

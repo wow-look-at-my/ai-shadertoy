@@ -314,11 +314,26 @@ pnpm run build        # ts0 build -> dist/index.html
   Fable family — `providers.ts` omits `temperature` for those models
   (`anthropicAcceptsTemperature`).
 - Anthropic browser calls require `anthropic-dangerous-direct-browser-access: true`.
-- **CORS proxy**: `util/misc.ts` `proxied()` encodes the target into a `?url=`
-  query parameter (`https://proxy.pazer.ai/?url=https%3A%2F%2F…`), which is what
-  the default proxy reads. Never a path prefix: the worker answers that with a
-  200 usage page, and `testConnection` reports the 200 as a success while nothing
-  reached the provider. Shape pinned in `test/proxy.test.ts`.
+- **Providers** are a registry, `PROVIDERS` in `state/defaults.ts`: `label`,
+  `wire` (`anthropic` | `openai` — everything but Anthropic speaks Chat
+  Completions), `baseUrl`, `needsProxy`, `needsKey`, `needsKeyForModels`,
+  `models`. Adding one is an entry plus a `ProviderId` member; the dropdown, the
+  base-URL fallback, the key guard and the model combobox all read it. Shipped:
+  anthropic, openai (generic/self-hosted), openrouter, ollama-cloud.
+- **`needsProxy` forces the proxy on regardless of the toggle** (`chatUsesProxy`),
+  because Ollama Cloud answers with no `access-control-allow-origin` and a
+  browser cannot read a direct reply. Settings ticks the visible box and says
+  why, so it is stated rather than hidden. `chatEndpoint(settings)` composes
+  base + path + proxy and is the one place any chat URL is built.
+- **CORS proxy setting is a TEMPLATE** (`util/misc.ts` `proxied()`): `{{.url}}`
+  takes the percent-encoded target, `{{.rawurl}}` the target verbatim, and a
+  token-less value has the target appended (the older prefix form). Encoding
+  matters — an unencoded target carrying `?` or `&` becomes the PROXY's
+  parameters. Getting proxy.pazer.ai's shape wrong is silent: it answers 200 with
+  a usage page that `testConnection` reads as a success. `migrateProxyTemplate`
+  (in `mergeSettings`) rewrites a pre-template saved value into the explicit
+  template that reproduces what it used to do. Pinned in `test/proxy.test.ts`
+  and `test/providers.test.ts`.
 - Extended thinking is **on** for Anthropic, model-gated in `providers.ts`
   (`anthropicThinking`): `{type:"adaptive", display:"summarized"}` for 4.6+ Opus /
   Sonnet 4.6 / Fable / Mythos, a token `budget` for 4.5-era models, and nothing for
