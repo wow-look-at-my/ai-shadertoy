@@ -19,7 +19,7 @@ denied), the successor to pnpm 10's `onlyBuiltDependencies`.
 
 ```sh
 pnpm install
-pnpm run typecheck    # tsc --noEmit (HTML entries are NOT type-checked by ts0, so run this)
+pnpm run typecheck    # tsc --noEmit over src + test
 pnpm run build        # ts0 build -> dist/index.html
 ```
 
@@ -32,10 +32,13 @@ pnpm run build        # ts0 build -> dist/index.html
 
 - `ts0.json` configures the **bundler** (entry, outdir, target, format). ts0 is
   the only thing that reads it.
-- `tsconfig.json` configures the **type-checker**. ts0's HTML-entry build path
-  does NOT run `tsc` (it bundles with esbuild, which strips types without
-  checking), so `pnpm run typecheck` (which CI runs) is our only type safety, and
-  it — plus the editor/IDE — needs `tsconfig.json`. Don't delete it.
+- `tsconfig.json` configures **our own** `tsc --noEmit`, which the editor/IDE and
+  `pnpm run typecheck` use. Its `include` is `["src", "test"]` — leaving `test`
+  out hides real errors in the test files, which is how three of them survived.
+  ts0 does NOT read it: `ts0 build`/`ts0 test` generate their own tsconfig from
+  `ts0.json` and type-check first (and reject explicit `any` on top of `strict`),
+  so CI's type safety comes from ts0 and this file keeps the local check honest
+  with it. Don't delete it.
 - Keep the code `node --experimental-strip-types`-clean (no TS parameter
   properties etc.) so the modules can be exercised by plain Node test scripts.
 
@@ -395,17 +398,23 @@ pnpm run build        # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml`: build (corepack enable, `pnpm install --frozen-lockfile`, `pnpm run typecheck`, `pnpm test`, `pnpm run build`)
-then deploy — publishes the single file as a **public** per-branch buildhost site via GHA
-OIDC (`X-Public-Site: true`) to `sites.pazer.build/ai-shadertoy/branch/<branch>/`.
-Models the buildhost repo's `buildhost-publish-site` action, inlined through
-`wow-look-at-my/actions@typescript#latest`.
+`.github/workflows/ci.yml` is the only workflow, and it holds **four actions and
+no `run:` steps**: `actions/checkout`, `wow-look-at-my/ts0@master` with
+`args: test`, the same action with `args: build`, then
+`buildhost/.github/actions/buildhost-publish-site@master` publishing `dist/` as a
+**public** per-branch site (`public: "true"`) via GHA OIDC.
 
-`.github/workflows/preview.yml`: per-PR previews. On `pull_request`
-(opened/reopened/synchronize) it builds the bundle, uploads it as the `site`
-artifact, and calls the `wow-look-at-my/actions/.github/workflows/buildhost-preview.yml@master`
-reusable workflow with `artifact-name: site` + `public: true`. That deploys to
-`sites.pazer.build/ai-shadertoy/branch/pr-<number>/` and posts a sticky PR
-comment. Push-based per-branch deploys stay in `ci.yml` (CI workflows are
-`on: push:` only); the PR flavour is a separate file because the trigger
-differs. No `closed`-event cleanup — the reusable workflow only deploys.
+There is no node/pnpm setup because none is needed: `ts0.cjs` carries its own
+TypeScript compiler, and this project is browser-target with zero runtime
+dependencies, so it builds and tests from a bare checkout. The trade is that CI
+no longer validates `pnpm-lock.yaml` — `pnpm install --frozen-lockfile` is a
+local-only check now.
+
+`branch: ${{ github.ref_name }}` goes in unmodified. buildhost resolves a
+slash-named branch by longest match against its own site rows (`splitSiteBranch`,
+and `validSiteBranch` permits `/`), so `claude/foo` needs no slug.
+
+The job needs `deployments: write` (publish-site always registers a GitHub
+Deployment, no opt-out) plus `actions: read` + `checks: read` (its embedded
+no-all-builds-job guard scans the run's jobs and check runs), alongside
+`id-token: write` for OIDC.

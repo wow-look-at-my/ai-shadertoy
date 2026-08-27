@@ -335,16 +335,14 @@ No runtime framework — just typed, vanilla DOM helpers, so the bundle stays sm
 
 ## Deploy
 
-`.github/workflows/ci.yml` type-checks, builds, and
-publishes the single file as a **public** per-branch site to
+`.github/workflows/ci.yml` type-checks, tests, builds, and publishes the single
+file as a **public** per-branch site to
 [buildhost](https://github.com/wow-look-at-my/buildhost) using GitHub Actions
 OIDC (no static token). The live URL is
-`https://sites.pazer.build/ai-shadertoy/branch/<branch>/`.
+`https://sites.pazer.build/ai-shadertoy/@<branch>/`.
 
-`.github/workflows/preview.yml` adds per-PR previews: on every pull request it
-builds the bundle and deploys it to a `pr-<number>` site via the
-`wow-look-at-my/actions/.github/workflows/buildhost-preview.yml` reusable
-workflow, then posts a sticky comment with the preview URL
-(`https://sites.pazer.build/ai-shadertoy/branch/pr-<number>/`). Previews are
-served publicly to match the per-branch deploys. Fork PRs are skipped (no OIDC
-token).
+It is four actions and nothing else — `actions/checkout`, `wow-look-at-my/ts0`
+twice (`args: test`, then `args: build`), and buildhost's `publish-site`. No
+node or pnpm setup is needed: `ts0.cjs` bundles its own TypeScript compiler, and
+this project is browser-target with zero runtime dependencies, so it tests and
+builds from a bare checkout.
