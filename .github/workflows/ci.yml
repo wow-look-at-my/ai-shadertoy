@@ -6,10 +6,54 @@ on:
 permissions:
   id-token: write
   contents: read
+  # buildhost-publish-site registers the publish as a GitHub Deployment (no
+  # opt-out, and a failure fails the step), and its embedded no-all-builds-job
+  # guard scans this run's jobs and the head commit's check runs.
+  deployments: write
+  actions: read
+  checks: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.13"
+      - name: Enable pnpm via corepack
+        # Node's bundled corepack has stale signing keys and fails pnpm's
+        # registry signature check ("Cannot find matching keyid"); install the
+        # latest corepack first. See nodejs/corepack#612.
+        run: |
+          npm install --global corepack@latest
+          corepack enable
+      # ts0 is a public git dev dependency; pnpm runs git outside the checked-out
+      # tree to fetch it. Runners have no SSH key, so rewrite ssh -> anonymous
+      # https for the public repo before installing.
+      - name: Use HTTPS for git dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - run: pnpm install --frozen-lockfile
+      - name: Type-check
+        # ts0 bundles an HTML entry with esbuild, which strips types without
+        # checking them, so this is the only step that fails on a type error.
+        run: pnpm run typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Build single-file bundle
+        uses: wow-look-at-my/ts0@master
+        with:
+          args: build
+      # The sites route gives {branch} one path segment, so a '/' in the branch
+      # name (claude/foo) has to be folded to keep it a single segment.
+      - id: slug
+        run: echo "branch=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+      - name: Publish public site to buildhost
+        uses: wow-look-at-my/buildhost/.github/actions/buildhost-publish-site@master
+        with:
+          branch: ${{ steps.slug.outputs.branch }}
+          source_dir: dist
+          public: "true"
 

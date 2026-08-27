@@ -15,8 +15,11 @@ function eq(a: unknown, b: unknown, msg: string): void {
 	if (a !== b) throw new Error(`FAIL: ${msg} (got ${String(a)}, want ${String(b)})`);
 	passed++;
 }
-function close(a: number, b: number, msg: string, tol = 1e-9): void {
-	if (Math.abs(a - b) > tol) throw new Error(`FAIL: ${msg} (got ${a}, want ${b})`);
+// `a` is widened to the tri-state cachePct returns. An undefined has to fail
+// explicitly: Math.abs(undefined - b) is NaN, and NaN > tol is false, so an
+// endpoint that reported no cache count used to slip through as a pass.
+function close(a: number | undefined, b: number, msg: string, tol = 1e-9): void {
+	if (a === undefined || Math.abs(a - b) > tol) throw new Error(`FAIL: ${msg} (got ${String(a)}, want ${b})`);
 	passed++;
 }
 
