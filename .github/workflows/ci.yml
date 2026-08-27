@@ -6,10 +6,29 @@ on:
 permissions:
   id-token: write
   contents: read
+  # buildhost-publish-site registers the publish as a GitHub Deployment (no
+  # opt-out, and a failure fails the step), and its embedded no-all-builds-job
+  # guard scans this run's jobs and the head commit's check runs.
+  deployments: write
+  actions: read
+  checks: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # One step type-checks, tests and builds: the action takes no command
+      # input, so a workflow cannot pick a cheaper subset. ts0.cjs carries its
+      # own TypeScript compiler and this project is browser-target with no
+      # runtime dependencies, so nothing has to install node_modules first.
+      - uses: wow-look-at-my/ts0@master
+      # github.ref_name goes in as-is: buildhost resolves a slash-named branch
+      # (claude/foo) by longest match against its own site rows, so it needs no
+      # slug and the site is addressed by the branch's real name.
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-publish-site@master
+        with:
+          branch: ${{ github.ref_name }}
+          source_dir: dist
+          public: "true"
 

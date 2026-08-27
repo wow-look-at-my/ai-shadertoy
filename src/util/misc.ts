@@ -27,22 +27,29 @@ export function withScheme(url: string): string {
 	return `https://${u}`;
 }
 
-/** Route a request through the CORS proxy. The target rides as a URL-encoded
- * `url` query parameter (`https://proxy.pazer.ai/?url=https%3A%2F%2F...`), which
- * is the shape proxy.pazer.ai and most public CORS proxies read. A proxy URL
- * that carries its own query parameters keeps them. */
-export function proxied(target: string, proxyUrl: string): string {
-	const base = withScheme(proxyUrl);
+/** Route a request through the CORS proxy. The setting is a TEMPLATE naming
+ * where the target goes, so any proxy shape works:
+ *
+ *   {{.url}}     the target, percent-encoded -- what a query parameter needs
+ *                (`https://proxy.pazer.ai/?url={{.url}}`)
+ *   {{.rawurl}}  the target verbatim -- what a path-prefix proxy needs
+ *                (`https://cors.example.com/{{.rawurl}}`)
+ *
+ * A template with neither token is read as the bare prefix form and gets the
+ * target appended, so a proxy URL written before templates existed still works.
+ * An empty setting is not a proxy: the target goes out untouched. */
+export function proxied(target: string, template: string): string {
+	const base = withScheme(template.trim());
 	if (!base) return target;
-	try {
-		const u = new URL(base);
-		u.searchParams.set("url", target);
-		return u.toString();
-	} catch {
-		// An unparseable proxy URL is a broken setting; append the parameter
-		// literally so the failure surfaces at fetch time with the real URL in it.
-		return `${base}${base.includes("?") ? "&" : "?"}url=${encodeURIComponent(target)}`;
-	}
+	const filled = base.replace(/\{\{\s*\.(rawurl|url)\s*\}\}/g, (_m, token: string) => (token === "rawurl" ? target : encodeURIComponent(target)));
+	if (filled !== base) return filled;
+	return `${base.replace(/\/+$/, "")}/${target}`;
+}
+
+/** True when a proxy setting names its substitution point. The Settings field
+ * uses this to show which rule a given value will follow. */
+export function hasProxyToken(template: string): boolean {
+	return /\{\{\s*\.(rawurl|url)\s*\}\}/.test(template);
 }
 
 export function escapeHtml(s: string): string {
