@@ -49,6 +49,8 @@ jobs:
         with:
           name: site
           path: dist
+      # The sites serve route gives {branch} a single path segment, so a '/' in
+      # the branch name (claude/foo) is slugified below to keep it one segment.
       - name: Publish public site to buildhost
         uses: wow-look-at-my/actions@typescript#latest
         with:
@@ -57,8 +59,6 @@ jobs:
             const su = new URL(server);
             const sitesBase = `${su.protocol}//sites.${su.host}`;
             const project = github.repository.split("/").pop()!;
-            // The sites serve route gives {branch} a single path segment, so a
-            // '/' in the branch (claude/foo) must be slugified to keep it one segment.
             const branch = github.ref_name.replace(/\//g, "-");
 
             const idUrl = env.ACTIONS_ID_TOKEN_REQUEST_URL;

@@ -234,8 +234,11 @@ one-word reply and shows it), confirming the key, model, base URL, and (CORS)
 connectivity all work before you start chatting.
 
 If direct browser calls are blocked by CORS, tick **Route chat through CORS
-proxy** (default `https://proxy.pazer.ai/`, prefix-style: the request becomes
-`proxyURL + targetURL`).
+proxy**. The default is `https://proxy.pazer.ai/`, which works as shipped: the
+target rides as a URL-encoded `?url=` query parameter, so a request becomes
+`https://proxy.pazer.ai/?url=https%3A%2F%2Fapi.anthropic.com%2Fv1%2Fmessages`.
+Any proxy that reads the same `?url=` parameter works too; a query string on the
+proxy URL itself is preserved.
 
 Anthropic browser calls send `anthropic-dangerous-direct-browser-access: true`.
 Note that Opus 4.8 / 4.7 reject `temperature`, so it is omitted for those models.

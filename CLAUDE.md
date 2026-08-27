@@ -314,6 +314,11 @@ pnpm run build        # ts0 build -> dist/index.html
   Fable family — `providers.ts` omits `temperature` for those models
   (`anthropicAcceptsTemperature`).
 - Anthropic browser calls require `anthropic-dangerous-direct-browser-access: true`.
+- **CORS proxy**: `util/misc.ts` `proxied()` encodes the target into a `?url=`
+  query parameter (`https://proxy.pazer.ai/?url=https%3A%2F%2F…`), which is what
+  the default proxy reads. Never a path prefix: the worker answers that with a
+  200 usage page, and `testConnection` reports the 200 as a success while nothing
+  reached the provider. Shape pinned in `test/proxy.test.ts`.
 - Extended thinking is **on** for Anthropic, model-gated in `providers.ts`
   (`anthropicThinking`): `{type:"adaptive", display:"summarized"}` for 4.6+ Opus /
   Sonnet 4.6 / Fable / Mythos, a token `budget` for 4.5-era models, and nothing for
