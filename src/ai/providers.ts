@@ -5,7 +5,7 @@
 
 import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
-import { withScheme } from "../util/misc.ts";
+import { proxied, withScheme } from "../util/misc.ts";
 
 export class ProviderError extends Error {
 	readonly status?: number;
@@ -18,11 +18,9 @@ export class ProviderError extends Error {
 	}
 }
 
-/** Wrap a target URL with the CORS proxy when enabled (prefix style). */
+/** Wrap a target URL with the CORS proxy when enabled. */
 function endpoint(url: string, settings: Settings, useProxy: boolean): string {
-	if (!useProxy) return url;
-	const base = withScheme(settings.proxyUrl).replace(/\/+$/, "");
-	return `${base}/${url}`;
+	return useProxy ? proxied(url, settings.proxyUrl) : url;
 }
 
 async function* sseEvents(res: Response, signal?: AbortSignal): AsyncGenerator<{ event: string; data: string }> {

@@ -139,7 +139,7 @@ export function createSettings(store: Store): SettingsModal {
 		el("div", { class: "test-row" }, testBtn, testResult),
 		el("h3", {}, "Networking"),
 		checkField("Route chat through CORS proxy", useProxy, "Use if direct browser calls are blocked by CORS."),
-		field("CORS proxy URL", proxyUrl, "Request becomes proxyURL + targetURL."),
+		field("CORS proxy URL", proxyUrl, "The target rides as a ?url= query parameter."),
 		el("h3", {}, "Vision feedback"),
 		checkField("Attach a render to every shader change", autoScreenshot, "Off by default: the AI pulls a render only when it wants one (screenshot:true or capture_screenshot). Turn this on to attach a render to every shader change."),
 		field("Screenshot max edge (px)", shotDim),

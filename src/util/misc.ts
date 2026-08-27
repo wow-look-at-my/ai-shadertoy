@@ -27,6 +27,24 @@ export function withScheme(url: string): string {
 	return `https://${u}`;
 }
 
+/** Route a request through the CORS proxy. The target rides as a URL-encoded
+ * `url` query parameter (`https://proxy.pazer.ai/?url=https%3A%2F%2F...`), which
+ * is the shape proxy.pazer.ai and most public CORS proxies read. A proxy URL
+ * that carries its own query parameters keeps them. */
+export function proxied(target: string, proxyUrl: string): string {
+	const base = withScheme(proxyUrl);
+	if (!base) return target;
+	try {
+		const u = new URL(base);
+		u.searchParams.set("url", target);
+		return u.toString();
+	} catch {
+		// An unparseable proxy URL is a broken setting; append the parameter
+		// literally so the failure surfaces at fetch time with the real URL in it.
+		return `${base}${base.includes("?") ? "&" : "?"}url=${encodeURIComponent(target)}`;
+	}
+}
+
 export function escapeHtml(s: string): string {
 	return s
 		.replace(/&/g, "&amp;")

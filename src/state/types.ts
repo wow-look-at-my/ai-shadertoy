@@ -217,7 +217,7 @@ export interface ImageGenConfig {
 export interface Settings {
 	chat: ChatConfig;
 	imageGen: ImageGenConfig;
-	proxyUrl: string; // CORS proxy base; requests become `${proxyUrl}${targetUrl}`
+	proxyUrl: string; // CORS proxy base; requests become `${proxyUrl}?url=<encoded target>`
 	renderScale: number; // 0.25 .. 1
 	squarePixels: boolean; // report iResolution as the short side so UVs are isotropic (circles stay round)
 	autoScreenshot: boolean; // attach a render to the model after each shader change
