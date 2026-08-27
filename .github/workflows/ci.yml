@@ -18,19 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # ts0.cjs carries its own TypeScript compiler, and this project is
-      # browser-target with no runtime dependencies, so nothing has to install
-      # node_modules first. `test` type-checks the whole project (sources and
-      # tests) before it runs anything, and `build` type-checks again before it
-      # bundles -- a type error fails here, not silently at runtime.
-      - name: Type-check and test
+      # One step type-checks, tests and builds: the action takes no command
+      # input, so a workflow cannot pick a cheaper subset. ts0.cjs carries its
+      # own TypeScript compiler and this project is browser-target with no
+      # runtime dependencies, so nothing has to install node_modules first.
+      - name: Type-check, test and build
         uses: wow-look-at-my/ts0@master
-        with:
-          args: test
-      - name: Build single-file bundle
-        uses: wow-look-at-my/ts0@master
-        with:
-          args: build
       # github.ref_name goes in as-is: buildhost resolves a slash-named branch
       # (claude/foo) by longest match against its own site rows, so it needs no
       # slug and the site is addressed by the branch's real name.

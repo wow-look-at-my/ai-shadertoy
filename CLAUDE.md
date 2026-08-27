@@ -398,11 +398,14 @@ pnpm run build        # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml` is the only workflow, and it holds **four actions and
-no `run:` steps**: `actions/checkout`, `wow-look-at-my/ts0@master` with
-`args: test`, the same action with `args: build`, then
+`.github/workflows/ci.yml` is the only workflow, and it holds **three actions and
+no `run:` steps**: `actions/checkout`, `wow-look-at-my/ts0@master`, then
 `buildhost/.github/actions/buildhost-publish-site@master` publishing `dist/` as a
 **public** per-branch site (`public: "true"`) via GHA OIDC.
+
+The ts0 action takes **no command input**: one step always type-checks, tests and
+builds, in that order. A caller cannot pick a cheaper subset, so a green check
+means the whole thing ran. Passing `args:` fails the step.
 
 There is no node/pnpm setup because none is needed: `ts0.cjs` carries its own
 TypeScript compiler, and this project is browser-target with zero runtime

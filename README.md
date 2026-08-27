@@ -341,8 +341,9 @@ file as a **public** per-branch site to
 OIDC (no static token). The live URL is
 `https://sites.pazer.build/ai-shadertoy/@<branch>/`.
 
-It is four actions and nothing else — `actions/checkout`, `wow-look-at-my/ts0`
-twice (`args: test`, then `args: build`), and buildhost's `publish-site`. No
+It is three actions and nothing else — `actions/checkout`, `wow-look-at-my/ts0`
+(one step that always type-checks, tests and builds — it takes no command input,
+so a workflow cannot pick a cheaper subset), and buildhost's `publish-site`. No
 node or pnpm setup is needed: `ts0.cjs` bundles its own TypeScript compiler, and
 this project is browser-target with zero runtime dependencies, so it tests and
 builds from a bare checkout.
