@@ -256,6 +256,11 @@ textarea:focus {
 	align-self: flex-start;
 	border-bottom-left-radius: 3px;
 }
+.msg-note {
+	margin-top: 6px;
+	font-size: 12px;
+	color: var(--warn);
+}
 .msg.error {
 	background: #2a1418;
 	border: 1px solid var(--danger);

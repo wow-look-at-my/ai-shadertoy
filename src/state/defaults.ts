@@ -28,16 +28,16 @@ export interface ProviderInfo {
 	needsKey: boolean;
 }
 
-// Anthropic defaults to Opus 4.8 (the most capable current model). Fable 5 is
-// intentionally omitted: it forces always-on thinking, whose replay rules the
-// simple browser tool-loop here does not implement.
+// Anthropic defaults to Opus 5 (the most capable Opus-tier model, at Opus 4.8's
+// price). The Fable tier is left out of the presets for its cost; any id still
+// works when typed, and providers.ts gates the request shape per model.
 export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 	anthropic: {
 		label: "Anthropic (Claude)",
 		wire: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		needsProxy: false,
-		models: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-7"],
+		models: ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
 		needsKeyForModels: true,
 		needsKey: true,
 	},
@@ -88,7 +88,7 @@ export const DEFAULT_SETTINGS: Settings = {
 		provider: "anthropic",
 		baseUrl: "",
 		apiKey: "",
-		model: "claude-opus-4-8",
+		model: "claude-opus-5",
 		maxTokens: 16384,
 		temperature: 0.7,
 		useProxy: false,
@@ -99,7 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
 		baseUrl: "https://api.openai.com/v1",
 		apiKey: "",
 		model: "gpt-image-1",
-		size: "512x512",
+		size: "1024x1024",
 		useProxy: false,
 	},
 	proxyUrl: "https://proxy.pazer.ai/?url={{.url}}",

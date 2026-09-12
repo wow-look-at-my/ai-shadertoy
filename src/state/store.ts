@@ -7,7 +7,7 @@ import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, S
 import { channelsForSource, ensureMaskCompositePass, LAYER_COMPOSITE_SOURCE, makeCompositeLayer, makeMaskLayer, makePass, makeShape, MASK_SOURCE, removeMaskCompositePass } from "./types.ts";
 import { shapeDef } from "../gl/shapes.ts";
 import { extractUniformDeclarations, reconcileUniforms } from "../gl/wrapper.ts";
-import { getTool, text } from "../ai/tools/index.ts";
+import { getTool, text, toolDefs } from "../ai/tools/index.ts";
 import { buildCompactedMessages, shouldCompact, summarizeConversation } from "../ai/compact.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
@@ -425,9 +425,8 @@ export class Store {
 	async compactConversation(signal?: AbortSignal): Promise<{ ok: boolean; error?: string; before: number; after: number }> {
 		const before = this.project.messages.length;
 		if (!shouldCompact(this.project.messages)) return { ok: false, error: "Not enough conversation to compact yet.", before, after: before };
-		const { summary } = await summarizeConversation(this.settings, this.project.messages, { signal });
-		// A mid-stream Stop can return partial text instead of throwing -- don't
-		// replace the conversation if the user cancelled.
+		// Same tool set as the agent turns, so a history carrying tool blocks stays valid.
+		const { summary } = await summarizeConversation(this.settings, this.project.messages, toolDefs({ imageGen: this.settings.imageGen.enabled }), { signal });
 		if (signal?.aborted) return { ok: false, error: "Compaction cancelled.", before, after: before };
 		this.project.messages = buildCompactedMessages(summary);
 		this.commitMessages();
@@ -959,8 +958,18 @@ export class Store {
 			const byIndex = this.project.layers[Number(s.trim())];
 			if (byIndex) return byIndex;
 		}
+		const byId = this.layerById(s);
+		if (byId) return byId;
+		// Stack layers win a name match; a mask (the prompts tell the model to
+		// address it by name) is found only when no stack layer carries the name.
 		const n = s.toLowerCase();
-		return this.layerById(s) ?? this.project.layers.find((l) => l.name.toLowerCase() === n) ?? null;
+		const named = this.project.layers.find((l) => l.name.toLowerCase() === n);
+		if (named) return named;
+		let mask: Layer | null = null;
+		this.eachLayer((l) => {
+			if (!mask && l.name.toLowerCase() === n) mask = l;
+		});
+		return mask;
 	}
 
 	/** Resolve a pass for a TOOL by name or id WITHIN `layer`; no ref = its output

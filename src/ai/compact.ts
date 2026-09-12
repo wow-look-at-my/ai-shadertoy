@@ -14,7 +14,7 @@
 // intent, decisions, what was tried, and what's left -- not the shader code.
 
 import type { Message, Settings } from "../state/types.ts";
-import type { Usage } from "./types.ts";
+import type { ToolDef, Usage } from "./types.ts";
 import { streamChat } from "./providers.ts";
 import { uid } from "../util/misc.ts";
 
@@ -67,11 +67,14 @@ export function buildCompactedMessages(summary: string): Message[] {
 }
 
 /** Ask the model to summarize the conversation for a self-handoff. Sends the
- * current history with NO tools and the summarize instruction as the trailing
- * message; returns the recap text (+ token usage). Throws ProviderError on a
- * network/API failure or an empty summary. */
-export async function summarizeConversation(settings: Settings, messages: Message[], opts: CompactOptions = {}): Promise<{ summary: string; usage: Usage }> {
-	const turn = await streamChat(settings, COMPACT_SYSTEM, COMPACT_REQUEST_TEXT, messages, [], { signal: opts.signal });
+ * current history with the summarize instruction as the trailing message and
+ * returns the recap text (+ token usage). `tools` must be the set the
+ * conversation used: a history holding tool_use/tool_result blocks is rejected
+ * without a matching `tools` field, so they stay defined with tool_choice
+ * "none" and the model can only write. Throws ProviderError on a network/API
+ * failure or an empty summary. */
+export async function summarizeConversation(settings: Settings, messages: Message[], tools: ToolDef[], opts: CompactOptions = {}): Promise<{ summary: string; usage: Usage }> {
+	const turn = await streamChat(settings, COMPACT_SYSTEM, COMPACT_REQUEST_TEXT, messages, tools, { signal: opts.signal, toolChoice: "none" });
 	const summary = turn.text.trim();
 	if (!summary) throw new Error("The model returned an empty summary; nothing was compacted.");
 	return { summary, usage: turn.usage };

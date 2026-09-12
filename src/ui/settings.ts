@@ -4,7 +4,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
-import { MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
+import { DEFAULT_SETTINGS, MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
 import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -51,7 +51,7 @@ export function createSettings(store: Store): SettingsModal {
 	const currentProbe = (): Settings => ({
 		...store.settings,
 		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked, toolMode: toolMode.value as ToolMode },
-		proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
+		proxyUrl: proxyUrl.value.trim() || DEFAULT_SETTINGS.proxyUrl,
 	});
 
 	// Model combobox. The <datalist> is the native combobox: it suggests
@@ -112,7 +112,7 @@ export function createSettings(store: Store): SettingsModal {
 		const current = model.value.trim();
 		const isSomePreset = Object.values(MODEL_PRESETS).some((list) => list.includes(current));
 		if (isSomePreset && !PROVIDERS[p].models.includes(current)) model.value = PROVIDERS[p].models[0];
-		tempHint.textContent = p === "anthropic" ? "Ignored for Opus 4.8/4.7 (those reject temperature)." : "";
+		tempHint.textContent = p === "anthropic" ? "Ignored on Claude 4.6 and newer (thinking replaces it; 4.7+ reject it)." : "";
 		baseUrl.placeholder = `(optional) ${PROVIDERS[p].baseUrl}`;
 		modelStatus.textContent = "";
 	};
@@ -236,7 +236,7 @@ export function createSettings(store: Store): SettingsModal {
 				useProxy: useProxy.checked,
 				toolMode: toolMode.value as ToolMode,
 			},
-			proxyUrl: proxyUrl.value.trim() || "https://proxy.pazer.ai/",
+			proxyUrl: proxyUrl.value.trim() || DEFAULT_SETTINGS.proxyUrl,
 			autoScreenshot: autoScreenshot.checked,
 			screenshotMaxDim: clampNum(shotDim.value, 128, 1024, 512),
 			imageGen: {

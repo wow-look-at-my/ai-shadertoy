@@ -109,7 +109,7 @@ function niceStep(range: number): number {
 /** Pick a slider range that contains every component value. Values already inside
  * 0..1 keep the canonical 0..1 / 0.01 range (unchanged from before); a baked
  * default outside it widens the range (symmetric when any component is negative). */
-function rangeForValues(values: number[]): { min: number; max: number; step: number } {
+export function rangeForValues(values: number[]): { min: number; max: number; step: number } {
 	let lo = 0;
 	let hi = 1;
 	for (const v of values) {

@@ -23,8 +23,11 @@ function cleanProjectName(input: Record<string, unknown>): string {
 }
 
 function editLayer(ctx: ToolContext, input: Record<string, unknown>) {
-	const layer = ctx.resolveLayer(input["ref"] !== undefined ? String(input["ref"]) : undefined);
-	if (!layer) return { content: [text(`No layer "${String(input["ref"])}". read what:layers to list them.`)], isError: true };
+	// `ref` is the documented field; `layer` is what every other tool calls it,
+	// so accept both rather than silently editing the top layer.
+	const ref = input["ref"] ?? input["layer"];
+	const layer = ctx.resolveLayer(ref !== undefined ? String(ref) : undefined);
+	if (!layer) return { content: [text(`No layer "${String(ref)}". read what:layers to list them.`)], isError: true };
 	const did: string[] = [];
 
 	if (typeof input["name"] === "string" && input["name"].trim()) {
@@ -35,9 +38,11 @@ function editLayer(ctx: ToolContext, input: Record<string, unknown>) {
 		ctx.setLayerVisible(layer.id, input["visible"]);
 		did.push(input["visible"] ? "shown" : "hidden");
 	}
-	if (input["opacity"] !== undefined && Number.isFinite(Number(input["opacity"]))) {
-		ctx.setLayerOpacity(layer.id, Number(input["opacity"]));
-		did.push(`opacity ${Math.max(0, Math.min(1, Number(input["opacity"]))).toFixed(2)}`);
+	if (input["opacity"] !== undefined) {
+		const opacity = Number(input["opacity"]);
+		if (typeof input["opacity"] !== "number" || !Number.isFinite(opacity)) return { content: [text("opacity must be a number 0..1.")], isError: true };
+		ctx.setLayerOpacity(layer.id, opacity);
+		did.push(`opacity ${Math.max(0, Math.min(1, opacity)).toFixed(2)}`);
 	}
 	if (typeof input["output_pass"] === "string" && input["output_pass"].trim()) {
 		const pass = ctx.resolvePass(layer, String(input["output_pass"]));
@@ -54,7 +59,11 @@ function editLayer(ctx: ToolContext, input: Record<string, unknown>) {
 	else if (move === "down") to = from - 1;
 	else if (move === "top") to = layers.length - 1;
 	else if (move === "bottom") to = 0;
-	else if (input["order"] !== undefined) to = Number(input["order"]);
+	else if (move) return { content: [text("move must be one of up, down, top, bottom.")], isError: true };
+	else if (input["order"] !== undefined) {
+		if (typeof input["order"] !== "number" || !Number.isInteger(input["order"])) return { content: [text("order must be an integer stack index (0 = bottom/back).")], isError: true };
+		to = input["order"];
+	}
 	if (to !== from) {
 		ctx.reorderLayer(layer.id, to);
 		const newIdx = ctx.layers().findIndex((l) => l.id === layer.id);

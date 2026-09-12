@@ -169,7 +169,7 @@ Layer stack (${p.layers.length} layer${p.layers.length === 1 ? "" : "s"}, ${tota
 ${documentSummary(p)}
 Custom uniforms (shared by all passes in all layers):
 ${uniforms}
-Available image assets: ${ctx.assetNames.length ? ctx.assetNames.join(", ") : "(none)"}${ctx.imageGen ? "\nImage generation is enabled (generate_texture available)." : ""}${ctx.lastError ? `\nMost recent compile error:\n${ctx.lastError}` : ""}
+Available media assets (images and videos; read what:assets for kinds): ${ctx.assetNames.length ? ctx.assetNames.join(", ") : "(none)"}${ctx.imageGen ? "\nImage generation is enabled (generate_texture available)." : ""}${ctx.lastError ? `\nMost recent compile error:\n${ctx.lastError}` : ""}
 ${layerOutputSources(p)}`;
 }
 

@@ -48,8 +48,12 @@ registerTool({
 		if (!target) return { content: [text(`No target pass named "${String(input["to"])}" in layer "${layer.name}". read what:passes to list them.`)], isError: true };
 		if (index >= target.channels.length) return { content: [text(`${target.name} has no iChannel${index} input. Reference iChannel${index} in its shader first, then connect_pins can wire it.`)], isError: true };
 
-		const filter = (input["filter"] as TexFilter) ?? "linear";
-		const wrap = (input["wrap"] as TexWrap) ?? "repeat";
+		const filterIn = input["filter"] ?? "linear";
+		if (filterIn !== "linear" && filterIn !== "nearest") return { content: [text("filter must be linear or nearest.")], isError: true };
+		const filter: TexFilter = filterIn;
+		const wrapIn = input["wrap"] ?? "repeat";
+		if (wrapIn !== "repeat" && wrapIn !== "clamp" && wrapIn !== "mirror") return { content: [text("wrap must be repeat, clamp, or mirror.")], isError: true };
+		const wrap: TexWrap = wrapIn;
 		const from = String(input["from"] ?? "").trim();
 
 		if (from === "none") {

@@ -312,10 +312,17 @@ pnpm run build        # ts0 build -> dist/index.html
 
 ## Provider gotchas (verified against the claude-api skill)
 
-- Default chat model is `claude-opus-4-8`.
-- `temperature`/`top_p`/`top_k` are **rejected (400)** by Opus 4.8/4.7 and the
-  Fable family — `providers.ts` omits `temperature` for those models
-  (`anthropicAcceptsTemperature`).
+- Default chat model is `claude-opus-5`.
+- `temperature`/`top_p`/`top_k` are **rejected (400)** by Claude 4.7 and newer
+  (Opus 5, Sonnet 5, the Fable family). `providers.ts` gates by an ALLOWLIST of
+  the old budget-thinking models (`ANTHROPIC_BUDGET_MODELS`) plus 4.6. An
+  unrecognised id is treated as new: adaptive thinking, no temperature.
+  `anthropicBody`/`openaiBody` are exported and pinned in `test/providers.test.ts`.
+- Hosted OpenAI reasoning models (`o*`, `gpt-5*`) take `max_completion_tokens`
+  and no `temperature` (`isOpenAIReasoningModel`). Compatible servers keep the
+  classic fields whatever the model id.
+- Compaction sends the same `tools` as the agent turns with `tool_choice: none`
+  (`StreamOptions.toolChoice`). A history holding tool blocks 400s without them.
 - Anthropic browser calls require `anthropic-dangerous-direct-browser-access: true`.
 - **Providers** are a registry, `PROVIDERS` in `state/defaults.ts`: `label`,
   `wire` (`anthropic` | `openai` — everything but Anthropic speaks Chat
@@ -338,17 +345,17 @@ pnpm run build        # ts0 build -> dist/index.html
   template that reproduces what it used to do. Pinned in `test/proxy.test.ts`
   and `test/providers.test.ts`.
 - Extended thinking is **on** for Anthropic, model-gated in `providers.ts`
-  (`anthropicThinking`): `{type:"adaptive", display:"summarized"}` for 4.6+ Opus /
-  Sonnet 4.6 / Fable / Mythos, a token `budget` for 4.5-era models, and nothing for
-  unrecognised models (so we never send a config that 400s). Thinking and
+  (`anthropicThinking`): a token `budget` for the 4.5-era allowlist, and
+  `{type:"adaptive", display:"summarized"}` for everything else, unrecognised
+  ids included (every model since 4.6 takes adaptive). Thinking and
   `temperature` are mutually exclusive in the request. Thinking blocks are captured
   off the stream (`thinking_delta` + `signature_delta`), stored on the assistant
   `Message` as `ThinkingBlock`s, and replayed **first** in `anthropicContent` —
   required, or tool-use continuations 400. The chat UI streams the summary into a
   collapsible `.thinking` block.
-- `output_config.effort` is set to `medium` (`anthropicEffort`, same model gate as
-  thinking — it 400s on Sonnet 4.5 / Haiku 4.5 and older; the server default is
-  `high`).
+- `output_config.effort` is set to `medium` (`anthropicEffort`). It 400s on
+  Sonnet 4.5 / Haiku 4.5 / Opus 4.1 and older. Those are denylisted and every
+  other id gets it (the server default is `high`).
 - Anthropic SSE events handled: `message_start` (usage), `content_block_start/delta/stop`
   (text, thinking, signature, tool input deltas), `message_delta` (stop_reason +
   output tokens), `error`. OpenAI: `choices[].delta.content` / `.tool_calls[]`,

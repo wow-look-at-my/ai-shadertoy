@@ -37,9 +37,8 @@ export interface Message {
 	role: Role;
 	blocks: Block[];
 	ts: number;
-	/** transient UI hints, not sent to the model */
-	pending?: boolean;
-	error?: string;
+	/** A UI-only remark under the message (a truncated or refused turn); never sent to the model. */
+	note?: string;
 	/** text-tools mode: names of tools this assistant turn invoked via XML tags */
 	textTools?: string[];
 	/** text-tools mode: this user message carries tool results (render as a results row) */
