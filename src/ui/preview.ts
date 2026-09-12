@@ -11,10 +11,8 @@ import type { RenderStats } from "../gl/renderer.ts";
 export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElement {
 	const playBtn = el("button", { class: "btn icon", title: "Play / Pause (space)" });
 	const updatePlay = () => render(playBtn, icon(store.renderer.isPaused() ? "play" : "pause"));
-	playBtn.addEventListener("click", () => {
-		store.renderer.togglePlay();
-		updatePlay();
-	});
+	playBtn.addEventListener("click", () => store.togglePlay());
+	store.on("playback", updatePlay);
 
 	const stats = el("span", { class: "stats" }, "—");
 	store.on("stats", (s) => {
@@ -88,10 +86,13 @@ function createDownloadMenu(store: Store): HTMLElement {
 
 	const baseName = () => store.project.name.replace(/\s+/g, "_") || "shader";
 
-	const saveRaster = (mime: string, ext: string) => {
+	const saveRaster = (mime: string) => {
 		// quality 1 -> lossless for both PNG (ignored) and WebP (true VP8L lossless).
+		// The extension follows the bytes actually produced: a browser that cannot
+		// encode WebP hands back PNG.
 		const shot = store.renderer.screenshot(1920, mime, 1);
-		downloadFile(`${baseName()}.${ext}`, dataUrlToBlob(shot.dataUrl));
+		const blob = dataUrlToBlob(shot.dataUrl);
+		downloadFile(`${baseName()}.${blob.type === "image/webp" ? "webp" : "png"}`, blob);
 	};
 	const saveExr = () => {
 		const cap = store.renderer.captureFloat();
@@ -113,8 +114,8 @@ function createDownloadMenu(store: Store): HTMLElement {
 
 	const open = () => {
 		const items = [
-			item("PNG", "Lossless", () => saveRaster("image/png", "png")),
-			item("WebP", "Lossless", () => saveRaster("image/webp", "webp")),
+			item("PNG", "Lossless", () => saveRaster("image/png")),
+			item("WebP", "Lossless", () => saveRaster("image/webp")),
 		];
 		if (store.renderer.hasFloatOutput()) items.push(item("EXR", "HDR · 16-bit float", saveExr));
 		render(menu, ...items);

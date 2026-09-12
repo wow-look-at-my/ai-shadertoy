@@ -168,8 +168,18 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		scroll();
 	}
 
-	function scroll(): void {
-		requestAnimationFrame(() => (list.scrollTop = list.scrollHeight));
+	// Auto-scroll follows new content only while the view is already at the
+	// bottom; a reader who scrolled up to an earlier reply is left there.
+	let stickToBottom = true;
+	list.addEventListener("scroll", () => {
+		stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+	});
+	function scroll(force = false): void {
+		if (force) stickToBottom = true;
+		if (!stickToBottom) return;
+		requestAnimationFrame(() => {
+			if (stickToBottom) list.scrollTop = list.scrollHeight;
+		});
 	}
 
 	// Anthropic streams text in coarse chunks (~2-5 deltas/sec for Opus), so
@@ -184,7 +194,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const step = Math.max(2, Math.ceil(pending.length / 12));
 		streamingText.appendChild(document.createTextNode(pending.slice(0, step)));
 		pending = pending.slice(step);
-		list.scrollTop = list.scrollHeight;
+		if (stickToBottom) list.scrollTop = list.scrollHeight;
 		if (pending) pumpId = requestAnimationFrame(pumpStream);
 	}
 	function feedStream(t: string): void {
@@ -356,7 +366,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			steerQueue.push({ msg: userMsg, node });
 			list.appendChild(node);
 			input.value = "";
-			scroll();
+			scroll(true);
 			return;
 		}
 
@@ -364,7 +374,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		if (store.project.messages.length === 1) clear(list);
 		list.appendChild(renderMessage(userMsg));
 		input.value = "";
-		scroll();
+		scroll(true);
 		await runTurn();
 	}
 
@@ -527,6 +537,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	}
 
 	input.addEventListener("keydown", (e) => {
+		if (e.isComposing) return; // Enter commits an IME candidate, not the message
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			void send();

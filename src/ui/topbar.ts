@@ -35,12 +35,17 @@ export function createTopbar(deps: TopbarDeps): HTMLElement {
 		on: { change: () => void store.switchProject(switcher.value) },
 	});
 
+	// "project" fires on every edit and tool call, so a name being typed must not
+	// be overwritten mid-keystroke, and the switcher is rebuilt only when its
+	// option set actually changed.
+	let switcherKey = "";
 	const refresh = () => {
-		nameInput.value = store.project.name;
-		render(
-			switcher,
-			...store.projects.map((p) => el("option", { value: p.id, attrs: { selected: p.id === store.project.id ? "selected" : undefined } }, p.name || "Untitled")),
-		);
+		if (document.activeElement !== nameInput) nameInput.value = store.project.name;
+		const key = store.projects.map((p) => `${p.id}\0${p.name}`).join("\n");
+		if (key !== switcherKey) {
+			switcherKey = key;
+			render(switcher, ...store.projects.map((p) => el("option", { value: p.id }, p.name || "Untitled")));
+		}
 		switcher.value = store.project.id;
 	};
 	store.on("project", refresh);

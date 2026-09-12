@@ -61,11 +61,14 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 
 	const ids = new Set(nodes.map((n) => n.id));
 	const order = new Map(nodes.map((n, i) => [n.id, i] as const)); // stable original index
-	// Keep only real, existing, non-self dependencies.
+	// Keep only real, existing, non-self dependencies, then drop the back-edges
+	// of any cycle (mutual feedback) so the graph is a DAG: a cycle would
+	// otherwise ratchet its members' columns up on every relaxation round and
+	// leave empty columns on the left.
 	const deps = new Map(nodes.map((n) => [n.id, n.deps.filter((d) => d !== n.id && ids.has(d))] as const));
+	dropBackEdges(nodes, deps);
 
-	// --- columns: longest path from a root, via relaxation (cycle-safe: a
-	// back-edge can never extend the path past `nodes.length` rounds). ---
+	// --- columns: longest path from a root, via relaxation. ---
 	const col = new Map<string, number>(nodes.map((n) => [n.id, 0] as [string, number]));
 	for (let round = 0; round < nodes.length; round++) {
 		let changed = false;
@@ -100,7 +103,7 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 		const cv = col.get(n.id)!;
 		for (const d of deps.get(n.id)!) {
 			const cu = col.get(d)!;
-			if (cu >= cv) continue; // back-edge / same column (cycle): drawn straight, not routed
+			if (cu >= cv) continue; // cannot happen once back-edges are dropped; a guard against a drawn-straight edge
 			if (cv - cu === 1) {
 				push(next, d, n.id);
 				push(prev, n.id, d);
@@ -174,4 +177,25 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 	});
 	for (const [key, chain] of routeChains) routes.set(key, chain.flatMap((id) => laneAt.get(id)!));
 	return { pos, routes };
+}
+
+/** Remove the back-edges of every cycle in `deps` (in place). A depth-first walk
+ * in stable node order marks an edge as "back" when it points at a node still on
+ * the current path; those edges read the previous frame at draw time, so the
+ * layout treats them as non-edges. */
+function dropBackEdges(nodes: GraphNode[], deps: Map<string, readonly string[]>): void {
+	const state = new Map<string, 1 | 2>(); // 1 = on the path, 2 = finished
+	const visit = (id: string): void => {
+		state.set(id, 1);
+		const kept: string[] = [];
+		for (const d of deps.get(id) ?? []) {
+			const s = state.get(d);
+			if (s === 1) continue; // back-edge: d is an ancestor on the current path
+			if (s === undefined) visit(d);
+			kept.push(d);
+		}
+		deps.set(id, kept);
+		state.set(id, 2);
+	};
+	for (const n of nodes) if (!state.has(n.id)) visit(n.id);
 }

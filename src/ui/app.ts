@@ -29,13 +29,14 @@ export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader
 	const workspace = el("div", { class: "workspace" }, chat, main);
 	const root = el("div", { class: "app" }, topbar, workspace, settings.root);
 
-	// Space toggles playback unless the user is typing in a control.
+	// Space toggles playback unless the user is typing in a control or has a
+	// button focused (Space activates the button there).
 	window.addEventListener("keydown", (e) => {
 		if (e.key !== " ") return;
 		const t = e.target as HTMLElement | null;
-		if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+		if (t && (/^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(t.tagName) || t.isContentEditable)) return;
 		e.preventDefault();
-		store.renderer.togglePlay();
+		store.togglePlay();
 	});
 
 	// Global undo/redo. Inside a text field (code editor, chat box, name inputs)

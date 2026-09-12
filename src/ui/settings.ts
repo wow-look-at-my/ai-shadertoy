@@ -89,8 +89,10 @@ export function createSettings(store: Store): SettingsModal {
 	};
 	const refreshModelsDebounced = debounce(() => void refreshModels(), 700);
 	modelRefreshBtn.addEventListener("click", () => void refreshModels());
-	apiKey.addEventListener("input", refreshModelsDebounced);
-	baseUrl.addEventListener("input", refreshModelsDebounced);
+	// `change`, not `input`: a fetch per keystroke would send every prefix of the
+	// key to the provider (401 noise, partial secret on the wire).
+	apiKey.addEventListener("change", refreshModelsDebounced);
+	baseUrl.addEventListener("change", refreshModelsDebounced);
 
 	// A provider whose endpoint sends no CORS headers cannot be called directly
 	// from a page, so picking it ticks the proxy on rather than leaving the user
@@ -141,6 +143,18 @@ export function createSettings(store: Store): SettingsModal {
 	});
 
 	const field = (label: string, control: HTMLElement, hint?: string) => el("label", { class: "field" }, el("span", { class: "field-label" }, label), control, hint ? el("span", { class: "hint" }, hint) : "");
+	// A key is masked on screen (CSS, not type=password -- see apiKey above) with
+	// a Show/Hide toggle beside it.
+	const secretField = (label: string, input: HTMLInputElement, hint?: string) => {
+		input.classList.add("secret");
+		const toggle = el("button", { class: "btn tiny", type: "button", title: "Show or hide the key" }, "Show");
+		toggle.addEventListener("click", (e) => {
+			e.preventDefault();
+			const shown = input.classList.toggle("revealed");
+			toggle.textContent = shown ? "Hide" : "Show";
+		});
+		return field(label, el("div", { class: "secret-row" }, input, toggle), hint);
+	};
 	// Checkbox + label on one line, hint underneath.
 	const checkField = (label: string, control: HTMLElement, hint?: string | HTMLElement) =>
 		el("div", { class: "field check-field" }, el("label", { class: "check-row" }, control, el("span", { class: "field-label" }, label)), hint ? (typeof hint === "string" ? el("span", { class: "hint" }, hint) : hint) : "");
@@ -152,7 +166,7 @@ export function createSettings(store: Store): SettingsModal {
 		el("h3", {}, "Chat model"),
 		field("Provider", provider),
 		modelField,
-		field("API key", apiKey, "Stored only in your browser (localStorage)."),
+		secretField("API key", apiKey, "Stored only in your browser (localStorage)."),
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		field("Tool calling", toolMode, "Text tags = forgiving XML in the reply, for models/endpoints without function calling."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),
@@ -167,7 +181,7 @@ export function createSettings(store: Store): SettingsModal {
 		el("h3", {}, "Image generation (optional)"),
 		checkField("Enable generate_texture tool", igEnabled),
 		field("Images base URL", igBaseUrl),
-		field("Images API key", igKey),
+		secretField("Images API key", igKey),
 		el("div", { class: "row2" }, field("Image model", igModel), field("Image size", igSize)),
 		checkField("Route image gen through proxy", igProxy),
 	);
@@ -178,7 +192,7 @@ export function createSettings(store: Store): SettingsModal {
 		el(
 			"div",
 			{ class: "modal" },
-			el("div", { class: "modal-head" }, el("h2", {}, "Settings"), el("button", { class: "btn icon", on: { click: close } }, icon("close"))),
+			el("div", { class: "modal-head" }, el("h2", {}, "Settings"), el("button", { class: "btn icon", title: "Close", on: { click: close } }, icon("close"))),
 			body,
 			el(
 				"div",
@@ -191,6 +205,12 @@ export function createSettings(store: Store): SettingsModal {
 	overlay.hidden = true;
 	overlay.addEventListener("click", (e) => {
 		if (e.target === overlay) close();
+	});
+	overlay.addEventListener("keydown", (e) => {
+		if (e.key === "Escape") {
+			e.preventDefault();
+			close();
+		}
 	});
 
 	function open(): void {
@@ -219,6 +239,7 @@ export function createSettings(store: Store): SettingsModal {
 		testBtn.disabled = false;
 		modelStatus.textContent = "";
 		overlay.hidden = false;
+		provider.focus(); // keyboard users land in the dialog (and Escape closes it)
 		void refreshModels(); // auto-populate the combobox when there's enough config
 	}
 	function close(): void {

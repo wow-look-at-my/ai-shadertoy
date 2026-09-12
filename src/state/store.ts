@@ -18,7 +18,7 @@ import { History } from "./history.ts";
 import { debounce, uid } from "../util/misc.ts";
 import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "toolActivity" | "selectedPass" | "selectedLayer" | "selectedShape" | "history" | "restore";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "playback" | "toolActivity" | "selectedPass" | "selectedLayer" | "selectedShape" | "history" | "restore";
 
 /** The slice of a Project that undo/redo restores: the visible/editable state
  * (name, layer stack, uniforms). The conversation log and identity/timestamps
@@ -72,6 +72,13 @@ export class Store {
 		set.add(cb);
 		return () => set!.delete(cb);
 	}
+	/** Play/pause the renderer and tell the UI, so every control that shows the
+	 * playback state (the toolbar button, the Space shortcut) stays in step. */
+	togglePlay(): void {
+		this.renderer.togglePlay();
+		this.emit("playback", this.renderer.isPaused());
+	}
+
 	private emit(event: EventName, payload?: unknown): void {
 		this.listeners.get(event)?.forEach((cb) => cb(payload));
 	}
@@ -82,6 +89,8 @@ export class Store {
 		this.renderer = renderer;
 		this.defaultShaderSource = defaultShaderSource;
 		renderer.onStats = (s) => this.emit("stats", s);
+		// A debounced save still pending when the tab closes would be lost.
+		window.addEventListener("pagehide", () => this.saveDebounced.flush());
 
 		this.settings = mergeSettings(loadSettingsRaw());
 		this.renderer.setRenderScale(this.settings.renderScale);
