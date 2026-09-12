@@ -6,10 +6,12 @@ on:
 permissions:
   id-token: write
   contents: read
-  # buildhost-publish-site registers the publish as a GitHub Deployment (no
+  # buildhost-publish-site registers the publish as a GitHub Deployment and
+  # records the upload on the org's linked-artifacts page (neither has an
   # opt-out, and a failure fails the step), and its embedded no-all-builds-job
   # guard scans this run's jobs and the head commit's check runs.
   deployments: write
+  artifact-metadata: write
   actions: read
   checks: read
 
