@@ -427,8 +427,10 @@ slash-named branch by longest match against its own site rows (`splitSiteBranch`
 and `validSiteBranch` permits `/`), so `claude/foo` needs no slug.
 
 The job needs `deployments: write` (publish-site always registers a GitHub
-Deployment, no opt-out) and `artifact-metadata: write` (it also records the
+Deployment, no opt-out), `artifact-metadata: write` (it also records the
 upload on the org's linked-artifacts page. A refused record fails the publish
-with HTTP 404), plus `actions: read` + `checks: read` (its embedded
+with HTTP 404) and `pull-requests: write` (it comments the preview URL on the
+branch's pull request. A refused lookup fails the publish with HTTP 403; the
+only opt-out is `comment: "false"`), plus `actions: read` + `checks: read` (its embedded
 no-all-builds-job guard scans the run's jobs and check runs), alongside
 `id-token: write` for OIDC.
