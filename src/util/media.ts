@@ -35,6 +35,18 @@ export function sanitizeAssetName(name: string): string {
 	return out.replace(/\s+/g, " ").trim();
 }
 
+/** A name no asset in `assets` already carries (case-insensitive): `base`, else
+ * `base 2`, `base 3`, ... The AI addresses assets by name, so two assets must
+ * never share one. Pure + DOM-free. */
+export function uniqueAssetName(assets: ReadonlyArray<{ name: string }>, base: string): string {
+	const want = base.trim() || "asset";
+	const taken = new Set(assets.map((a) => a.name.toLowerCase()));
+	if (!taken.has(want.toLowerCase())) return want;
+	let i = 2;
+	while (taken.has(`${want} ${i}`.toLowerCase())) i++;
+	return `${want} ${i}`;
+}
+
 export function fileToDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const r = new FileReader();

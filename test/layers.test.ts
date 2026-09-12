@@ -4,7 +4,7 @@
 //   node --experimental-strip-types test/layers.test.ts
 
 import { makeProject, normalizeProject } from "../src/state/defaults.ts";
-import { channelsForSource, ensureMaskCompositePass, isMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, referencedInputCount } from "../src/state/types.ts";
+import { channelsForSource, ensureMaskCompositePass, isMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, referencedInputCount, removeMaskCompositePass } from "../src/state/types.ts";
 import { assembleFragment, extractUniformDeclarations } from "../src/gl/wrapper.ts";
 import { isShapeKind, shapeKindIndex, SHAPE_KINDS } from "../src/gl/shapes.ts";
 import { parseShapePatch } from "../src/ai/tools/geometry_util.ts";
@@ -202,6 +202,39 @@ function near(a: number, b: number, msg: string): void {
 	eq(p.layers[0].mask!.passes[0].channels[0].kind, "geometry", "mask channel preserved");
 	eq(p.layers[0].mask!.shapes.length, 1, "mask shape preserved");
 	near(p.layers[0].mask!.shapes[0].falloff, 1, "mask shape falloff preserved");
+
+	// An EDITED wrapper (source and name changed, saved without `role`) is still
+	// the wrapper: reloading must not wrap it again, load after load.
+	const edited = structuredClone(raw) as { layers: Array<{ passes: Array<Record<string, unknown>>; outputPassId: string }> };
+	edited.layers[0].passes.push({ id: "w", name: "My blend", source: "// tweaked", channels: [{ kind: "under" }, { kind: "pass", passId: "p" }, { kind: "mask" }] });
+	edited.layers[0].outputPassId = "w";
+	const once = normalizeProject(edited);
+	eq(once.layers[0].passes.length, 2, "an edited wrapper is recognised by its wiring (no extra pass)");
+	eq(once.layers[0].outputPassId, "w", "the edited wrapper stays the output");
+	eq(once.layers[0].passes[1].role, "maskComposite", "the wrapper is tagged with its role");
+	const twice = normalizeProject(JSON.parse(JSON.stringify(once)));
+	eq(twice.layers[0].passes.length, 2, "a second load adds nothing");
+	// removeMask on the edited wrapper restores the pass it wrapped.
+	removeMaskCompositePass(twice.layers[0]);
+	eq(twice.layers[0].passes.length, 1, "removing the mask drops the edited wrapper");
+	eq(twice.layers[0].outputPassId, "p", "the unmasked pass is the output again");
+}
+
+// ---- uniforms are validated on load ------------------------------------------
+{
+	const p = normalizeProject({ layers: [{ passes: [{ name: "Image", source: "" }] }], uniforms: [{ name: "u_a" }, { name: "u_c", type: "color", value: [0.5] }, { type: "float", value: [1] }, { name: "u_b", type: "bogus", value: ["x", 2], min: "no", max: 3 }] });
+	eq(p.uniforms.length, 3, "a uniform without a name is dropped");
+	const a = p.uniforms.find((u) => u.name === "u_a")!;
+	eq(a.type, "float", "a missing type defaults to float");
+	eq(a.value.length, 1, "a missing value is padded to the type's length");
+	eq(a.max, 1, "a missing range gets the canonical 0..1");
+	const c = p.uniforms.find((u) => u.name === "u_c")!;
+	eq(c.value.join(","), "0.5,0,0", "a short colour value is padded to three components");
+	const b = p.uniforms.find((u) => u.name === "u_b")!;
+	eq(b.type, "float", "an unknown type falls back to float");
+	eq(b.value.join(","), "0", "a non-numeric component becomes 0 and the value is trimmed to the type");
+	eq(b.min, 0, "a non-numeric min falls back to 0");
+	eq(b.max, 3, "a numeric max is kept");
 }
 
 console.log(`ok - ${passed} assertions passed`);

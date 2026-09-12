@@ -329,7 +329,8 @@ src/
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history / layers / cache / uniforms / set_uniforms / assets / compact)
+test/                   # plain-Node unit tests (history, layers, cache, uniforms, set_uniforms,
+                        #   assets, compact, providers, proxy, exr, markdown, graphlayout, tools)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

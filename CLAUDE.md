@@ -196,7 +196,9 @@ pnpm run build        # ts0 build -> dist/index.html
   gradient). A layer also has an optional `mask?: Layer` (an owned layer used as a
   per-pixel opacity mask). `makeCompositeLayer` builds a ready "over" layer,
   `makeMaskLayer` a geometry-passthrough mask; `ensureMaskCompositePass` adds the
-  graph node that applies it; `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`/
+  graph node that applies it (tagged `Pass.role = "maskComposite"`, which is how
+  it is recognised on reload and removal, never by name or source, so an edited
+  wrapper is not wrapped again; a pre-`role` save is tagged by its wiring); `LAYER_COMPOSITE_SOURCE`/`MASK_SOURCE`/
   `MASK_COMPOSITE_SOURCE` are their default shaders. `src/util/media.ts` holds the
   file/webcam plumbing plus `sanitizeAssetName` (folds exotic whitespace like
   U+202F — macOS screenshot filenames — to a plain space and drops zero-width/bidi

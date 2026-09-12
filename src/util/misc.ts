@@ -58,10 +58,12 @@ export function withScheme(url: string): string {
  * A template with neither token is read as the bare prefix form and gets the
  * target appended, so a proxy URL written before templates existed still works.
  * An empty setting is not a proxy: the target goes out untouched. */
+const PROXY_TOKEN_RE = /\{\{\s*\.(rawurl|url)\s*\}\}/g;
+
 export function proxied(target: string, template: string): string {
 	const base = withScheme(template.trim());
 	if (!base) return target;
-	const filled = base.replace(/\{\{\s*\.(rawurl|url)\s*\}\}/g, (_m, token: string) => (token === "rawurl" ? target : encodeURIComponent(target)));
+	const filled = base.replace(PROXY_TOKEN_RE, (_m, token: string) => (token === "rawurl" ? target : encodeURIComponent(target)));
 	if (filled !== base) return filled;
 	return `${base.replace(/\/+$/, "")}/${target}`;
 }
@@ -69,7 +71,8 @@ export function proxied(target: string, template: string): string {
 /** True when a proxy setting names its substitution point. The Settings field
  * uses this to show which rule a given value will follow. */
 export function hasProxyToken(template: string): boolean {
-	return /\{\{\s*\.(rawurl|url)\s*\}\}/.test(template);
+	PROXY_TOKEN_RE.lastIndex = 0; // a global regex keeps state between test() calls
+	return PROXY_TOKEN_RE.test(template);
 }
 
 export function escapeHtml(s: string): string {

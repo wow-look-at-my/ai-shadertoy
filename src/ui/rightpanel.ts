@@ -9,7 +9,7 @@ import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { copyText, debounce, formatBytes, pickFile, pickFiles, uid } from "../util/misc.ts";
 import { formatUniformDeclarations } from "../gl/wrapper.ts";
-import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
+import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
 import { layoutGraph, type LayoutResult, type NodePos } from "./graphlayout.ts";
@@ -596,14 +596,6 @@ function renderTextures(store: Store, container: HTMLElement): void {
 
 /** De-duplicate an asset name against the existing library so the AI can address
  * each asset unambiguously (connect_pins resolves asset:<name> by first match). */
-function uniqueAssetName(assets: ImageAsset[], base: string): string {
-	const want = base.trim() || "asset";
-	const taken = new Set(assets.map((a) => a.name.toLowerCase()));
-	if (!taken.has(want.toLowerCase())) return want;
-	let i = 2;
-	while (taken.has(`${want} ${i}`.toLowerCase())) i++;
-	return `${want} ${i}`;
-}
 
 /** Probe one already-chosen file's dimensions and add it to the shared asset
  * library (no channel binding). Returns the new asset, or null if it was rejected
@@ -632,7 +624,7 @@ async function addAssetFromFile(store: Store, file: File, type: "image" | "video
 		id: uid("a_"),
 		// Clean exotic characters out of the filename first (U+202F etc.), then
 		// de-duplicate so the AI can address each asset unambiguously by name.
-		name: uniqueAssetName(store.assets, sanitizeAssetName(file.name.replace(/\.[^.]+$/, ""))),
+		name: file.name.replace(/\.[^.]+$/, ""), // the store sanitizes and uniquifies
 		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
 		dataUrl,
 		width,

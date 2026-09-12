@@ -16,9 +16,9 @@ import { db, getCurrentProjectId, importBundle, loadSettingsRaw, requestPersiste
 import { DEFAULT_SETTINGS, makeProject, mergeSettings } from "./defaults.ts";
 import { History } from "./history.ts";
 import { debounce, uid } from "../util/misc.ts";
-import { loadImageEl, requestWebcam, stopStream } from "../util/media.ts";
+import { loadImageEl, requestWebcam, sanitizeAssetName, stopStream, uniqueAssetName } from "../util/media.ts";
 
-type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "playback" | "toolActivity" | "selectedPass" | "selectedLayer" | "selectedShape" | "history" | "restore";
+type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "playback" | "storageError" | "toolActivity" | "selectedPass" | "selectedLayer" | "selectedShape" | "history" | "restore";
 
 /** The slice of a Project that undo/redo restores: the visible/editable state
  * (name, layer stack, uniforms). The conversation log and identity/timestamps
@@ -349,8 +349,14 @@ export class Store {
 		this.saveDebounced();
 	}
 
+	/** Persist the current project. A refused write is reported (see
+	 * reportStorageError) rather than thrown, so callers never crash a turn on it. */
 	async saveProjectNow(): Promise<void> {
-		await db.saveProject(this.project);
+		try {
+			await db.saveProject(this.project);
+		} catch (e) {
+			this.reportStorageError(`save project "${this.project.name}"`, e);
+		}
 	}
 
 	// ---- undo / redo --------------------------------------------------------
@@ -373,7 +379,11 @@ export class Store {
 		this.project.uniforms = structuredClone(s.uniforms);
 		// A restore must reproduce the snapshot exactly, never re-adopt an initializer.
 		this.declaredDefaults = {};
-		if (!this.layerById(this.selectedLayerId) || !this.passById(this.selectedPassId)) this.resetSelection();
+		// Keep the selected layer when it survives; only the pass falls back (to its
+		// output), so undoing "Add pass" does not jump the editor to another layer.
+		const layer = this.layerById(this.selectedLayerId);
+		if (!layer) this.resetSelection();
+		else if (!layer.passes.some((p) => p.id === this.selectedPassId)) this.selectedPassId = layer.outputPassId;
 		if (this.selectedShapeId && !this.shapeInActiveLayer(this.selectedShapeId)) this.selectedShapeId = "";
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
@@ -445,7 +455,7 @@ export class Store {
 	/** Edit one pass's source (recompiles just that pass). */
 	setPassSource(passId: string, src: string, compile = true): CompileResult {
 		const pass = this.passById(passId);
-		if (!pass) return { ok: true, log: "" };
+		if (!pass) return { ok: false, log: `no such pass: ${passId}` };
 		const prevChannels = pass.channels;
 		pass.source = src;
 		const inferred = channelsForSource(src).slice(0, this.renderer.maxInputs());
@@ -600,7 +610,8 @@ export class Store {
 		if (idx === -1) return { ok: false, error: "No such layer." };
 		const name = this.project.layers[idx].name;
 		this.project.layers.splice(idx, 1);
-		if (this.selectedLayerId === layerId) this.resetSelection();
+		// The selection may point at the removed layer OR its mask.
+		if (!this.layerById(this.selectedLayerId)) this.resetSelection();
 		this.applyProjectToRenderer();
 		this.emit("project", this.project);
 		this.emit("selectedLayer", this.selectedLayerId);
@@ -749,23 +760,29 @@ export class Store {
 		this.touch();
 	}
 
+	/** Add a library asset. Names are made unique here (the AI addresses assets
+	 * by name, and a duplicate would shadow the older one). */
 	addAsset(asset: ImageAsset): void {
+		asset.name = uniqueAssetName(this.assets, sanitizeAssetName(asset.name));
 		this.assets.push(asset);
-		void db.saveAsset(asset);
+		this.persistAsset(asset);
 		this.emit("assets", this.assets);
 	}
 
 	deleteAsset(id: string): void {
 		this.assets = this.assets.filter((a) => a.id !== id);
-		void db.deleteAsset(id);
-		// detach from any pass channel using it (image or video)
-		for (const layer of this.project.layers) {
+		db.deleteAsset(id).catch((e) => this.reportStorageError("delete asset", e));
+		// Detach from every pass channel using it (image or video), masks included,
+		// as one undo step.
+		this.beginHistoryGroup("Delete asset");
+		this.eachLayer((layer) => {
 			for (const p of layer.passes) {
 				p.channels.forEach((ch, i) => {
 					if ((ch.kind === "image" || ch.kind === "video") && ch.assetId === id) this.connectPin(p.id, i, { kind: "none", assetId: undefined });
 				});
 			}
-		}
+		});
+		this.endHistoryGroup();
 		this.emit("assets", this.assets);
 	}
 
@@ -773,11 +790,23 @@ export class Store {
 	 * bindings are unaffected; the name is how the AI addresses it (asset:<name>). */
 	renameAsset(id: string, name: string): void {
 		const asset = this.assets.find((a) => a.id === id);
-		const trimmed = name.trim();
+		const trimmed = sanitizeAssetName(name);
 		if (!asset || !trimmed || asset.name === trimmed) return;
-		asset.name = trimmed;
-		void db.saveAsset(asset);
+		asset.name = uniqueAssetName(this.assets.filter((a) => a.id !== id), trimmed);
+		this.persistAsset(asset);
 		this.emit("assets", this.assets);
+	}
+
+	private persistAsset(asset: ImageAsset): void {
+		db.saveAsset(asset).catch((e) => this.reportStorageError(`save asset "${asset.name}"`, e));
+	}
+
+	/** A write the browser refused (quota, a closed database) is shown, not
+	 * swallowed: the edit is on screen but would be gone after a reload. */
+	private reportStorageError(what: string, e: unknown): void {
+		const msg = e instanceof Error ? e.message : String(e);
+		console.error(`storage: could not ${what}: ${msg}`);
+		this.emit("storageError", `Could not ${what}: ${msg}. Changes may not survive a reload.`);
 	}
 
 	// ---- settings -----------------------------------------------------------
@@ -859,20 +888,35 @@ export class Store {
 		this.touch();
 	}
 
-	async reloadAfterImport(): Promise<void> {
+	/** Re-read the database after an import. The current project stays current
+	 * when it still exists (a merge never yanks the user elsewhere); otherwise the
+	 * newest imported project is adopted, or a fresh one made when the import held
+	 * none, so a deleted project is never resurrected by the next autosave. */
+	private async reloadAfterImport(): Promise<void> {
 		this.assets = await db.loadAssets();
-		const projects = await db.loadProjects();
-		if (projects.length) {
+		let projects = await db.loadProjects();
+		const current = projects.find((p) => p.id === this.project.id);
+		if (current) {
+			this.adoptProject(current);
+		} else if (projects.length) {
 			this.adoptProject(projects.sort((a, b) => b.updatedAt - a.updatedAt)[0]);
+		} else {
+			this.project = makeProject("Untitled shader", this.defaultShaderSource);
+			await this.saveProjectNow();
+			this.adoptProject(this.project);
+			projects = [this.project];
 		}
-		this.refreshProjectList(projects.length ? projects : [this.project]);
+		setCurrentProjectId(this.project.id);
+		this.refreshProjectList(projects);
 		this.applyProjectToRenderer();
 		this.emit("assets", this.assets);
 		this.emit("project", this.project);
 	}
 
-	async importData(bundle: Parameters<typeof importBundle>[0], mode: "merge" | "replace"): Promise<{ projects: number; assets: number }> {
+	async importData(bundle: unknown, mode: "merge" | "replace"): Promise<{ projects: number; assets: number }> {
 		const res = await importBundle(bundle, mode);
+		// Settings travel with the bundle when the export included them.
+		if (res.settings) this.updateSettings(mergeSettings(res.settings));
 		await this.reloadAfterImport();
 		return res;
 	}
@@ -1005,9 +1049,8 @@ export class Store {
 	}
 }
 
-/** Deep-clone a project into a brand-new one: fresh project + layer + pass + shape
- * ids (with all outputPassId / channel passId references remapped onto the new
- * pass ids), fresh timestamps, and the given name. */
+/** Give a layer (and its mask) fresh layer/pass/shape ids, remapping every
+ * outputPassId / channel passId reference onto the new pass ids. */
 function remapLayerIds(layer: Layer): void {
 	layer.id = uid("layer_");
 	const idMap = new Map<string, string>();
@@ -1026,6 +1069,8 @@ function remapLayerIds(layer: Layer): void {
 	if (layer.mask) remapLayerIds(layer.mask);
 }
 
+/** Deep-clone a project into a brand-new one: fresh ids throughout, fresh
+ * timestamps, and the given name. */
 function cloneProjectAsNew(src: Project, name: string): Project {
 	const clone = structuredClone(src);
 	for (const layer of clone.layers) remapLayerIds(layer);

@@ -129,6 +129,13 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		statsBar.hidden = false;
 	}
 
+	// A refused write (quota, a closed database) is shown where the user is
+	// looking; the edit is on screen but would not survive a reload.
+	store.on("storageError", (msg) => {
+		list.appendChild(el("div", { class: "msg error" }, el("strong", {}, "Storage: "), String(msg)));
+		scroll();
+	});
+
 	store.on("busy", (b) => {
 		// `steerable` is set before setBusy(true) in runTurn, so it's accurate here.
 		const steer = !!b && steerable;
