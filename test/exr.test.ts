@@ -6,7 +6,7 @@
 // bottom-up -> top-down flip lives in the renderer, not the encoder, so the
 // encoder is a straight top-down passthrough here.)
 
-import { encodeHalfRGBA } from "../src/util/exr.ts";
+import { encodeHalfRGBA, floatToHalf } from "../src/util/exr.ts";
 
 let passed = 0;
 function ok(cond: boolean, msg: string): void {
@@ -113,5 +113,29 @@ ok(allMatch, "every half sample round-trips through channel layout + orientation
 let threw = false;
 try { encodeHalfRGBA(2, 2, new Uint16Array(3)); } catch { threw = true; }
 ok(threw, "wrong data length throws");
+
+// float -> half conversion (the renderer reads float pixels back and packs them).
+{
+	const cases: Array<[number, number, string]> = [
+		[0, 0x0000, "zero"],
+		[-0, 0x8000, "negative zero keeps its sign"],
+		[1, 0x3c00, "one"],
+		[-2, 0xc000, "minus two"],
+		[0.5, 0x3800, "a half"],
+		[65504, 0x7bff, "largest finite half"],
+		[1e5, 0x7c00, "overflow rounds to +inf"],
+		[-1e5, 0xfc00, "overflow rounds to -inf"],
+		[Infinity, 0x7c00, "+inf"],
+		[2 ** -14, 0x0400, "smallest normal"],
+		[2 ** -24, 0x0001, "smallest subnormal"],
+		[2 ** -26, 0x0000, "below half the smallest subnormal flushes to zero"],
+		[1 + 2 ** -10, 0x3c01, "one ulp above one"],
+		[1 + 2 ** -11, 0x3c00, "a tie rounds to even (down)"],
+		[1 + 3 * 2 ** -11, 0x3c02, "a tie rounds to even (up)"],
+		[2047.5, 0x6800, "rounding carry into the exponent"],
+	];
+	for (const [v, want, msg] of cases) eq(floatToHalf(v), want, `floatToHalf(${v}): ${msg}`);
+	ok((floatToHalf(NaN) & 0x7c00) === 0x7c00 && (floatToHalf(NaN) & 0x03ff) !== 0, "NaN stays NaN");
+}
 
 console.log(`ok - ${passed} assertions passed`);

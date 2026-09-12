@@ -267,4 +267,30 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 	}
 }
 
+// ---- declarations inside comments are not controls -------------------------
+{
+	// Lines the fixed footer adds after a one-line body.
+	const FOOTER_LINES = assembleFragment("x", [], 0).source.split("#line 1\n")[1].split("\n").length - 1;
+	const src = "/*\nuniform float u_old;\n*/\n// uniform float u_note;\nuniform float u_live = 0.5; /* keep */\nvoid mainImage(out vec4 o,in vec2 c){o=vec4(u_live);}";
+	const us = extractUniformDeclarations(src);
+	eq(us.map((u) => u.name).join(","), "u_live", "commented-out declarations are ignored");
+	const assembled = assembleFragment(src, us, 0).source;
+	eq(assembled.split("uniform float u_old;").length, 2, "a block-commented declaration is not hoisted into the header");
+	check(assembled.includes("/*\nuniform float u_old;\n*/"), "the block comment itself is left in the body");
+	eq(assembled.split("uniform float u_live").length, 2, "the live declaration is hoisted once and stripped from the body");
+	const bodyStart = assembled.indexOf("#line 1\n") + "#line 1\n".length;
+	eq(assembled.slice(bodyStart).split("\n").length, src.split("\n").length + FOOTER_LINES, "stripping keeps every user line (line numbers stay mapped)");
+}
+
+// ---- CRLF sources extract and strip like LF ones ---------------------------
+{
+	const src = "uniform float u_x = 2.0;\r\nuniform vec2 u_p; // pos\r\nvoid mainImage(out vec4 o,in vec2 c){o=vec4(u_x);}\r\n";
+	const us = extractUniformDeclarations(src);
+	eq(us.length, 2, "CRLF declarations are extracted");
+	near(byName(us, "u_x").value[0], 2.0, "CRLF initializer parsed");
+	const assembled = assembleFragment(src, us, 0).source;
+	eq(assembled.split("uniform float u_x").length, 2, "CRLF declaration is stripped from the body (no redefinition)");
+	eq(assembled.split("uniform vec2 u_p").length, 2, "CRLF declaration with a trailing comment is stripped");
+}
+
 console.log(`uniforms.test.ts: ${passed} checks passed`);

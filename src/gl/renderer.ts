@@ -11,6 +11,7 @@
 import type { Channel, Layer, Pass, PassFormat, Shape, Uniform } from "../state/types.ts";
 import { assembleFragment, glslType } from "./wrapper.ts";
 import { builtinPixels } from "./textures.ts";
+import { floatToHalf } from "../util/exr.ts";
 import { DynamicTexture } from "./dynamictexture.ts";
 import { GeometryBatch } from "./geometry.ts";
 
@@ -92,7 +93,15 @@ interface RenderLayer {
 	geom: Target | null; // single (not ping-ponged) premultiplied geometry texture
 	geomDirty: boolean;
 	underTex: WebGLTexture; // set each frame: composite of the layers below
+	underFloat: boolean; // whether underTex is a float target (linear needs floatLinear)
 	mask: RenderLayer | null; // optional mask layer (rendered standalone)
+}
+
+interface ResolvedInput {
+	tex: WebGLTexture;
+	width: number;
+	height: number;
+	float: boolean;
 }
 
 function newSlot(): ChannelSlot {
@@ -118,6 +127,10 @@ export class Renderer {
 	private floatColorBuffer = false;
 	private floatLinear = false;
 	private maxTextureUnits = 16;
+	// One sampler object per (filter, wrap) pair. Sampling state lives on the
+	// texture UNIT, so two slots bound to the same texture keep their own params.
+	private samplers = new Map<string, WebGLSampler>();
+	private dt = 1 / 60; // seconds between the last two loop frames
 	// The presented composite's output target, captured each renderFrame (the
 	// topmost visible layer's output pass) so HDR/EXR export can read it back.
 	private lastFinal: { fbo: WebGLFramebuffer; width: number; height: number; format: PassFormat } | null = null;
@@ -283,7 +296,7 @@ export class Renderer {
 	private reconcileLayer(spec: Layer, results: Map<string, CompileResult>): RenderLayer {
 		let rl = this.layersById.get(spec.id);
 		if (!rl) {
-			rl = { id: spec.id, visible: spec.visible, opacity: spec.opacity, passes: new Map(), order: [], outputPassId: spec.outputPassId, shapes: spec.shapes, geom: null, geomDirty: true, underTex: this.transparentTex, mask: null };
+			rl = { id: spec.id, visible: spec.visible, opacity: spec.opacity, passes: new Map(), order: [], outputPassId: spec.outputPassId, shapes: spec.shapes, geom: null, geomDirty: true, underTex: this.transparentTex, underFloat: false, mask: null };
 			this.layersById.set(spec.id, rl);
 		}
 		rl.visible = spec.visible;
@@ -519,6 +532,7 @@ export class Renderer {
 		}
 		this.freeSlot(s);
 		s.dyn = DynamicTexture.fromUrl(this.gl, url);
+		s.dyn.onFrame = this.onDynamicFrame;
 		s.dynKey = key;
 		s.kind = "video";
 		s.passId = undefined;
@@ -536,6 +550,7 @@ export class Renderer {
 		if (!s) return;
 		this.freeSlot(s);
 		s.dyn = DynamicTexture.fromStream(this.gl, stream);
+		s.dyn.onFrame = this.onDynamicFrame;
 		s.dynKey = "webcam";
 		s.kind = "webcam";
 		s.passId = undefined;
@@ -587,6 +602,12 @@ export class Renderer {
 	}
 
 	// ---- playback -----------------------------------------------------------
+
+	// A paused renderer draws nothing on its own, so show a clip's newly decoded
+	// frame (first load, or a reset() seek) as soon as it lands.
+	private onDynamicFrame = (): void => {
+		if (this.paused) this.renderFrame();
+	};
 
 	private forEachDynamic(fn: (d: DynamicTexture) => void): void {
 		for (const p of this.allPasses.values()) for (const s of p.channels) if (s.dyn) fn(s.dyn);
@@ -689,7 +710,10 @@ export class Renderer {
 		const now = performance.now();
 		if (fromLoop) {
 			const dt = now - this.lastFrameTime;
-			if (dt > 0) this.fps = this.fps * 0.9 + (1000 / dt) * 0.1;
+			if (dt > 0) {
+				this.fps = this.fps * 0.9 + (1000 / dt) * 0.1;
+				this.dt = Math.min(dt, 1000) / 1000; // a stalled tab is not one giant step
+			}
 			this.lastFrameTime = now;
 			this.frame++;
 		}
@@ -699,14 +723,17 @@ export class Renderer {
 		const rendered = new Set<string>();
 		let finalTex: WebGLTexture | null = null;
 		let underTex = this.transparentTex;
+		let underFloat = false;
 		this.lastFinal = null;
 
 		for (const layer of this.layers) {
 			if (!layer.visible) continue;
 			layer.underTex = underTex;
+			layer.underFloat = underFloat;
 			this.rasterizeGeom(layer, W, H);
 			if (layer.mask) {
 				layer.mask.underTex = this.transparentTex;
+				layer.mask.underFloat = false;
 				this.rasterizeGeom(layer.mask, W, H);
 				this.renderLayerPasses(layer.mask, t, H, rendered);
 			}
@@ -716,6 +743,7 @@ export class Renderer {
 			finalTex = out.tex;
 			this.lastFinal = { fbo: out.fbo, width: out.width, height: out.height, format: out.format };
 			underTex = out.tex; // becomes the next layer's "under"
+			underFloat = this.isFloatFormat(out.format);
 		}
 
 		// Present the topmost visible layer's composite (or clear if nothing drew).
@@ -728,10 +756,38 @@ export class Renderer {
 			gl.clear(gl.COLOR_BUFFER_BIT);
 		}
 
-		// Advance ping-pong for every pass that drew this frame.
-		for (const p of this.allPasses.values()) if (rendered.has(p.id)) p.cur = (p.cur === 0 ? 1 : 0) as 0 | 1;
+		// Only a loop frame advances ping-pong. An out-of-loop redraw (a slider
+		// drag, a rebind, a screenshot) re-reads the same `prev` and rewrites the
+		// same `curr`, so a paused simulation stays frozen and a playing one steps
+		// once per tick, not once per edit.
+		if (fromLoop) for (const p of this.allPasses.values()) if (rendered.has(p.id)) p.cur = (p.cur === 0 ? 1 : 0) as 0 | 1;
 
 		if (fromLoop && this.onStats) this.onStats(this.stats());
+	}
+
+	private isFloatFormat(format: PassFormat): boolean {
+		return format === "rgba16f" && this.floatColorBuffer;
+	}
+
+	/** The sampler object for a slot's filter/wrap. Linear filtering of a float
+	 * texture needs OES_texture_float_linear; without it the unit falls back to
+	 * nearest so the texture stays complete instead of sampling black. */
+	private sampler(slot: ChannelSlot, isFloat: boolean): WebGLSampler {
+		const gl = this.gl;
+		const linear = slot.filter === "linear" && !(isFloat && !this.floatLinear);
+		const key = `${linear ? "l" : "n"}:${slot.wrap}`;
+		let s = this.samplers.get(key);
+		if (!s) {
+			s = gl.createSampler()!;
+			const f = linear ? gl.LINEAR : gl.NEAREST;
+			const wr = slot.wrap === "clamp" ? gl.CLAMP_TO_EDGE : slot.wrap === "mirror" ? gl.MIRRORED_REPEAT : gl.REPEAT;
+			gl.samplerParameteri(s, gl.TEXTURE_MIN_FILTER, f);
+			gl.samplerParameteri(s, gl.TEXTURE_MAG_FILTER, f);
+			gl.samplerParameteri(s, gl.TEXTURE_WRAP_S, wr);
+			gl.samplerParameteri(s, gl.TEXTURE_WRAP_T, wr);
+			this.samplers.set(key, s);
+		}
+		return s;
 	}
 
 	/** Re-rasterize a layer's geometry into its geom target if dirty. */
@@ -761,11 +817,6 @@ export class Renderer {
 		return { tex: t.tex, fbo: t.fbo, width: out.width, height: out.height, format: out.format };
 	}
 
-	/** The current-frame texture of a layer's output pass (or null if it has none). */
-	private layerOutputTex(layer: RenderLayer): WebGLTexture | null {
-		return this.layerOutput(layer)?.tex ?? null;
-	}
-
 	private drawPass(p: RenderPass, t: number, H: number, rendered: Set<string>): void {
 		const gl = this.gl;
 		gl.useProgram(p.program);
@@ -785,13 +836,16 @@ export class Renderer {
 		else this.setFloat3(p, "iResolution", p.width, p.height, 1);
 		this.setFloat2(p, "ai_fragOffset", offX, offY);
 		this.setFloat1(p, "iTime", t);
-		this.setFloat1(p, "iTimeDelta", 1 / 60);
+		this.setFloat1(p, "iTimeDelta", this.dt);
 		this.setFloat1(p, "iFrameRate", this.fps || 60);
 		this.setInt1(p, "iFrame", this.frame);
 		const mx = this.mouse.x - offX;
 		const my = H - this.mouse.y - offY;
-		const dx = this.mouse.downX - offX;
-		const dy = H - this.mouse.downY - offY;
+		// zw carry the click position with the button state in their sign
+		// (Shadertoy convention), so a click left of/below the centred square is
+		// clamped to 0 rather than flipping the sign and reading as "not pressed".
+		const dx = Math.max(0, this.mouse.downX - offX);
+		const dy = Math.max(0, H - this.mouse.downY - offY);
 		this.setFloat4(p, "iMouse", mx, my, (this.mouse.pressed ? 1 : -1) * dx, (this.mouse.everDown ? 1 : -1) * dy);
 		const d = new Date();
 		this.setFloat4(p, "iDate", d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds());
@@ -802,13 +856,7 @@ export class Renderer {
 			const r = this.resolveChannel(slot, p, rendered);
 			gl.activeTexture(gl.TEXTURE0 + i);
 			gl.bindTexture(gl.TEXTURE_2D, r.tex);
-			const wantLinear = slot.filter === "linear" && !(r.float && !this.floatLinear);
-			const f = wantLinear ? gl.LINEAR : gl.NEAREST;
-			const wr = slot.wrap === "clamp" ? gl.CLAMP_TO_EDGE : slot.wrap === "mirror" ? gl.MIRRORED_REPEAT : gl.REPEAT;
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wr);
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wr);
+			gl.bindSampler(i, this.sampler(slot, r.float));
 			const l = this.loc(p, `iChannel${i}`);
 			if (l) gl.uniform1i(l, i);
 			chRes.push(r.width, r.height, 1);
@@ -847,21 +895,23 @@ export class Renderer {
 	 * (the composite below / this layer's rasterized shapes). Pass references read
 	 * the source's current-frame output if it was already rendered this frame (a
 	 * forward edge), otherwise its previous frame (feedback / self-reference). */
-	private resolveChannel(slot: ChannelSlot, self: RenderPass, rendered: Set<string>): { tex: WebGLTexture; width: number; height: number; float: boolean } {
+	private resolveChannel(slot: ChannelSlot, self: RenderPass, rendered: Set<string>): ResolvedInput {
+		const w = self.width || this.allocW;
+		const h = self.height || this.allocH;
 		if (slot.kind === "under") {
-			return { tex: self.layer.underTex, width: self.width || this.allocW, height: self.height || this.allocH, float: false };
+			return { tex: self.layer.underTex, width: w, height: h, float: self.layer.underFloat };
 		} else if (slot.kind === "geometry") {
 			const g = self.layer.geom;
-			return { tex: g ? g.tex : this.transparentTex, width: self.width || this.allocW, height: self.height || this.allocH, float: false };
+			return { tex: g ? g.tex : this.transparentTex, width: w, height: h, float: false };
 		} else if (slot.kind === "mask") {
-			const mask = self.layer.mask ? this.layerOutputTex(self.layer.mask) : null;
-			return { tex: mask ?? this.opaqueTex, width: self.width || this.allocW, height: self.height || this.allocH, float: false };
+			const mask = self.layer.mask ? this.layerOutput(self.layer.mask) : null;
+			return mask ? { tex: mask.tex, width: w, height: h, float: this.isFloatFormat(mask.format) } : { tex: this.opaqueTex, width: w, height: h, float: false };
 		} else if (slot.kind === "pass" && slot.passId) {
 			const src = this.allPasses.get(slot.passId);
 			if (src && src.a) {
 				const useCurr = src.id !== self.id && rendered.has(src.id);
 				const tgt = useCurr ? this.curr(src) : this.prev(src);
-				return { tex: tgt.tex, width: src.width, height: src.height, float: src.format === "rgba16f" && this.floatColorBuffer };
+				return { tex: tgt.tex, width: src.width, height: src.height, float: this.isFloatFormat(src.format) };
 			}
 		} else if ((slot.kind === "video" || slot.kind === "webcam") && slot.dyn) {
 			return { tex: slot.dyn.texture, width: slot.dyn.width, height: slot.dyn.height, float: false };
@@ -879,6 +929,7 @@ export class Renderer {
 		gl.bindVertexArray(this.vao);
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, tex);
+		gl.bindSampler(0, null); // a pass's sampler on unit 0 would otherwise win
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 		const lt = gl.getUniformLocation(this.presentProgram, "uTex");
@@ -967,27 +1018,39 @@ export class Renderer {
 	 * so an EXR export would carry genuine float data (a "rgba16f" pass silently
 	 * falls back to rgba8 when the GPU lacks EXT_color_buffer_float). */
 	hasFloatOutput(): boolean {
-		this.renderFrame();
-		return !!this.lastFinal && this.lastFinal.format === "rgba16f" && this.floatColorBuffer;
+		if (!this.lastFinal) this.renderFrame();
+		return !!this.lastFinal && this.isFloatFormat(this.lastFinal.format);
 	}
 
-	/** Read the presented HDR composite back as half-float RGBA (top-down, the
-	 * exact rgba16f bits), for a lossless EXR export. Null when the output is not
-	 * a float target — gate on hasFloatOutput() first. */
+	/** Read the presented HDR composite back as half-float RGBA (top-down), for a
+	 * lossless EXR export. Null when the output is not a float target (gate on
+	 * hasFloatOutput() first) or when the driver refuses the read. */
 	captureFloat(): { width: number; height: number; data: Uint16Array } | null {
 		this.renderFrame();
 		const f = this.lastFinal;
-		if (!f || f.format !== "rgba16f" || !this.floatColorBuffer) return null;
+		if (!f || !this.isFloatFormat(f.format)) return null;
 		const gl = this.gl;
 		const { fbo, width: w, height: h } = f;
-		const raw = new Uint16Array(w * h * 4);
+		// RGBA/FLOAT is the one readback pair EXT_color_buffer_float guarantees for
+		// a float attachment; RGBA/HALF_FLOAT is only accepted where it happens to be
+		// the implementation's preferred pair, and a refused read leaves zeros.
+		const raw = new Float32Array(w * h * 4);
 		gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-		gl.readPixels(0, 0, w, h, gl.RGBA, gl.HALF_FLOAT, raw);
+		gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, raw);
+		const err = gl.getError();
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		if (err !== gl.NO_ERROR) {
+			console.error(`captureFloat: readPixels failed (GL error 0x${err.toString(16)})`);
+			return null;
+		}
 		// GL reads bottom-up; flip to top-down so the EXR matches the on-screen image.
 		const data = new Uint16Array(w * h * 4);
 		const row = w * 4;
-		for (let y = 0; y < h; y++) data.set(raw.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+		for (let y = 0; y < h; y++) {
+			const srcRow = (h - 1 - y) * row;
+			const dstRow = y * row;
+			for (let i = 0; i < row; i++) data[dstRow + i] = floatToHalf(raw[srcRow + i]);
+		}
 		return { width: w, height: h, data };
 	}
 
@@ -1019,17 +1082,27 @@ export class Renderer {
 	};
 
 	destroy(): void {
+		const gl = this.gl;
 		cancelAnimationFrame(this.rafId);
 		window.removeEventListener("pointerup", this.onPointerUp);
+		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+		this.canvas.removeEventListener("pointermove", this.onPointerMove);
 		// Release video elements / webcam streams so the camera light goes off.
 		for (const p of this.allPasses.values()) this.destroyPass(p);
 		for (const l of this.layersById.values()) {
 			if (l.geom) this.freeTarget(l.geom);
 		}
 		this.geometry.dispose();
+		for (const s of this.samplers.values()) gl.deleteSampler(s);
+		this.samplers.clear();
+		for (const t of [this.fallbackTex, this.transparentTex, this.opaqueTex]) gl.deleteTexture(t);
+		gl.deleteProgram(this.presentProgram);
+		gl.deleteShader(this.vert);
+		gl.deleteVertexArray(this.vao);
 		this.allPasses.clear();
 		this.layersById.clear();
 		this.layers = [];
+		this.lastFinal = null;
 	}
 }
 

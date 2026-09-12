@@ -293,7 +293,10 @@ export class Store {
 			}
 			try {
 				const img = await loadImageEl(asset.dataUrl);
-				this.renderer.connectImageInput(passId, index, img, img.naturalWidth, img.naturalHeight, ch.filter, ch.wrap);
+				// The binding may have changed while the image decoded.
+				const cur = this.passById(passId)?.channels[index];
+				if (!cur || cur.kind !== "image" || cur.assetId !== ch.assetId) return;
+				this.renderer.connectImageInput(passId, index, img, img.naturalWidth, img.naturalHeight, cur.filter, cur.wrap);
 			} catch {
 				this.renderer.disconnectInput(passId, index);
 			}

@@ -34,17 +34,25 @@ const CHANNEL_NAME = /^iChannel\d+$/;
 // naturally annotate uniforms; when a comment broke the match the declaration was
 // neither hoisted into the header (the control never appeared) nor stripped from the
 // body (re-declaring it produced a GLSL redefinition).
-const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=[ \t]*([^;\n]*?))?[ \t]*;[ \t]*(?:\/\/[^\n]*|\/\*[^\n]*?\*\/[ \t]*)?$/gm;
+const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=[ \t]*([^;\n]*?))?[ \t]*;[ \t]*(?:\/\/[^\n]*|\/\*[^\n]*?\*\/[ \t]*)?\r?$/gm;
+
+// Comments blanked to spaces (newlines kept), so a declaration inside a block
+// comment matches nothing while every match index still maps onto the source.
+function maskComments(source: string): string {
+	return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
+}
+
+/** Every custom-uniform declaration outside a comment, as regex matches whose
+ * indices address the ORIGINAL source. Extraction and stripping share this list. */
+function declarationMatches(source: string): RegExpMatchArray[] {
+	return [...maskComments(source).matchAll(CUSTOM_UNIFORM_RE)];
+}
 
 export function isValidUniformName(name: string): boolean {
 	if (!VALID_NAME.test(name)) return false;
 	if (name.startsWith("gl_")) return false; // reserved
 	if (CHANNEL_NAME.test(name)) return false; // reserved input samplers
 	return !BUILTIN_NAMES.has(name);
-}
-
-function componentCount(type: UniformType): number {
-	return type === "float" ? 1 : type === "vec2" ? 2 : type === "vec3" ? 3 : 4;
 }
 
 /** Parse one GLSL numeric literal to a JS number. GLSL ES 3.00 allows a trailing
@@ -64,7 +72,7 @@ function glslLiteralToNumber(s: string): number {
  * vector constructors splat (vec3(0.5) -> [0.5,0.5,0.5]); too-few args pad with 0. */
 function parseInitializer(type: UniformType, expr: string | undefined): number[] | null {
 	if (!expr) return null;
-	const n = componentCount(type);
+	const n = uniformLength(type);
 	const e = expr.trim();
 	if (type === "float") {
 		const v = glslLiteralToNumber(e);
@@ -116,11 +124,11 @@ function rangeForValues(values: number[]): { min: number; max: number; step: num
 
 export function extractUniformDeclarations(source: string): Uniform[] {
 	const out: Uniform[] = [];
-	for (const m of source.matchAll(CUSTOM_UNIFORM_RE)) {
+	for (const m of declarationMatches(source)) {
 		const type = m[1] as UniformType;
 		const name = m[2];
 		if (!isValidUniformName(name)) continue;
-		const value = parseInitializer(type, m[3]) ?? new Array(componentCount(type)).fill(0);
+		const value = parseInitializer(type, m[3]) ?? new Array(uniformLength(type)).fill(0);
 		out.push({ name, type, value, ...rangeForValues(value) });
 	}
 	return out;
@@ -169,8 +177,16 @@ export function reconcileUniforms(declared: Uniform[], previous: Uniform[], last
 	});
 }
 
+// Removes the matched declarations only (never a newline), so `#line 1` keeps
+// mapping compile errors onto the user's line numbers.
 function stripUniformDeclarations(source: string): string {
-	return source.replace(CUSTOM_UNIFORM_RE, "");
+	let out = "";
+	let at = 0;
+	for (const m of declarationMatches(source)) {
+		out += source.slice(at, m.index);
+		at = m.index! + m[0].length;
+	}
+	return out + source.slice(at);
 }
 
 /** Format a number as a GLSL float literal: always carries a decimal point and
@@ -186,7 +202,7 @@ function formatGlslNumber(v: number): string {
  * back, so the output round-trips (a `color` becomes a `vec3`, matching glslType). */
 export function formatUniformDeclaration(u: Uniform): string {
 	const type = glslType(u.type);
-	const n = u.type === "float" ? 1 : u.type === "vec2" ? 2 : u.type === "vec4" ? 4 : 3;
+	const n = uniformLength(u.type);
 	const comps = Array.from({ length: n }, (_, i) => formatGlslNumber(u.value[i] ?? 0));
 	const init = n === 1 ? comps[0] : `${type}(${comps.join(", ")})`;
 	return `uniform ${type} ${u.name} = ${init};`;
@@ -262,15 +278,11 @@ void main() {
 
 export interface AssembledShader {
 	source: string;
-	headerLines: number;
 }
 
-/** Build the complete fragment shader and report how many header lines precede
- * the `#line 1` directive (for diagnostics that need the raw offset).
- * `channelCount` is the number of iChannel inputs this pass declares. */
+/** Build the complete fragment shader. `channelCount` is the number of iChannel
+ * inputs this pass declares. Errors inside FOOTER (a missing or mistyped
+ * `mainImage`) report a line just past the end of the user source. */
 export function assembleFragment(userSource: string, uniforms: Uniform[], channelCount: number): AssembledShader {
-	const head = header(uniforms, channelCount);
-	const prefix = head + "#line 1\n";
-	const headerLines = prefix.split("\n").length - 1;
-	return { source: prefix + stripUniformDeclarations(userSource) + FOOTER, headerLines };
+	return { source: header(uniforms, channelCount) + "#line 1\n" + stripUniformDeclarations(userSource) + FOOTER };
 }
