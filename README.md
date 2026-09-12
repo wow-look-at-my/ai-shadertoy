@@ -228,7 +228,7 @@ Open the app, click **Settings**, and add:
 - **Provider** — Anthropic (Claude), OpenRouter, Ollama Cloud, or any
   OpenAI-compatible endpoint. Each brings its own base URL, model presets and
   CORS handling, so picking one and pasting a key is enough.
-- **Model** — defaults to `claude-opus-4-8`. Presets are provided; any model id is
+- **Model** — defaults to `claude-opus-5`. Presets are provided; any model id is
   allowed. OpenRouter and Ollama Cloud publish their catalogues without a key, so
   the model list fills itself before you paste one.
 - **API key** — stored only in your browser's `localStorage`.
@@ -255,7 +255,8 @@ with neither token has the target appended, which is the older prefix form, so a
 proxy URL saved before templates existed keeps working.
 
 Anthropic browser calls send `anthropic-dangerous-direct-browser-access: true`.
-Note that Opus 4.8 / 4.7 reject `temperature`, so it is omitted for those models.
+Claude 4.6 and newer run with extended thinking, which excludes `temperature`, so
+it is only sent to the older budget-thinking models (Sonnet 4.5, Haiku 4.5, Opus 4.5 and earlier).
 
 ## Cost & usage
 
@@ -328,7 +329,8 @@ src/
   shaders/              # default.frag.glsl + internal fullscreen.vert / present.frag
                         #   (all embedded into the bundle)
   styles/app.css
-test/                   # plain-Node unit tests (history / layers / cache / uniforms / set_uniforms / assets / compact)
+test/                   # plain-Node unit tests (history, layers, cache, uniforms, set_uniforms,
+                        #   assets, compact, providers, proxy, exr, markdown, graphlayout, tools)
 ```
 
 No runtime framework — just typed, vanilla DOM helpers, so the bundle stays small.

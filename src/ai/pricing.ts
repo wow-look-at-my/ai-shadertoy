@@ -28,9 +28,14 @@ const DEFAULT_CONTEXT = 128_000;
 // First matching pattern wins; keep most-specific entries first.
 const TABLE: Array<[RegExp, ModelInfo]> = [
 	// Anthropic (authoritative).
-	[/opus-4/, { rate: { in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25 }, context: 1_000_000 }],
+	[/(fable|mythos)-5-1/, { rate: { in: 10, out: 50, cacheRead: 0.25, cacheWrite: 12.5 }, context: 1_000_000 }],
 	[/(fable|mythos)-/, { rate: { in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5 }, context: 1_000_000 }],
-	[/sonnet-4/, { rate: { in: 3, out: 15, cacheRead: 0.3, cacheWrite: 3.75 }, context: 1_000_000 }],
+	[/opus-5|opus-4-[678]/, { rate: { in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25 }, context: 1_000_000 }],
+	[/opus-4-5/, { rate: { in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25 }, context: 200_000 }],
+	[/opus-4/, { rate: { in: 15, out: 75, cacheRead: 1.5, cacheWrite: 18.75 }, context: 200_000 }],
+	[/sonnet-5/, { rate: { in: 2, out: 10, cacheRead: 0.2, cacheWrite: 2.5 }, context: 1_000_000 }],
+	[/sonnet-4-6/, { rate: { in: 3, out: 15, cacheRead: 0.3, cacheWrite: 3.75 }, context: 1_000_000 }],
+	[/sonnet-4/, { rate: { in: 3, out: 15, cacheRead: 0.3, cacheWrite: 3.75 }, context: 200_000 }],
 	[/haiku-4/, { rate: { in: 1, out: 5, cacheRead: 0.1, cacheWrite: 1.25 }, context: 200_000 }],
 	// OpenAI (approximate; cached input billed at ~0.5x, no write charge).
 	[/gpt-4o-mini/, { rate: { in: 0.15, out: 0.6, cacheRead: 0.075, cacheWrite: 0 }, context: 128_000 }],

@@ -37,9 +37,8 @@ export interface Message {
 	role: Role;
 	blocks: Block[];
 	ts: number;
-	/** transient UI hints, not sent to the model */
-	pending?: boolean;
-	error?: string;
+	/** A UI-only remark under the message (a truncated or refused turn); never sent to the model. */
+	note?: string;
 	/** text-tools mode: names of tools this assistant turn invoked via XML tags */
 	textTools?: string[];
 	/** text-tools mode: this user message carries tool results (render as a results row) */
@@ -96,14 +95,18 @@ export const MAX_INPUTS = 16;
  * offscreen texture, with a variable-length list of input channels that can
  * each sample a built-in texture, an image asset, or the output of ANOTHER pass
  * (the graph edges) -- including this pass's own previous frame (feedback).
- * Inputs are addressed as iChannel0..iChannel{N-1} in the shader. The project's
- * `outputPassId` pass is the one shown on screen. */
+ * Inputs are addressed as iChannel0..iChannel{N-1} in the shader. A layer's
+ * `outputPassId` pass is that layer's composite. */
 export interface Pass {
 	id: string;
 	name: string;
 	source: string; // GLSL ES 3.00 body defining mainImage()
 	channels: Channel[]; // 0..MAX_INPUTS; named iChannel0..iChannel{N-1}
 	format: PassFormat;
+	/** "maskComposite": the pass add_mask generated to apply the layer's mask.
+	 * Identified by this flag, never by name or source, so a user edit to the
+	 * wrapper's shader does not make reload wrap it a second time. */
+	role?: "maskComposite";
 }
 
 // ---- layers + geometry -----------------------------------------------------
@@ -241,9 +244,8 @@ export function emptyChannel(): Channel {
 	return { kind: "none", filter: "linear", wrap: "repeat" };
 }
 
-/** Build a list of empty texture inputs. Passes normally derive this from their
- * shader source; explicit legacy/project channel arrays still use this helper. */
-export function defaultChannels(n = 4): Channel[] {
+/** `n` empty texture inputs. */
+export function defaultChannels(n: number): Channel[] {
 	return Array.from({ length: n }, emptyChannel);
 }
 
@@ -364,8 +366,15 @@ export function makeMaskLayer(shapes: Shape[] = []): Layer {
 	return makeLayer("Mask", [pass], pass.id, shapes);
 }
 
+/** The wiring add_mask generates: iChannel0=under, iChannel1=the unmasked
+ * output, iChannel2=mask. Used to recognise a wrapper saved before `role`
+ * existed (source and name may have been edited since). */
+export function hasMaskCompositeWiring(pass: Pass): boolean {
+	return pass.channels[0]?.kind === "under" && pass.channels[1]?.kind === "pass" && pass.channels[2]?.kind === "mask";
+}
+
 export function isMaskCompositePass(pass: Pass): boolean {
-	return pass.name === "Masked Composite" && pass.source === MASK_COMPOSITE_SOURCE && pass.channels[0]?.kind === "under" && pass.channels[1]?.kind === "pass" && pass.channels[2]?.kind === "mask";
+	return pass.role === "maskComposite";
 }
 
 export function ensureMaskCompositePass(layer: Layer): Pass {
@@ -377,6 +386,7 @@ export function ensureMaskCompositePass(layer: Layer): Pass {
 		{ kind: "mask", filter: "linear", wrap: "clamp" },
 	];
 	const pass = makePass("Masked Composite", MASK_COMPOSITE_SOURCE, channels);
+	pass.role = "maskComposite";
 	layer.passes.push(pass);
 	layer.outputPassId = pass.id;
 	return pass;

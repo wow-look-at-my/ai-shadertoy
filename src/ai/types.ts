@@ -60,4 +60,7 @@ export interface StreamOptions {
 	 * (`prompt_cache_key`). Requests that share a prompt prefix should share this
 	 * so they route to the same cache; ignored by the Anthropic path. */
 	cacheKey?: string;
+	/** "none" keeps `tools` defined (a history holding tool blocks needs them) but
+	 * forbids new calls; used by compaction so the model only writes the recap. */
+	toolChoice?: "none";
 }

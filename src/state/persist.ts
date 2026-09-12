@@ -15,46 +15,67 @@ const LS_CURRENT = "ai-shadertoy:current";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+// A failed open is not cached: the next call tries again instead of failing
+// every later write for the life of the page.
 function openDB(): Promise<IDBDatabase> {
 	if (dbPromise) return dbPromise;
-	dbPromise = new Promise((resolve, reject) => {
+	dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
 		const req = indexedDB.open(DB_NAME, DB_VERSION);
 		req.onupgradeneeded = () => {
 			const db = req.result;
 			if (!db.objectStoreNames.contains(STORE_PROJECTS)) db.createObjectStore(STORE_PROJECTS, { keyPath: "id" });
 			if (!db.objectStoreNames.contains(STORE_ASSETS)) db.createObjectStore(STORE_ASSETS, { keyPath: "id" });
 		};
-		req.onsuccess = () => resolve(req.result);
+		req.onblocked = () => reject(new Error("The database is open in another tab at an older version; close that tab and reload."));
+		req.onsuccess = () => {
+			const db = req.result;
+			// Another tab upgrading the schema needs this connection closed; the
+			// next call reopens at the new version.
+			db.onversionchange = () => {
+				db.close();
+				dbPromise = null;
+			};
+			resolve(db);
+		};
 		req.onerror = () => reject(req.error ?? new Error("indexedDB open failed"));
+	});
+	dbPromise.catch(() => {
+		dbPromise = null;
 	});
 	return dbPromise;
 }
 
-function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+/** Run `fn` inside one transaction over `stores`, resolving with the last
+ * request's result once the transaction COMMITS. A commit-time abort (how a
+ * quota overrun surfaces) rejects, which `req.onsuccess` alone would hide. */
+function tx<T>(stores: string | string[], mode: IDBTransactionMode, fn: (t: IDBTransaction) => IDBRequest<T> | void): Promise<T> {
 	return openDB().then(
 		(db) =>
 			new Promise<T>((resolve, reject) => {
-				const t = db.transaction(store, mode);
-				const req = fn(t.objectStore(store));
-				req.onsuccess = () => resolve(req.result);
-				req.onerror = () => reject(req.error);
+				const t = db.transaction(stores, mode);
+				let result: T | undefined;
+				const req = fn(t);
+				if (req) req.onsuccess = () => (result = req.result);
+				t.oncomplete = () => resolve(result as T);
+				t.onerror = () => reject(t.error ?? new Error("indexedDB transaction failed"));
+				t.onabort = () => reject(t.error ?? new Error("indexedDB transaction aborted"));
 			}),
 	);
 }
 
 function getAll<T>(store: string): Promise<T[]> {
-	return tx<T[]>(store, "readonly", (s) => s.getAll() as IDBRequest<T[]>);
+	return tx<T[]>(store, "readonly", (t) => t.objectStore(store).getAll() as IDBRequest<T[]>);
 }
 
 export const db = {
-	saveProject: (p: Project) => tx(STORE_PROJECTS, "readwrite", (s) => s.put(p)),
+	saveProject: (p: Project) => tx(STORE_PROJECTS, "readwrite", (t) => t.objectStore(STORE_PROJECTS).put(p)),
 	// Normalize on read so legacy single-pass records (and any partial/imported
 	// shapes) become current-shape Projects before the app touches them.
 	loadProjects: () => getAll<unknown>(STORE_PROJECTS).then((rows) => rows.map(normalizeProject)),
-	deleteProject: (id: string) => tx(STORE_PROJECTS, "readwrite", (s) => s.delete(id)),
-	saveAsset: (a: ImageAsset) => tx(STORE_ASSETS, "readwrite", (s) => s.put(a)),
+	deleteProject: (id: string) => tx(STORE_PROJECTS, "readwrite", (t) => t.objectStore(STORE_PROJECTS).delete(id)),
+	saveAsset: (a: ImageAsset) => tx(STORE_ASSETS, "readwrite", (t) => t.objectStore(STORE_ASSETS).put(a)),
 	loadAssets: () => getAll<ImageAsset>(STORE_ASSETS),
-	deleteAsset: (id: string) => tx(STORE_ASSETS, "readwrite", (s) => s.delete(id)),
+	deleteAsset: (id: string) => tx(STORE_ASSETS, "readwrite", (t) => t.objectStore(STORE_ASSETS).delete(id)),
 };
 
 // ---- settings (localStorage) ------------------------------------------------
@@ -77,7 +98,11 @@ export function saveSettings(s: Settings): void {
 }
 
 export function getCurrentProjectId(): string | null {
-	return localStorage.getItem(LS_CURRENT);
+	try {
+		return localStorage.getItem(LS_CURRENT);
+	} catch {
+		return null; // storage disabled
+	}
 }
 export function setCurrentProjectId(id: string): void {
 	try {
@@ -133,15 +158,36 @@ export async function buildExport(opts: { includeSettings: boolean; includeKeys:
 	return bundle;
 }
 
-export async function importBundle(bundle: ExportBundle, mode: "merge" | "replace"): Promise<{ projects: number; assets: number }> {
-	if (bundle.kind !== "ai-shadertoy-export") throw new Error("Not an ai-shadertoy export file.");
-	if (mode === "replace") {
-		const existing = await db.loadProjects();
-		for (const p of existing) await db.deleteProject(p.id);
-		const ea = await db.loadAssets();
-		for (const a of ea) await db.deleteAsset(a.id);
-	}
-	for (const p of bundle.projects) await db.saveProject(normalizeProject(p));
-	for (const a of bundle.assets) await db.saveAsset(a);
-	return { projects: bundle.projects.length, assets: bundle.assets.length };
+/** Check a bundle's shape BEFORE anything is deleted, so a truncated or
+ * hand-edited file cannot wipe the database and then fail halfway. Pure. */
+export function validateBundle(raw: unknown): { projects: Project[]; assets: ImageAsset[]; settings?: Partial<Settings> } {
+	const b = (raw ?? {}) as Partial<ExportBundle>;
+	if (b.kind !== "ai-shadertoy-export") throw new Error("Not an ai-shadertoy export file.");
+	if (!Array.isArray(b.projects)) throw new Error("Export file has no projects list.");
+	if (!Array.isArray(b.assets)) throw new Error("Export file has no assets list.");
+	const assets: ImageAsset[] = [];
+	b.assets.forEach((a, i) => {
+		const r = (a ?? {}) as Partial<ImageAsset>;
+		if (typeof r.id !== "string" || !r.id || typeof r.dataUrl !== "string" || !r.dataUrl) throw new Error(`Asset ${i + 1} in the export file has no id or data.`);
+		assets.push({ ...r, id: r.id, dataUrl: r.dataUrl, name: typeof r.name === "string" && r.name ? r.name : `asset ${i + 1}` } as ImageAsset);
+	});
+	const settings = b.settings && typeof b.settings === "object" ? (b.settings as Partial<Settings>) : undefined;
+	return { projects: b.projects.map(normalizeProject), assets, settings };
+}
+
+/** Write a validated bundle. In `replace` mode the delete and the writes share
+ * one transaction, so the database is never left half-imported. */
+export async function importBundle(raw: unknown, mode: "merge" | "replace"): Promise<{ projects: number; assets: number; settings?: Partial<Settings> }> {
+	const { projects, assets, settings } = validateBundle(raw);
+	await tx([STORE_PROJECTS, STORE_ASSETS], "readwrite", (t) => {
+		const ps = t.objectStore(STORE_PROJECTS);
+		const as = t.objectStore(STORE_ASSETS);
+		if (mode === "replace") {
+			ps.clear();
+			as.clear();
+		}
+		for (const p of projects) ps.put(p);
+		for (const a of assets) as.put(a);
+	});
+	return { projects: projects.length, assets: assets.length, settings };
 }

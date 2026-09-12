@@ -1,11 +1,31 @@
 // Small standalone helpers used across modules.
 
-export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): (...args: A) => void {
+export interface Debounced<A extends unknown[]> {
+	(...args: A): void;
+	/** Run a pending call now (a no-op when nothing is pending). */
+	flush(): void;
+}
+
+export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): Debounced<A> {
 	let timer: number | undefined;
-	return (...args: A) => {
-		if (timer !== undefined) clearTimeout(timer);
-		timer = setTimeout(() => fn(...args), ms) as unknown as number;
+	let last: A | undefined;
+	const run = (): void => {
+		timer = undefined;
+		const args = last;
+		last = undefined;
+		if (args) fn(...args);
 	};
+	const d = ((...args: A) => {
+		last = args;
+		if (timer !== undefined) clearTimeout(timer);
+		timer = setTimeout(run, ms) as unknown as number;
+	}) as Debounced<A>;
+	d.flush = () => {
+		if (timer === undefined) return;
+		clearTimeout(timer);
+		run();
+	};
+	return d;
 }
 
 export function uid(prefix = ""): string {
@@ -38,10 +58,12 @@ export function withScheme(url: string): string {
  * A template with neither token is read as the bare prefix form and gets the
  * target appended, so a proxy URL written before templates existed still works.
  * An empty setting is not a proxy: the target goes out untouched. */
+const PROXY_TOKEN_RE = /\{\{\s*\.(rawurl|url)\s*\}\}/g;
+
 export function proxied(target: string, template: string): string {
 	const base = withScheme(template.trim());
 	if (!base) return target;
-	const filled = base.replace(/\{\{\s*\.(rawurl|url)\s*\}\}/g, (_m, token: string) => (token === "rawurl" ? target : encodeURIComponent(target)));
+	const filled = base.replace(PROXY_TOKEN_RE, (_m, token: string) => (token === "rawurl" ? target : encodeURIComponent(target)));
 	if (filled !== base) return filled;
 	return `${base.replace(/\/+$/, "")}/${target}`;
 }
@@ -49,7 +71,8 @@ export function proxied(target: string, template: string): string {
 /** True when a proxy setting names its substitution point. The Settings field
  * uses this to show which rule a given value will follow. */
 export function hasProxyToken(template: string): boolean {
-	return /\{\{\s*\.(rawurl|url)\s*\}\}/.test(template);
+	PROXY_TOKEN_RE.lastIndex = 0; // a global regex keeps state between test() calls
+	return PROXY_TOKEN_RE.test(template);
 }
 
 export function escapeHtml(s: string): string {
@@ -65,21 +88,6 @@ export function formatBytes(n: number): string {
 	if (n < 1024) return `${n} B`;
 	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
 	return `${(n / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-/** Pull the first fenced code block (optionally filtered by language) out of markdown text. */
-export function extractCodeBlock(text: string, langPrefixes: string[] = []): string | null {
-	const re = /```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g;
-	let m: RegExpExecArray | null;
-	let firstAny: string | null = null;
-	while ((m = re.exec(text)) !== null) {
-		const lang = (m[1] || "").toLowerCase();
-		const body = m[2];
-		if (firstAny === null) firstAny = body;
-		if (langPrefixes.length === 0) return body;
-		if (langPrefixes.some((p) => lang.startsWith(p))) return body;
-	}
-	return langPrefixes.length === 0 ? firstAny : null;
 }
 
 export function downloadFile(name: string, content: string | Blob, mime = "application/json"): void {
@@ -122,29 +130,20 @@ export async function copyText(text: string): Promise<boolean> {
 	}
 }
 
-export function pickFile(accept: string): Promise<File | null> {
+/** Open the file dialog. Resolves with the chosen files, or an empty array when
+ * the dialog is dismissed (the `cancel` event), so a caller never hangs. */
+export function pickFiles(accept: string, multiple = true): Promise<File[]> {
 	return new Promise((resolve) => {
 		const input = document.createElement("input");
 		input.type = "file";
 		input.accept = accept;
-		input.onchange = () => resolve(input.files?.[0] ?? null);
-		input.click();
-	});
-}
-
-/** Like pickFile but allows selecting several files at once. Resolves with the
- * chosen files (empty array if none were selected). */
-export function pickFiles(accept: string): Promise<File[]> {
-	return new Promise((resolve) => {
-		const input = document.createElement("input");
-		input.type = "file";
-		input.accept = accept;
-		input.multiple = true;
+		input.multiple = multiple;
 		input.onchange = () => resolve(input.files ? Array.from(input.files) : []);
+		input.oncancel = () => resolve([]);
 		input.click();
 	});
 }
 
-export function readFileText(file: File): Promise<string> {
-	return file.text();
+export function pickFile(accept: string): Promise<File | null> {
+	return pickFiles(accept, false).then((files) => files[0] ?? null);
 }

@@ -34,7 +34,7 @@ registerTool({
 		const gen = await generateImage(ctx.settings, prompt);
 		const asset: ImageAsset = {
 			id: uid("a_"),
-			name: input["name"] ? String(input["name"]) : `gen-${ctx.assets.length + 1}`,
+			name: input["name"] ? String(input["name"]) : "generated", // the store uniquifies ("generated 2", ...)
 			mediaType: gen.mediaType,
 			dataUrl: gen.dataUrl,
 			width: gen.width,

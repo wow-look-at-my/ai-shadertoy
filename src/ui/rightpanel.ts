@@ -9,7 +9,7 @@ import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { copyText, debounce, formatBytes, pickFile, pickFiles, uid } from "../util/misc.ts";
 import { formatUniformDeclarations } from "../gl/wrapper.ts";
-import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES, sanitizeAssetName } from "../util/media.ts";
+import { fileToDataUrl, loadImageEl, loadVideoMeta, MAX_VIDEO_BYTES } from "../util/media.ts";
 import { BUILTIN_LABELS } from "../gl/textures.ts";
 import { SHAPE_DEFS, SHAPE_LABELS } from "../gl/shapes.ts";
 import { layoutGraph, type LayoutResult, type NodePos } from "./graphlayout.ts";
@@ -104,15 +104,16 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "soft" } });
 	textarea.value = store.selectedPass().source;
 
-	const apply = debounce(() => store.setPassSource(store.selectedPassId, textarea.value, true), 350);
+	// The pass is captured at keystroke time: the selection can change before
+	// the debounce fires, and the edit must land on the pass it was typed into.
+	const applyTo = debounce((passId: string, source: string) => store.setPassSource(passId, source, true), 350);
+	const apply = () => applyTo(store.selectedPassId, textarea.value);
 	textarea.addEventListener("input", apply);
 	textarea.addEventListener("keydown", (e) => {
 		if (e.key === "Tab") {
 			e.preventDefault();
-			const s = textarea.selectionStart;
-			const eN = textarea.selectionEnd;
-			textarea.value = textarea.value.slice(0, s) + "\t" + textarea.value.slice(eN);
-			textarea.selectionStart = textarea.selectionEnd = s + 1;
+			// setRangeText keeps the browser's own undo stack intact.
+			textarea.setRangeText("\t", textarea.selectionStart, textarea.selectionEnd, "end");
 			apply();
 		}
 	});
@@ -128,6 +129,7 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 		}
 	};
 	const sync = () => {
+		applyTo.flush(); // a pending edit belongs to the pass it was typed into
 		const src = store.selectedPass().source;
 		if (document.activeElement !== textarea && textarea.value !== src) textarea.value = src;
 		syncLog();
@@ -410,8 +412,8 @@ function beginRename(store: Store, pass: Pass, nameEl: HTMLElement): void {
 	input.select();
 	const commit = () => {
 		const v = input.value.trim();
-		if (v) store.renamePass(pass.id, v);
-		else store.renamePass(pass.id, pass.name); // re-render to restore
+		if (v && v !== pass.name) store.renamePass(pass.id, v);
+		else input.replaceWith(nameEl); // unchanged or cleared: restore, no history entry
 	};
 	input.addEventListener("keydown", (e) => {
 		if (e.key === "Enter") input.blur();
@@ -462,8 +464,12 @@ function channelSelect(store: Store, pass: Pass, index: number, compact: boolean
 		else if (v === "webcam") store.connectPin(pass.id, index, { kind: "webcam", assetId: undefined, builtin: undefined, passId: undefined });
 		else if (v.startsWith("pass:")) store.connectPin(pass.id, index, { kind: "pass", passId: v.slice(5), builtin: undefined, assetId: undefined });
 		else if (v.startsWith("builtin:")) store.connectPin(pass.id, index, { kind: "builtin", builtin: v.slice(8) as BuiltinTexture, assetId: undefined, passId: undefined });
-		else if (v === "upload-image") void uploadAndBind(store, pass.id, index, "image");
-		else if (v === "upload-video") void uploadAndBind(store, pass.id, index, "video");
+		else if (v === "upload-image" || v === "upload-video") {
+			// A cancelled dialog leaves no new binding, so show the real one again.
+			void uploadAndBind(store, pass.id, index, v === "upload-video" ? "video" : "image").then((bound) => {
+				if (!bound) sel.value = value;
+			});
+		}
 		else if (v.startsWith("image:")) store.connectPin(pass.id, index, { kind: "image", assetId: v.slice(6), builtin: undefined, passId: undefined });
 		else if (v.startsWith("video:")) store.connectPin(pass.id, index, { kind: "video", assetId: v.slice(6), builtin: undefined, passId: undefined });
 	});
@@ -590,14 +596,6 @@ function renderTextures(store: Store, container: HTMLElement): void {
 
 /** De-duplicate an asset name against the existing library so the AI can address
  * each asset unambiguously (connect_pins resolves asset:<name> by first match). */
-function uniqueAssetName(assets: ImageAsset[], base: string): string {
-	const want = base.trim() || "asset";
-	const taken = new Set(assets.map((a) => a.name.toLowerCase()));
-	if (!taken.has(want.toLowerCase())) return want;
-	let i = 2;
-	while (taken.has(`${want} ${i}`.toLowerCase())) i++;
-	return `${want} ${i}`;
-}
 
 /** Probe one already-chosen file's dimensions and add it to the shared asset
  * library (no channel binding). Returns the new asset, or null if it was rejected
@@ -626,7 +624,7 @@ async function addAssetFromFile(store: Store, file: File, type: "image" | "video
 		id: uid("a_"),
 		// Clean exotic characters out of the filename first (U+202F etc.), then
 		// de-duplicate so the AI can address each asset unambiguously by name.
-		name: uniqueAssetName(store.assets, sanitizeAssetName(file.name.replace(/\.[^.]+$/, ""))),
+		name: file.name.replace(/\.[^.]+$/, ""), // the store sanitizes and uniquifies
 		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
 		dataUrl,
 		width,
@@ -725,10 +723,13 @@ function setupAssetDrop(store: Store, container: HTMLElement): void {
 	});
 }
 
-async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<void> {
+/** Upload one file into the library and bind it to a channel. False when the
+ * dialog was cancelled or the file was rejected (nothing changed). */
+async function uploadAndBind(store: Store, passId: string, channel: number, type: "image" | "video"): Promise<boolean> {
 	const asset = await pickAndAddAsset(store, type);
-	if (!asset) return;
+	if (!asset) return false;
 	store.connectPin(passId, channel, { kind: type === "video" ? "video" : "image", assetId: asset.id, builtin: undefined, passId: undefined });
+	return true;
 }
 
 // ---- assets (shared media library) -----------------------------------------
@@ -785,7 +786,10 @@ function renderAssets(store: Store, container: HTMLElement): void {
 
 function numberInput(value: number, onChange: (v: number) => void): HTMLInputElement {
 	const inp = el("input", { class: "u-num", type: "number", value: String(value) });
-	inp.addEventListener("change", () => onChange(Number(inp.value)));
+	inp.addEventListener("change", () => {
+		if (inp.value === "" || !Number.isFinite(inp.valueAsNumber)) return; // a cleared field is not 0
+		onChange(inp.valueAsNumber);
+	});
 	return inp;
 }
 
@@ -860,6 +864,7 @@ function layerRow(store: Store, layer: Layer, index: number, total: number, acti
 	const opacity = el("input", { class: "layer-opacity", type: "range", title: "Layer opacity", attrs: { min: "0", max: "1", step: "0.01", value: String(layer.opacity) } });
 	opacity.addEventListener("input", () => store.setLayerOpacity(layer.id, Number(opacity.value), true));
 	opacity.addEventListener("pointerdown", stop);
+	opacity.addEventListener("click", stop); // the click after a drag must not select the layer
 
 	const maskBtn = layer.mask
 		? el("button", { class: `btn icon tiny mask-btn${editingMask ? " on" : ""}`, title: editingMask ? "Editing this mask" : "Edit mask", on: { click: (e) => { stop(e); store.selectLayer(layer.mask!.id); } } }, icon("mask", { size: 15 }))
@@ -881,7 +886,11 @@ function beginLayerRename(store: Store, layer: Layer, nameEl: HTMLElement): void
 	input.select();
 	input.addEventListener("pointerdown", (e) => e.stopPropagation());
 	input.addEventListener("click", (e) => e.stopPropagation());
-	const commit = () => store.renameLayer(layer.id, input.value.trim() || layer.name);
+	const commit = () => {
+		const v = input.value.trim();
+		if (v && v !== layer.name) store.renameLayer(layer.id, v);
+		else input.replaceWith(nameEl); // unchanged or cleared: restore, no history entry
+	};
 	input.addEventListener("keydown", (e) => {
 		if (e.key === "Enter") input.blur();
 		if (e.key === "Escape") { input.value = layer.name; input.blur(); }
@@ -942,7 +951,8 @@ function shapeRow(store: Store, layer: Layer, shape: Shape, index: number): HTML
 
 function shapeNum(value: number, step: number, onChange: (v: number) => void): HTMLInputElement {
 	const inp = el("input", { class: "shape-num", type: "number", attrs: { step: String(step), value: String(value) } });
-	const fire = () => { const n = Number(inp.value); if (Number.isFinite(n)) onChange(n); };
+	// A field mid-edit ("", "-", "1.") is not a number yet; leave the shape alone.
+	const fire = () => { if (inp.value !== "" && Number.isFinite(inp.valueAsNumber)) onChange(inp.valueAsNumber); };
 	inp.addEventListener("input", fire);
 	return inp;
 }

@@ -156,9 +156,11 @@ export function createShapeGizmo(store: Store, canvas: HTMLCanvasElement): HTMLE
 			overlay.classList.remove("dragging");
 			window.removeEventListener("pointermove", move);
 			window.removeEventListener("pointerup", up);
+			window.removeEventListener("pointercancel", up);
 		};
 		window.addEventListener("pointermove", move);
 		window.addEventListener("pointerup", up);
+		window.addEventListener("pointercancel", up); // a touch gesture the browser takes over
 	}
 
 	overlay.addEventListener("pointerdown", (e) => {

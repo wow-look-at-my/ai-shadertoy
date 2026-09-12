@@ -1,9 +1,10 @@
 // Default settings and project factories.
 
-import type { Channel, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
-import { channelsForSource, emptyChannel, ensureMaskCompositePass, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
+import type { Channel, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform, UniformType } from "./types.ts";
+import { channelsForSource, emptyChannel, ensureMaskCompositePass, hasMaskCompositeWiring, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
 import { isShapeKind } from "../gl/shapes.ts";
-import { uid } from "../util/misc.ts";
+import { uniformLength } from "../gl/wrapper.ts";
+import { hasProxyToken, uid } from "../util/misc.ts";
 
 export interface ProviderInfo {
 	label: string;
@@ -28,16 +29,16 @@ export interface ProviderInfo {
 	needsKey: boolean;
 }
 
-// Anthropic defaults to Opus 4.8 (the most capable current model). Fable 5 is
-// intentionally omitted: it forces always-on thinking, whose replay rules the
-// simple browser tool-loop here does not implement.
+// Anthropic defaults to Opus 5 (the most capable Opus-tier model, at Opus 4.8's
+// price). The Fable tier is left out of the presets for its cost; any id still
+// works when typed, and providers.ts gates the request shape per model.
 export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 	anthropic: {
 		label: "Anthropic (Claude)",
 		wire: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		needsProxy: false,
-		models: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-7"],
+		models: ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
 		needsKeyForModels: true,
 		needsKey: true,
 	},
@@ -88,7 +89,7 @@ export const DEFAULT_SETTINGS: Settings = {
 		provider: "anthropic",
 		baseUrl: "",
 		apiKey: "",
-		model: "claude-opus-4-8",
+		model: "claude-opus-5",
 		maxTokens: 16384,
 		temperature: 0.7,
 		useProxy: false,
@@ -99,7 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
 		baseUrl: "https://api.openai.com/v1",
 		apiKey: "",
 		model: "gpt-image-1",
-		size: "512x512",
+		size: "1024x1024",
 		useProxy: false,
 	},
 	proxyUrl: "https://proxy.pazer.ai/?url={{.url}}",
@@ -118,7 +119,7 @@ export const DEFAULT_SETTINGS: Settings = {
 export function migrateProxyTemplate(value: string): string {
 	const v = value.trim();
 	if (!v) return DEFAULT_SETTINGS.proxyUrl;
-	if (/\{\{\s*\.(rawurl|url)\s*\}\}/.test(v)) return v;
+	if (hasProxyToken(v)) return v;
 	const base = v.replace(/\/+$/, "");
 	if (/(^|\/\/|\.)proxy\.pazer\.ai(\/|:|$)/i.test(base)) return `${base}/?url={{.url}}`;
 	return `${base}/{{.rawurl}}`;
@@ -135,8 +136,6 @@ export function mergeSettings(partial: Partial<Settings> | null): Settings {
 	merged.proxyUrl = migrateProxyTemplate(merged.proxyUrl);
 	return merged;
 }
-
-export const STARTER_UNIFORMS: Uniform[] = [];
 
 /** A fresh project: one "Base" layer wrapping a single "Image" pass (no
  * geometry), matching the classic single-shader starting point. New layers are
@@ -195,13 +194,15 @@ function normalizePass(raw: unknown, i: number): Pass {
 	// Legacy `x`/`y` graph-editor coordinates (if present) are dropped: the Passes
 	// view now auto-lays the DAG out from its edges (see ui/graphlayout.ts).
 	const fallback = makePass(r.name ?? `Pass ${i + 1}`, r.source ?? "", normalizeChannels(r.channels, r.source ?? ""));
-	return {
+	const pass: Pass = {
 		id: typeof r.id === "string" && r.id ? r.id : fallback.id,
 		name: r.name ?? fallback.name,
 		source: r.source ?? "",
 		channels: normalizeChannels(r.channels, r.source ?? ""),
 		format: r.format === "rgba16f" ? "rgba16f" : "rgba8",
 	};
+	if (r.role === "maskComposite") pass.role = "maskComposite";
+	return pass;
 }
 
 function normalizeShape(raw: unknown): Shape {
@@ -241,9 +242,25 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 	};
 	if (r.mask && typeof r.mask === "object") {
 		layer.mask = normalizeLayer(r.mask, 0);
+		// A wrapper saved before `role` existed is recognised by its wiring, so an
+		// edited or renamed wrapper is not wrapped again on every load.
+		const out = layer.passes.find((p) => p.id === layer.outputPassId);
+		if (out && !out.role && hasMaskCompositeWiring(out)) out.role = "maskComposite";
 		ensureMaskCompositePass(layer);
 	}
 	return layer;
+}
+
+function normalizeUniform(raw: unknown): Uniform | null {
+	const r = (raw ?? {}) as Partial<Uniform>;
+	if (typeof r.name !== "string" || !r.name) return null;
+	const type: UniformType = r.type === "vec2" || r.type === "vec3" || r.type === "vec4" || r.type === "color" ? r.type : "float";
+	const n = uniformLength(type);
+	const value = Array.isArray(r.value) ? r.value.map((v) => (Number.isFinite(Number(v)) ? Number(v) : 0)) : [];
+	while (value.length < n) value.push(0);
+	const u: Uniform = { name: r.name, type, value: value.slice(0, n), min: clampNum(r.min, -1e9, 1e9, 0), max: clampNum(r.max, -1e9, 1e9, 1), step: clampNum(r.step, 1e-9, 1e9, 0.01) };
+	if (typeof r.label === "string" && r.label) u.label = r.label;
+	return u;
 }
 
 /** Coerce a persisted/imported record into a current-shape Project. Three eras:
@@ -259,14 +276,14 @@ export function normalizeProject(raw: unknown): Project {
 	} else if (Array.isArray(r.passes) && r.passes.length) {
 		layers = [normalizeLayer({ name: "Base", passes: r.passes, outputPassId: r.outputPassId }, 0)];
 	} else {
-		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels));
+		const output = makePass("Image", r.shaderSource ?? "", normalizeChannels(r.channels, r.shaderSource ?? ""));
 		layers = [makeLayer("Base", [output], output.id, [])];
 	}
 	return {
 		id: r.id ?? uid("p_"),
 		name: r.name ?? "Untitled shader",
 		layers,
-		uniforms: Array.isArray(r.uniforms) ? r.uniforms : [],
+		uniforms: Array.isArray(r.uniforms) ? r.uniforms.map(normalizeUniform).filter((u): u is Uniform => u !== null) : [],
 		messages: Array.isArray(r.messages) ? r.messages : [],
 		createdAt: typeof r.createdAt === "number" ? r.createdAt : now,
 		updatedAt: typeof r.updatedAt === "number" ? r.updatedAt : now,

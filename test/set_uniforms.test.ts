@@ -71,4 +71,24 @@ function fakeCtx(uniforms: Uniform[]): { ctx: ToolContext; captured: () => Unifo
 	check(val(merged, "u_t").length === 3, "a vec3 value is padded to three components");
 }
 
+// ---- a value-only patch keeps the control's widened range and label ----------
+{
+	const current: Uniform[] = [{ name: "u_speed", type: "float", value: [3], min: 0, max: 10, step: 0.1, label: "Speed" }];
+	const { ctx, captured } = fakeCtx(current);
+	tool!.execute(ctx, { uniforms: [{ name: "u_speed", type: "float", value: [7] }] });
+	const u = captured().find((x) => x.name === "u_speed")!;
+	near(u.value[0], 7, "the value is patched");
+	near(u.max, 10, "an omitted max keeps the widened range (not reset to 1)");
+	near(u.step, 0.1, "an omitted step is kept");
+	check(u.label === "Speed", "an omitted label is kept");
+}
+
+// ---- a bad type is reported, not stored -------------------------------------
+{
+	const { ctx, captured } = fakeCtx([]);
+	const res = tool!.execute(ctx, { uniforms: [{ name: "u_i", type: "int", value: [1] }] });
+	check(captured().length === 0, "an unknown uniform type is not stored");
+	check(/type must be one of/.test(JSON.stringify(res)), "the reply names the type error");
+}
+
 console.log(`set_uniforms.test.ts: ${passed} checks passed`);

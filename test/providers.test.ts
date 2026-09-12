@@ -5,8 +5,9 @@
 // registry rather than from the user finding a toggle.
 
 import { PROVIDERS, DEFAULT_SETTINGS, providerBaseUrl } from "../src/state/defaults.ts";
-import { chatEndpoint } from "../src/ai/providers.ts";
-import type { ProviderId, Settings } from "../src/state/types.ts";
+import { anthropicBody, chatEndpoint, openaiBody } from "../src/ai/providers.ts";
+import type { Message, ProviderId, Settings } from "../src/state/types.ts";
+import type { ToolDef } from "../src/ai/types.ts";
 
 let passed = 0;
 function eq(a: unknown, b: unknown, msg: string): void {
@@ -92,5 +93,59 @@ for (const id of ["anthropic", "openrouter", "ollama-cloud"] as ProviderId[]) {
 // itself before a key is entered.
 eq(PROVIDERS.openrouter.needsKeyForModels, false, "OpenRouter lists models unauthenticated");
 eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists models unauthenticated");
+
+// ---- request body gates: never a field the model rejects with a 400 ---------
+
+const HISTORY: Message[] = [{ id: "m1", role: "user", ts: 0, blocks: [{ type: "text", text: "hi" }] }];
+const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "object", properties: {} } };
+
+// Anthropic: adaptive thinking on current models, a token budget on 4.5-era ones,
+// and temperature only where sampling is still accepted. An id this code has
+// never seen is treated as new (adaptive, no temperature).
+{
+	const body = (model: string) => anthropicBody({ ...DEFAULT_SETTINGS.chat, model }, "sys", "", HISTORY, [TOOL]);
+	for (const m of ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5-1", "claude-opus-6"]) {
+		const b = body(m);
+		eq((b["thinking"] as { type: string })?.type, "adaptive", `${m}: adaptive thinking`);
+		ok(!("temperature" in b), `${m}: no temperature (rejected with a 400)`);
+		eq((b["output_config"] as { effort: string })?.effort, "medium", `${m}: effort is sent`);
+	}
+	for (const m of ["claude-opus-4-6", "claude-sonnet-4-6"]) {
+		const b = body(m);
+		eq((b["thinking"] as { type: string })?.type, "adaptive", `${m}: adaptive thinking`);
+		ok(!("temperature" in b), `${m}: thinking and temperature are mutually exclusive`);
+	}
+	for (const m of ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]) {
+		const b = body(m);
+		eq((b["thinking"] as { type: string })?.type, "enabled", `${m}: budget thinking`);
+		ok(!("output_config" in b), `${m}: no effort (rejected with a 400)`);
+	}
+	eq((body("claude-opus-4-5")["output_config"] as { effort: string })?.effort, "medium", "Opus 4.5 accepts effort");
+	// The history holds tool blocks after a turn, so tools must stay defined even
+	// when the model may not call any (compaction).
+	const none = anthropicBody(DEFAULT_SETTINGS.chat, "sys", "", HISTORY, [TOOL], { toolChoice: "none" });
+	ok(Array.isArray(none["tools"]), "tools stay defined with tool_choice none");
+	eq((none["tool_choice"] as { type: string })?.type, "none", "tool_choice none is sent");
+	ok(!("tool_choice" in body("claude-opus-5")), "tool_choice is absent for a normal turn");
+}
+
+// OpenAI: reasoning models take max_completion_tokens and no temperature; every
+// other model and every compatible server keeps the classic fields.
+{
+	const body = (over: Partial<Settings["chat"]>, opts = {}) => openaiBody({ ...settingsFor("openai", over).chat }, "sys", "", HISTORY, [TOOL], opts);
+	for (const model of ["gpt-5", "gpt-5-mini", "o4-mini"]) {
+		const b = body({ model });
+		eq(b["max_completion_tokens"], DEFAULT_SETTINGS.chat.maxTokens, `${model}: max_completion_tokens`);
+		ok(!("max_tokens" in b) && !("temperature" in b), `${model}: no max_tokens/temperature`);
+	}
+	const classic = body({ model: "gpt-4.1" });
+	eq(classic["max_tokens"], DEFAULT_SETTINGS.chat.maxTokens, "gpt-4.1 keeps max_tokens");
+	eq(classic["temperature"], DEFAULT_SETTINGS.chat.temperature, "gpt-4.1 keeps temperature");
+	const local = body({ model: "gpt-5-something", baseUrl: "http://localhost:11434/v1" });
+	ok("max_tokens" in local, "a self-hosted server keeps max_tokens whatever the model id");
+	eq(local["cache_prompt"], true, "a self-hosted server gets cache_prompt");
+	ok(!("cache_prompt" in classic), "hosted OpenAI never gets cache_prompt");
+	eq(body({ model: "gpt-4.1" }, { toolChoice: "none" })["tool_choice"], "none", "tool_choice none on the OpenAI wire");
+}
 
 console.log(`ok - ${passed} assertions passed`);

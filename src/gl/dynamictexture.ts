@@ -12,10 +12,18 @@ export class DynamicTexture {
 	width = 0;
 	height = 0;
 
+	/** Fires when a new frame is decoded while the clip is not playing (first
+	 * frame ready, or a seek landed), so a paused renderer can redraw once. */
+	onFrame: (() => void) | null = null;
+
 	private gl: WebGL2RenderingContext;
 	private video: HTMLVideoElement;
 	private stream: MediaStream | null;
 	private uploaded = false;
+	private lastTime = -1;
+	private notify = (): void => {
+		if (this.video.paused) this.onFrame?.();
+	};
 
 	private constructor(gl: WebGL2RenderingContext, video: HTMLVideoElement, stream: MediaStream | null) {
 		this.gl = gl;
@@ -23,7 +31,14 @@ export class DynamicTexture {
 		this.stream = stream;
 		video.muted = true;
 		video.playsInline = true;
-		video.autoplay = true;
+		// Playback follows the renderer's explicit play()/pause(); autoplay would
+		// start a clip bound while the renderer is paused.
+		video.addEventListener("loadeddata", this.notify);
+		video.addEventListener("seeked", this.notify);
+		video.addEventListener("error", () => {
+			const e = video.error;
+			console.error(`video input failed to load: ${e ? `${e.message || "media error"} (code ${e.code})` : "unknown error"}`);
+		});
 		const tex = gl.createTexture()!;
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 		// 1x1 black placeholder so the sampler is complete before the first frame.
@@ -68,11 +83,14 @@ export class DynamicTexture {
 	}
 
 	/** Upload the current frame if one is ready. No-op (keeps the last frame) until
-	 * the video has decoded data and known dimensions. */
+	 * the video has decoded data and known dimensions, or while a paused clip
+	 * still shows the frame already uploaded. */
 	update(): void {
 		const gl = this.gl;
 		const v = this.video;
 		if (v.readyState < 2 /* HAVE_CURRENT_DATA */ || v.videoWidth === 0) return;
+		if (this.uploaded && !this.stream && v.currentTime === this.lastTime) return;
+		this.lastTime = v.currentTime;
 		const w = v.videoWidth;
 		const h = v.videoHeight;
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);

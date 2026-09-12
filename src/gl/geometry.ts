@@ -54,7 +54,13 @@ export class GeometryBatch {
 	private link(vertSource: string, fragSource: string): WebGLProgram {
 		const gl = this.gl;
 		const vs = this.compile(gl.VERTEX_SHADER, vertSource);
-		const fs = this.compile(gl.FRAGMENT_SHADER, fragSource);
+		let fs: WebGLShader;
+		try {
+			fs = this.compile(gl.FRAGMENT_SHADER, fragSource);
+		} catch (e) {
+			gl.deleteShader(vs);
+			throw e;
+		}
 		const program = gl.createProgram()!;
 		gl.attachShader(program, vs);
 		gl.attachShader(program, fs);

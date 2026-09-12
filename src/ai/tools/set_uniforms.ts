@@ -4,8 +4,13 @@
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";
 import { text } from "./types.ts";
-import { isValidUniformName } from "../../gl/wrapper.ts";
-import type { Uniform } from "../../state/types.ts";
+import { isValidUniformName, rangeForValues, uniformLength } from "../../gl/wrapper.ts";
+import type { Uniform, UniformType } from "../../state/types.ts";
+
+const UNIFORM_TYPES: ReadonlySet<string> = new Set(["float", "vec2", "vec3", "vec4", "color"]);
+function isUniformType(t: string): t is UniformType {
+	return UNIFORM_TYPES.has(t);
+}
 
 registerTool({
 	name: TOOL_NAMES.setUniforms,
@@ -42,25 +47,35 @@ registerTool({
 		if (!Array.isArray(raw)) return { content: [text("uniforms must be an array.")], isError: true };
 		const uniforms: Uniform[] = [];
 		const errors: string[] = [];
+		const current = new Map(ctx.project.uniforms.map((u) => [u.name, u]));
 		for (const item of raw as Array<Record<string, unknown>>) {
 			const name = String(item["name"] ?? "");
-			const type = String(item["type"] ?? "float") as Uniform["type"];
+			const type = String(item["type"] ?? "float");
 			if (!isValidUniformName(name)) {
 				errors.push(`invalid/reserved uniform name: ${name}`);
 				continue;
 			}
-			const need = type === "float" ? 1 : type === "vec2" ? 2 : type === "vec4" ? 4 : 3;
+			if (!isUniformType(type)) {
+				errors.push(`${name}: type must be one of float, vec2, vec3, vec4, color`);
+				continue;
+			}
+			const need = uniformLength(type);
 			let value = Array.isArray(item["value"]) ? (item["value"] as unknown[]).map(Number) : [];
 			if (value.length < need) value = value.concat(new Array(need - value.length).fill(0));
 			value = value.slice(0, need);
+			// PATCH within the record too: a field the call omits keeps the control's
+			// current range/step/label (a widened slider must survive a value-only patch).
+			const prev = current.get(name);
+			const keepRange = prev !== undefined && prev.type === type;
+			const range = keepRange ? { min: prev.min, max: prev.max, step: prev.step } : rangeForValues(value);
 			uniforms.push({
 				name,
 				type,
 				value,
-				min: typeof item["min"] === "number" ? (item["min"] as number) : 0,
-				max: typeof item["max"] === "number" ? (item["max"] as number) : 1,
-				step: typeof item["step"] === "number" ? (item["step"] as number) : 0.01,
-				label: item["label"] ? String(item["label"]) : undefined,
+				min: typeof item["min"] === "number" ? (item["min"] as number) : range.min,
+				max: typeof item["max"] === "number" ? (item["max"] as number) : range.max,
+				step: typeof item["step"] === "number" ? (item["step"] as number) : range.step,
+				label: item["label"] ? String(item["label"]) : prev?.label,
 			});
 		}
 		// PATCH semantics: merge the named uniforms over the current list so omitting

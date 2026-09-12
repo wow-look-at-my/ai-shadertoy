@@ -137,11 +137,21 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 	eq(pos.get("b")!.x, colX(1), "real edge still places b in column 1");
 }
 
-// ---- cyclic input terminates and positions every node ----------------------
+// ---- cyclic input terminates, positions every node, and leaves no empty column
 {
 	const { pos } = layoutGraph([node("a", ["b"]), node("b", ["a"])], OPTS);
 	eq(pos.size, 2, "cycle still yields a position per node (no hang)");
-	check(Number.isFinite(pos.get("a")!.x) && Number.isFinite(pos.get("b")!.x), "cycle positions are finite");
+	// One edge of the cycle is dropped, so the two nodes land in columns 0 and 1
+	// with no empty column to their left.
+	const xs = [pos.get("a")!.x, pos.get("b")!.x].sort((p, q) => p - q);
+	eq(xs.join(","), `${colX(0)},${colX(1)}`, "a two-node cycle occupies columns 0 and 1");
+	// A longer cycle fed by a root: the root is leftmost and every column from 0
+	// to the last is occupied (a cycle used to ratchet its members rightward).
+	const ring = layoutGraph([node("src"), node("p", ["src", "r"]), node("q", ["p"]), node("r", ["q"])], OPTS);
+	eq(ring.pos.get("src")!.x, OPTS.margin, "root stays in column 0");
+	const cols = [...new Set([...ring.pos.values()].map((p) => (p.x - OPTS.margin) / PITCH))].sort((p, q) => p - q);
+	eq(cols.join(","), cols.map((_, i) => i).join(","), "cycle members fill contiguous columns");
+	check(cols.length <= 4 && cols.length >= 2, "a fed cycle spans at least two columns and never more than its node count");
 }
 
 // ---- deterministic ---------------------------------------------------------

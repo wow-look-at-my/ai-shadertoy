@@ -9,6 +9,32 @@
 
 const HALF = 1; // chlist pixel type: 0 = UINT, 1 = HALF, 2 = FLOAT
 
+const f32 = new Float32Array(1);
+const u32 = new Uint32Array(f32.buffer);
+
+/** IEEE 754 binary32 -> binary16 bits, round-to-nearest-even. Overflow becomes
+ * infinity, tiny values become subnormals or signed zero, NaN stays NaN. */
+export function floatToHalf(v: number): number {
+	f32[0] = v;
+	const x = u32[0];
+	const sign = (x >>> 16) & 0x8000;
+	const exp = (x >>> 23) & 0xff;
+	const mant = x & 0x7fffff;
+	if (exp === 0xff) return sign | 0x7c00 | (mant ? 0x200 : 0); // inf / NaN (quiet)
+	const e = exp - 127 + 15;
+	if (e >= 0x1f) return sign | 0x7c00; // overflow -> inf
+	if (e <= 0) {
+		if (e < -10) return sign; // underflow -> signed zero
+		// Subnormal: shift the implicit-1 mantissa into the 10-bit field.
+		const m = (mant | 0x800000) >>> (1 - e);
+		const rounded = (m + 0x1000 + ((m >>> 13) & 1) - 1) >>> 13;
+		return sign | rounded;
+	}
+	const m = mant + 0x1000 + ((mant >>> 13) & 1) - 1; // round to nearest even
+	if (m & 0x800000) return sign | ((e + 1) << 10); // carry: mantissa is 0, exponent 0x1f is inf
+	return sign | (e << 10) | (m >>> 13);
+}
+
 export function encodeHalfRGBA(width: number, height: number, rgba: Uint16Array): Uint8Array {
 	if (width <= 0 || height <= 0) throw new Error("exr: bad dimensions");
 	if (rgba.length !== width * height * 4) throw new Error("exr: expected width*height*4 half-floats");

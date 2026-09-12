@@ -129,6 +129,13 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		statsBar.hidden = false;
 	}
 
+	// A refused write (quota, a closed database) is shown where the user is
+	// looking; the edit is on screen but would not survive a reload.
+	store.on("storageError", (msg) => {
+		list.appendChild(el("div", { class: "msg error" }, el("strong", {}, "Storage: "), String(msg)));
+		scroll();
+	});
+
 	store.on("busy", (b) => {
 		// `steerable` is set before setBusy(true) in runTurn, so it's accurate here.
 		const steer = !!b && steerable;
@@ -168,8 +175,18 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		scroll();
 	}
 
-	function scroll(): void {
-		requestAnimationFrame(() => (list.scrollTop = list.scrollHeight));
+	// Auto-scroll follows new content only while the view is already at the
+	// bottom; a reader who scrolled up to an earlier reply is left there.
+	let stickToBottom = true;
+	list.addEventListener("scroll", () => {
+		stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+	});
+	function scroll(force = false): void {
+		if (force) stickToBottom = true;
+		if (!stickToBottom) return;
+		requestAnimationFrame(() => {
+			if (stickToBottom) list.scrollTop = list.scrollHeight;
+		});
 	}
 
 	// Anthropic streams text in coarse chunks (~2-5 deltas/sec for Opus), so
@@ -184,7 +201,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const step = Math.max(2, Math.ceil(pending.length / 12));
 		streamingText.appendChild(document.createTextNode(pending.slice(0, step)));
 		pending = pending.slice(step);
-		list.scrollTop = list.scrollHeight;
+		if (stickToBottom) list.scrollTop = list.scrollHeight;
 		if (pending) pumpId = requestAnimationFrame(pumpStream);
 	}
 	function feedStream(t: string): void {
@@ -256,6 +273,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	function renderMessage(m: Message): HTMLElement {
 		const node = messageEl(m);
+		if (m.note) node.appendChild(el("div", { class: "msg-note" }, m.note));
 		// Compaction artifacts are managed plumbing, not editable chat turns.
 		if (m.compaction) return node;
 		if (isDeletable(m)) {
@@ -298,7 +316,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const restore = (): void => node.replaceWith(renderMessage(m));
 		const commit = (): void => {
 			const v = ta.value.trim();
-			if (!v || !ensureReady()) return;
+			if (!v || store.busy || !ensureReady()) return; // a turn may have started while the box was open
 			const at = store.project.messages.findIndex((x) => x.id === m.id); // re-find: list may have shifted
 			if (at === -1) return;
 			const txt = m.blocks.find((b): b is TextBlock => b.type === "text");
@@ -355,7 +373,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			steerQueue.push({ msg: userMsg, node });
 			list.appendChild(node);
 			input.value = "";
-			scroll();
+			scroll(true);
 			return;
 		}
 
@@ -363,7 +381,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		if (store.project.messages.length === 1) clear(list);
 		list.appendChild(renderMessage(userMsg));
 		input.value = "";
-		scroll();
+		scroll(true);
 		await runTurn();
 	}
 
@@ -460,8 +478,12 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				},
 			);
 		} catch (e) {
-			const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
-			list.appendChild(el("div", { class: "msg error" }, el("strong", {}, "Error: "), detail));
+			if (abort?.signal.aborted) {
+				list.appendChild(el("div", { class: "msg muted small" }, "Stopped."));
+			} else {
+				const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
+				list.appendChild(el("div", { class: "msg error" }, el("strong", {}, "Error: "), detail));
+			}
 		} finally {
 			store.endHistoryGroup();
 			store.setBusy(false);
@@ -507,8 +529,12 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				renderAll(); // drops the old bubbles + status, shows the summary card
 			}
 		} catch (e) {
-			const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
-			status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact failed: "), detail));
+			if (abort?.signal.aborted) {
+				status.replaceWith(el("div", { class: "msg muted small" }, "Compaction stopped; the conversation is unchanged."));
+			} else {
+				const detail = e instanceof ProviderError ? `${e.message}${e.hint ? `\n${e.hint}` : ""}` : e instanceof Error ? e.message : String(e);
+				status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact failed: "), detail));
+			}
 		} finally {
 			store.setBusy(false);
 			abort = null;
@@ -518,6 +544,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	}
 
 	input.addEventListener("keydown", (e) => {
+		if (e.isComposing) return; // Enter commits an IME candidate, not the message
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			void send();

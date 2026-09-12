@@ -53,6 +53,11 @@ export interface AgentCallbacks {
 
 const MAX_ITERATIONS = 100;
 
+/** A tool input the provider could not parse (streaming stopped mid-JSON). */
+function isTruncatedInput(input: unknown): boolean {
+	return typeof input === "object" && input !== null && "_raw" in input;
+}
+
 export async function runAgent(
 	settings: Settings,
 	baseSystem: () => string,
@@ -91,20 +96,32 @@ export async function runAgent(
 		});
 		cb.onUsage?.(turn.usage, turn.durationMs);
 
-		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : turn.toolCalls;
+		// A response cut off by max_tokens leaves a truncated tool call whose input
+		// never parsed (`_raw`); running it would act on garbage. A refusal carries no
+		// content at all. Both get a UI note; the model's own text stays verbatim.
+		const truncated = turn.stopReason === "max_tokens" || turn.stopReason === "length";
+		const refused = turn.stopReason === "refusal";
+		const toolCalls = truncated ? turn.toolCalls.filter((tc) => !isTruncatedInput(tc.input)) : turn.toolCalls;
+		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : toolCalls;
 
 		// Thinking blocks ride at the front of the assistant turn; Anthropic requires
-		// them replayed unchanged or tool-use continuations 400.
+		// them replayed unchanged or tool-use continuations 400. An empty text block
+		// is never stored: the API rejects it on the next request.
 		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
+		const textBlocks: TextBlock[] = turn.text.trim() ? [{ type: "text", text: turn.text }] : [];
 		const assistantMsg: Message = {
 			id: uid("m_"),
 			role: "assistant",
 			ts: Date.now(),
 			blocks: textMode
-				? [...thinkingBlocks, { type: "text", text: turn.text } as TextBlock]
-				: [...thinkingBlocks, ...(turn.text ? [{ type: "text", text: turn.text } as TextBlock] : []), ...turn.toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
+				? [...thinkingBlocks, ...textBlocks]
+				: [...thinkingBlocks, ...textBlocks, ...toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
 			...(textMode ? { textTools: calls.map((c) => c.name) } : {}),
 		};
+		if (truncated) assistantMsg.note = `Cut off at ${settings.chat.maxTokens} output tokens${toolCalls.length < turn.toolCalls.length ? "; an incomplete tool call was dropped" : ""}. Raise "Max tokens" in Settings, or ask for a smaller step.`;
+		else if (refused) assistantMsg.note = "The model declined this request (safety refusal).";
+		// An assistant turn must carry content; the API rejects an empty one.
+		if (assistantMsg.blocks.length === 0) assistantMsg.blocks.push({ type: "text", text: refused ? "(declined)" : "(no response)" });
 		messages.push(assistantMsg);
 		cb.onMessage(assistantMsg);
 

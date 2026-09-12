@@ -20,7 +20,7 @@ const TYPES = ["layer", "pass", "shape", "mask"] as const;
 function createLayer(ctx: ToolContext, input: Record<string, unknown>) {
 	const name = input["name"] ? String(input["name"]) : "Layer";
 	const shapes: Shape[] = [];
-	const seed = input["shape"];
+	const seed = input["shape"] ?? input["kind"]; // the schema documents both names
 	if (typeof seed === "string" && isShapeKind(seed)) {
 		shapes.push(makeShape(seed, { ...(shapeDef(seed)?.defaults ?? {}), ...parseShapePatch(input) }));
 	}

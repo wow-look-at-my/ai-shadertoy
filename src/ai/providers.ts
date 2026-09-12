@@ -46,34 +46,49 @@ export function chatEndpoint(settings: Settings): string {
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
-async function* sseEvents(res: Response, signal?: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
+async function* sseEvents(res: Response): AsyncGenerator<{ event: string; data: string }> {
 	const reader = res.body?.getReader();
 	if (!reader) throw new ProviderError("response had no body");
 	const decoder = new TextDecoder();
 	let buf = "";
+	const parse = (chunk: string): { event: string; data: string } | null => {
+		let event = "message";
+		const dataLines: string[] = [];
+		for (const raw of chunk.split(/\r?\n/)) {
+			if (raw.startsWith("event:")) event = raw.slice(6).trim();
+			else if (raw.startsWith("data:")) dataLines.push(raw.slice(5).replace(/^ /, ""));
+		}
+		return dataLines.length ? { event, data: dataLines.join("\n") } : null;
+	};
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) break;
 			buf += decoder.decode(value, { stream: true });
-			let idx: number;
-			// events are separated by a blank line
-			while ((idx = buf.indexOf("\n\n")) !== -1 || (idx = buf.indexOf("\r\n\r\n")) !== -1) {
-				const chunk = buf.slice(0, idx);
+			// Events are separated by a blank line (LF or CRLF); take the earliest.
+			while (true) {
+				const lf = buf.indexOf("\n\n");
+				const crlf = buf.indexOf("\r\n\r\n");
+				const idx = lf === -1 ? crlf : crlf === -1 ? lf : Math.min(lf, crlf);
+				if (idx === -1) break;
+				const ev = parse(buf.slice(0, idx));
 				buf = buf.slice(idx + (buf[idx] === "\r" ? 4 : 2));
-				let event = "message";
-				const dataLines: string[] = [];
-				for (const raw of chunk.split(/\r?\n/)) {
-					if (raw.startsWith("event:")) event = raw.slice(6).trim();
-					else if (raw.startsWith("data:")) dataLines.push(raw.slice(5).replace(/^ /, ""));
-				}
-				if (dataLines.length) yield { event, data: dataLines.join("\n") };
+				if (ev) yield ev;
 			}
-			if (signal?.aborted) break;
 		}
+		// A final event with no trailing blank line (a stream cut short, or a
+		// closing `error` event) must still reach the caller.
+		buf += decoder.decode();
+		const tail = parse(buf);
+		if (tail) yield tail;
 	} finally {
 		reader.cancel().catch(() => {});
 	}
+}
+
+/** Translate a fetch/stream abort into the one error the UI recognises. */
+function isAbort(e: unknown): boolean {
+	return e instanceof DOMException && e.name === "AbortError";
 }
 
 // ---- neutral -> Anthropic ---------------------------------------------------
@@ -119,39 +134,39 @@ function toAnthropicMessages(messages: Message[], state: string): ACBlock[] {
 	return out;
 }
 
-// Opus 4.8/4.7 and the Fable/Mythos family reject temperature/top_p/top_k with
-// a 400; older 4.x models still accept temperature. Only send it where valid.
+// Model families that still take a thinking token budget (and accept sampling
+// parameters). Everything newer runs adaptive thinking and rejects temperature,
+// so an unrecognised id is treated as new: adaptive, no temperature. The gate is
+// an allowlist of OLD models so a model released after this code never gets a
+// request shape that 400s.
+const ANTHROPIC_BUDGET_MODELS = /(opus-4-[015])|sonnet-4-[05]|haiku-4-5/i;
+
+// Only the budget-era models accept temperature/top_p/top_k; 4.7+ reject them.
 function anthropicAcceptsTemperature(model: string): boolean {
-	return !/(opus-4-[78])|fable|mythos/i.test(model);
+	return ANTHROPIC_BUDGET_MODELS.test(model) || /(opus-4-6)|sonnet-4-6/i.test(model);
 }
 
-// Extended thinking, gated by model so we never send a config that 400s:
-// 4.6+ Opus / Sonnet 4.6 / Fable / Mythos take adaptive thinking; 4.5-era models
-// take a token budget (must stay under max_tokens); anything unrecognised gets no
-// thinking. `display: "summarized"` makes the reasoning visible as it streams.
-// (Thinking and temperature are mutually exclusive in our request — see below.)
+// Extended thinking. `display: "summarized"` makes the reasoning visible as it
+// streams (the default is omitted on 4.7+). Thinking and temperature are
+// mutually exclusive in our request — see the body assembly below.
 function anthropicThinking(model: string, maxTokens: number): Record<string, unknown> | undefined {
-	if (/(opus-4-[678])|sonnet-4-6|fable|mythos/i.test(model)) {
-		return { type: "adaptive", display: "summarized" };
-	}
-	if (/(opus-4-[015])|sonnet-4-[05]|haiku-4-5/i.test(model)) {
+	if (ANTHROPIC_BUDGET_MODELS.test(model)) {
 		const budget = Math.max(1024, Math.min(8192, Math.floor(maxTokens / 2)));
 		return budget < maxTokens ? { type: "enabled", budget_tokens: budget } : undefined;
 	}
-	return undefined;
+	return { type: "adaptive", display: "summarized" };
 }
 
-// `output_config.effort` (GA, no beta header) is supported on Opus 4.5+ and
-// Sonnet 4.6 / Fable / Mythos; it 400s on Sonnet 4.5 / Haiku 4.5 and older, so
-// gate it. We set "medium" (the server default is "high") to trade some depth
-// for lower latency/cost.
+// `output_config.effort` (GA, no beta header) 400s on Sonnet 4.5 / Haiku 4.5 and
+// older; Opus 4.5 and everything newer accept "medium" (the server default is
+// "high"), which trades some depth for lower latency/cost.
 function anthropicEffort(model: string): string | undefined {
-	return /(opus-4-[5678])|sonnet-4-6|fable|mythos/i.test(model) ? "medium" : undefined;
+	return /sonnet-4-[05]|haiku-4-5|opus-4-[01]/i.test(model) ? undefined : "medium";
 }
 
-async function streamAnthropic(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
-	const cfg = settings.chat;
-	const url = chatEndpoint(settings);
+/** The Anthropic Messages request body. Exported so the model gates (thinking vs
+ * temperature, effort, tool_choice) can be asserted without a request. */
+export function anthropicBody(cfg: ChatConfig, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: cfg.model,
 		max_tokens: cfg.maxTokens,
@@ -162,12 +177,24 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 		stream: true,
 		messages: toAnthropicMessages(messages, state),
 	};
-	if (tools.length) body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+	if (tools.length) {
+		body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+		// A history that carries tool_use/tool_result blocks must define tools;
+		// `none` keeps them defined while forbidding new calls (compaction).
+		if (opts.toolChoice === "none") body["tool_choice"] = { type: "none" };
+	}
 	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
 	if (thinking) body["thinking"] = thinking;
 	else if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
 	const effort = anthropicEffort(cfg.model);
 	if (effort) body["output_config"] = { effort };
+	return body;
+}
+
+async function streamAnthropic(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
+	const cfg = settings.chat;
+	const url = chatEndpoint(settings);
+	const body = anthropicBody(cfg, system, state, messages, tools, opts);
 
 	let res: Response;
 	try {
@@ -191,75 +218,80 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 	const blocks: Record<number, { type: string; id?: string; name?: string; json: string; thinking: string; signature: string }> = {};
 	let firstTokenAt = 0;
 
-	for await (const ev of sseEvents(res, opts.signal)) {
-		if (ev.data === "[DONE]") break;
-		let msg: Record<string, unknown>;
-		try {
-			msg = JSON.parse(ev.data);
-		} catch {
-			continue;
-		}
-		const type = msg["type"] as string;
-		if (type === "message_start") {
-			const u = (msg["message"] as Record<string, unknown> | undefined)?.["usage"] as Record<string, unknown> | undefined;
-			if (u) {
-				turn.usage.inputTokens = (u["input_tokens"] as number) ?? 0;
-				// Anthropic's `input_tokens` is the UNCACHED remainder only — it
-				// already excludes cache_read_input_tokens and cache_creation_input_tokens,
-				// so the three sum to the full prompt and there is nothing to subtract
-				// (no double-counting). Cache counts are server-truth: a number (incl. 0)
-				// when reported, left undefined when the field is absent so the UI shows
-				// "n/a" rather than a guessed value. Never estimated.
-				const cacheRead = u["cache_read_input_tokens"];
-				const cacheWrite = u["cache_creation_input_tokens"];
-				turn.usage.cacheReadTokens = typeof cacheRead === "number" ? cacheRead : undefined;
-				turn.usage.cacheWriteTokens = typeof cacheWrite === "number" ? cacheWrite : undefined;
-				turn.usage.outputTokens = (u["output_tokens"] as number) ?? 0;
+	try {
+		for await (const ev of sseEvents(res)) {
+			if (ev.data === "[DONE]") break;
+			let msg: Record<string, unknown>;
+			try {
+				msg = JSON.parse(ev.data);
+			} catch {
+				continue;
 			}
-		} else if (type === "content_block_start") {
-			if (!firstTokenAt) firstTokenAt = performance.now();
-			const idx = msg["index"] as number;
-			const cb = msg["content_block"] as Record<string, unknown>;
-			blocks[idx] = { type: cb["type"] as string, id: cb["id"] as string, name: cb["name"] as string, json: "", thinking: (cb["thinking"] as string) ?? "", signature: (cb["signature"] as string) ?? "" };
-			if (cb["type"] === "tool_use") emit(opts, { type: "tool_start", id: cb["id"] as string, name: cb["name"] as string });
-		} else if (type === "content_block_delta") {
-			const idx = msg["index"] as number;
-			const delta = msg["delta"] as Record<string, unknown>;
-			if (delta["type"] === "text_delta") {
-				turn.text += delta["text"] as string;
-				emit(opts, { type: "text", delta: delta["text"] as string });
-			} else if (delta["type"] === "thinking_delta") {
-				const b = blocks[idx];
-				if (b) {
-					b.thinking += delta["thinking"] as string;
-					emit(opts, { type: "thinking", delta: delta["thinking"] as string });
+			const type = msg["type"] as string;
+			if (type === "message_start") {
+				const u = (msg["message"] as Record<string, unknown> | undefined)?.["usage"] as Record<string, unknown> | undefined;
+				if (u) {
+					turn.usage.inputTokens = (u["input_tokens"] as number) ?? 0;
+					// Anthropic's `input_tokens` is the UNCACHED remainder only — it
+					// already excludes cache_read_input_tokens and cache_creation_input_tokens,
+					// so the three sum to the full prompt and there is nothing to subtract
+					// (no double-counting). Cache counts are server-truth: a number (incl. 0)
+					// when reported, left undefined when the field is absent so the UI shows
+					// "n/a" rather than a guessed value. Never estimated.
+					const cacheRead = u["cache_read_input_tokens"];
+					const cacheWrite = u["cache_creation_input_tokens"];
+					turn.usage.cacheReadTokens = typeof cacheRead === "number" ? cacheRead : undefined;
+					turn.usage.cacheWriteTokens = typeof cacheWrite === "number" ? cacheWrite : undefined;
+					turn.usage.outputTokens = (u["output_tokens"] as number) ?? 0;
 				}
-			} else if (delta["type"] === "signature_delta") {
-				const b = blocks[idx];
-				if (b) b.signature += (delta["signature"] as string) ?? "";
-			} else if (delta["type"] === "input_json_delta") {
-				const b = blocks[idx];
-				if (b) {
-					b.json += delta["partial_json"] as string;
-					emit(opts, { type: "tool_args", id: b.id ?? "", delta: delta["partial_json"] as string });
+			} else if (type === "content_block_start") {
+				if (!firstTokenAt) firstTokenAt = performance.now();
+				const idx = msg["index"] as number;
+				const cb = msg["content_block"] as Record<string, unknown>;
+				blocks[idx] = { type: cb["type"] as string, id: cb["id"] as string, name: cb["name"] as string, json: "", thinking: (cb["thinking"] as string) ?? "", signature: (cb["signature"] as string) ?? "" };
+				if (cb["type"] === "tool_use") emit(opts, { type: "tool_start", id: cb["id"] as string, name: cb["name"] as string });
+			} else if (type === "content_block_delta") {
+				const idx = msg["index"] as number;
+				const delta = msg["delta"] as Record<string, unknown>;
+				if (delta["type"] === "text_delta") {
+					turn.text += delta["text"] as string;
+					emit(opts, { type: "text", delta: delta["text"] as string });
+				} else if (delta["type"] === "thinking_delta") {
+					const b = blocks[idx];
+					if (b) {
+						b.thinking += delta["thinking"] as string;
+						emit(opts, { type: "thinking", delta: delta["thinking"] as string });
+					}
+				} else if (delta["type"] === "signature_delta") {
+					const b = blocks[idx];
+					if (b) b.signature += (delta["signature"] as string) ?? "";
+				} else if (delta["type"] === "input_json_delta") {
+					const b = blocks[idx];
+					if (b) {
+						b.json += delta["partial_json"] as string;
+						emit(opts, { type: "tool_args", id: b.id ?? "", delta: delta["partial_json"] as string });
+					}
 				}
+			} else if (type === "content_block_stop") {
+				const b = blocks[msg["index"] as number];
+				if (b && b.type === "tool_use") {
+					turn.toolCalls.push({ id: b.id ?? "", name: b.name ?? "", input: safeJson(b.json) });
+				} else if (b && b.type === "thinking") {
+					turn.thinking.push({ thinking: b.thinking, signature: b.signature });
+				}
+			} else if (type === "message_delta") {
+				const delta = msg["delta"] as Record<string, unknown>;
+				if (delta && delta["stop_reason"]) turn.stopReason = delta["stop_reason"] as string;
+				const u = msg["usage"] as Record<string, unknown> | undefined;
+				if (u && u["output_tokens"] != null) turn.usage.outputTokens = u["output_tokens"] as number;
+			} else if (type === "error") {
+				const err = msg["error"] as Record<string, unknown>;
+				throw new ProviderError((err?.["message"] as string) ?? "stream error");
 			}
-		} else if (type === "content_block_stop") {
-			const b = blocks[msg["index"] as number];
-			if (b && b.type === "tool_use") {
-				turn.toolCalls.push({ id: b.id ?? "", name: b.name ?? "", input: safeJson(b.json) });
-			} else if (b && b.type === "thinking") {
-				turn.thinking.push({ thinking: b.thinking, signature: b.signature });
-			}
-		} else if (type === "message_delta") {
-			const delta = msg["delta"] as Record<string, unknown>;
-			if (delta && delta["stop_reason"]) turn.stopReason = delta["stop_reason"] as string;
-			const u = msg["usage"] as Record<string, unknown> | undefined;
-			if (u && u["output_tokens"] != null) turn.usage.outputTokens = u["output_tokens"] as number;
-		} else if (type === "error") {
-			const err = msg["error"] as Record<string, unknown>;
-			throw new ProviderError((err?.["message"] as string) ?? "stream error");
 		}
+	} catch (e) {
+		if (isAbort(e)) throw new ProviderError("Request cancelled.");
+		throw e;
 	}
 	turn.durationMs = firstTokenAt ? performance.now() - firstTokenAt : 0;
 	emit(opts, { type: "done", stopReason: turn.stopReason });
@@ -316,20 +348,34 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 	return out;
 }
 
-async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
-	const cfg = settings.chat;
-	const url = chatEndpoint(settings);
-	const oaMessages = toOpenAIMessages(system, messages, state);
+// OpenAI's reasoning models (o-series, gpt-5 family) reject `max_tokens` (they
+// take `max_completion_tokens`) and any temperature other than the default.
+// Only hosted OpenAI is treated this way: compatible servers and gateways
+// accept the classic fields whatever the model id says.
+function isOpenAIReasoningModel(cfg: ChatConfig): boolean {
+	return isHostedOpenAI(cfg) && /^(o\d|gpt-5)/i.test(cfg.model.trim());
+}
+
+/** The Chat Completions request body. Exported so the per-model field gates can
+ * be asserted without a request. */
+export function openaiBody(cfg: ChatConfig, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: cfg.model,
-		max_tokens: cfg.maxTokens,
-		temperature: cfg.temperature,
 		stream: true,
 		// ask for a final usage chunk so we can report cost + context use
 		stream_options: { include_usage: true },
-		messages: oaMessages,
+		messages: toOpenAIMessages(system, messages, state),
 	};
-	if (tools.length) body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+	if (isOpenAIReasoningModel(cfg)) {
+		body["max_completion_tokens"] = cfg.maxTokens;
+	} else {
+		body["max_tokens"] = cfg.maxTokens;
+		body["temperature"] = cfg.temperature;
+	}
+	if (tools.length) {
+		body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+		if (opts.toolChoice === "none") body["tool_choice"] = "none";
+	}
 	// Hosted OpenAI caches automatically (>= 1024-token prefixes); its one knob is
 	// `prompt_cache_key`, a stable string combined with the prefix hash to improve
 	// cache-hit *routing*. Pass the per-conversation key so a project's turns route
@@ -341,7 +387,13 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 	// non-hosted endpoints -- hosted OpenAI/Azure 400 on unknown fields, while
 	// lenient local servers that don't use it just ignore it.
 	if (!isHostedOpenAI(cfg)) body["cache_prompt"] = true;
+	return body;
+}
 
+async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
+	const cfg = settings.chat;
+	const url = chatEndpoint(settings);
+	const body = openaiBody(cfg, system, state, messages, tools, opts);
 	const headers: Record<string, string> = { "content-type": "application/json", ...openaiExtraHeaders(cfg) };
 	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	let res: Response;
@@ -358,76 +410,81 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 	if (!res.ok) throw await httpError(res);
 
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: emptyUsage(), durationMs: 0 };
-	const calls: Record<number, { id: string; name: string; args: string }> = {};
+	const calls: Array<{ id: string; name: string; args: string; started: boolean }> = [];
 	let firstTokenAt = 0;
 
-	for await (const ev of sseEvents(res, opts.signal)) {
-		if (ev.data === "[DONE]") break;
-		let msg: Record<string, unknown>;
-		try {
-			msg = JSON.parse(ev.data);
-		} catch {
-			continue;
-		}
-		const u = msg["usage"] as Record<string, unknown> | undefined;
-		if (u) {
-			// Cached prompt tokens come ONLY from what the server reports —
-			// `prompt_tokens_details.cached_tokens` present => real count (incl. 0);
-			// absent (Ollama/local OpenAI-compatible servers omit it) => leave
-			// cacheReadTokens undefined so the UI shows "n/a", never a guess. We do
-			// not estimate cache hits from the prompt prefix anymore.
-			const details = u["prompt_tokens_details"] as Record<string, unknown> | undefined;
-			const reportedCached = details?.["cached_tokens"];
-			const cached = typeof reportedCached === "number" ? reportedCached : undefined;
-			const prompt = (u["prompt_tokens"] as number) ?? 0;
-			turn.usage.inputTokens = Math.max(0, prompt - (cached ?? 0));
-			turn.usage.cacheReadTokens = cached;
-			// OpenAI-compatible servers don't report/bill a separate cache-write
-			// count; treat it as 0 (no write charge), not "unknown".
-			turn.usage.cacheWriteTokens = 0;
-			turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
-		}
-		const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
-		if (!choice) continue;
-		const delta = choice["delta"] as Record<string, unknown> | undefined;
-		if (delta?.["content"]) {
-			if (!firstTokenAt) firstTokenAt = performance.now();
-			turn.text += delta["content"] as string;
-			emit(opts, { type: "text", delta: delta["content"] as string });
-		}
-		const tcs = delta?.["tool_calls"] as Array<Record<string, unknown>> | undefined;
-		if (tcs) {
-			if (!firstTokenAt) firstTokenAt = performance.now();
-			for (const tc of tcs) {
-				const i = (tc["index"] as number) ?? 0;
-				if (!calls[i]) calls[i] = { id: "", name: "", args: "" };
-				if (tc["id"]) calls[i].id = tc["id"] as string;
-				const fn = tc["function"] as Record<string, unknown> | undefined;
-				if (fn?.["name"]) {
-					calls[i].name = fn["name"] as string;
-					emit(opts, { type: "tool_start", id: calls[i].id, name: calls[i].name });
-				}
-				if (fn?.["arguments"]) {
-					calls[i].args += fn["arguments"] as string;
-					emit(opts, { type: "tool_args", id: calls[i].id, delta: fn["arguments"] as string });
+	try {
+		for await (const ev of sseEvents(res)) {
+			if (ev.data === "[DONE]") break;
+			let msg: Record<string, unknown>;
+			try {
+				msg = JSON.parse(ev.data);
+			} catch {
+				continue;
+			}
+			const u = msg["usage"] as Record<string, unknown> | undefined;
+			if (u) {
+				// Cached prompt tokens come ONLY from what the server reports —
+				// `prompt_tokens_details.cached_tokens` present => real count (incl. 0);
+				// absent (Ollama/local OpenAI-compatible servers omit it) => leave
+				// cacheReadTokens undefined so the UI shows "n/a", never a guess. We do
+				// not estimate cache hits from the prompt prefix anymore.
+				const details = u["prompt_tokens_details"] as Record<string, unknown> | undefined;
+				const reportedCached = details?.["cached_tokens"];
+				const cached = typeof reportedCached === "number" ? reportedCached : undefined;
+				const prompt = (u["prompt_tokens"] as number) ?? 0;
+				turn.usage.inputTokens = Math.max(0, prompt - (cached ?? 0));
+				turn.usage.cacheReadTokens = cached;
+				// OpenAI-compatible servers don't report/bill a separate cache-write
+				// count; treat it as 0 (no write charge), not "unknown".
+				turn.usage.cacheWriteTokens = 0;
+				turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
+			}
+			const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
+			if (!choice) continue;
+			const delta = choice["delta"] as Record<string, unknown> | undefined;
+			if (delta?.["content"]) {
+				if (!firstTokenAt) firstTokenAt = performance.now();
+				turn.text += delta["content"] as string;
+				emit(opts, { type: "text", delta: delta["content"] as string });
+			}
+			const tcs = delta?.["tool_calls"] as Array<Record<string, unknown>> | undefined;
+			if (tcs) {
+				if (!firstTokenAt) firstTokenAt = performance.now();
+				for (const tc of tcs) {
+					// Fragments are keyed by `index`; a server that omits it starts a new
+					// call on each fresh `id` and continues the last one otherwise.
+					const id = typeof tc["id"] === "string" ? (tc["id"] as string) : "";
+					let i = typeof tc["index"] === "number" ? (tc["index"] as number) : -1;
+					if (i < 0) i = id && calls.length && calls[calls.length - 1].id !== id ? calls.length : Math.max(0, calls.length - 1);
+					while (calls.length <= i) calls.push({ id: "", name: "", args: "", started: false });
+					const c = calls[i];
+					if (id) c.id = id;
+					const fn = tc["function"] as Record<string, unknown> | undefined;
+					if (fn?.["name"]) c.name = fn["name"] as string;
+					if (c.name && !c.started) {
+						c.started = true;
+						emit(opts, { type: "tool_start", id: c.id, name: c.name });
+					}
+					if (fn?.["arguments"]) {
+						c.args += fn["arguments"] as string;
+						emit(opts, { type: "tool_args", id: c.id, delta: fn["arguments"] as string });
+					}
 				}
 			}
+			if (choice["finish_reason"]) turn.stopReason = choice["finish_reason"] as string;
 		}
-		if (choice["finish_reason"]) turn.stopReason = choice["finish_reason"] as string;
+	} catch (e) {
+		if (isAbort(e)) throw new ProviderError("Request cancelled.");
+		throw e;
 	}
-	for (const i of Object.keys(calls).map(Number).sort((a, b) => a - b)) {
-		const c = calls[i];
-		turn.toolCalls.push({ id: c.id || `call_${i}`, name: c.name, input: safeJson(c.args) });
-	}
+	calls.forEach((c, i) => {
+		if (c.name) turn.toolCalls.push({ id: c.id || `call_${i}`, name: c.name, input: safeJson(c.args) });
+	});
 	turn.durationMs = firstTokenAt ? performance.now() - firstTokenAt : 0;
 	emit(opts, { type: "done", stopReason: turn.stopReason });
 	return turn;
 }
-
-// Note: the prompt-cache hit rate is shown ONLY from the server-reported cache
-// count. We do NOT estimate cached tokens from the prompt prefix (or anything
-// else) — an endpoint that omits the count (e.g. Ollama/local servers) shows
-// "n/a" for cached, never a guessed value. An explicit server-reported 0 means 0%.
 
 // ---- dispatch + helpers -----------------------------------------------------
 
@@ -462,7 +519,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 		headers = { "content-type": "application/json", ...openaiExtraHeaders(cfg) };
 		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
 	}
-	const body = JSON.stringify({ model: cfg.model, max_tokens: 64, messages: [{ role: "user", content: prompt }] });
+	const body = JSON.stringify({ model: cfg.model, [!isAnthropic && isOpenAIReasoningModel(cfg) ? "max_completion_tokens" : "max_tokens"]: 64, messages: [{ role: "user", content: prompt }] });
 
 	let res: Response;
 	try {

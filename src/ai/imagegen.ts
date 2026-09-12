@@ -17,7 +17,7 @@ export interface GeneratedImage {
 function parseSize(size: string): { w: number; h: number } {
 	const m = /^(\d+)\s*[x×]\s*(\d+)$/.exec(size.trim());
 	if (m) return { w: Number(m[1]), h: Number(m[2]) };
-	return { w: 512, h: 512 };
+	return { w: 1024, h: 1024 };
 }
 
 export async function generateImage(settings: Settings, prompt: string): Promise<GeneratedImage> {
@@ -28,13 +28,17 @@ export async function generateImage(settings: Settings, prompt: string): Promise
 	let url = `${base}/images/generations`;
 	if (cfg.useProxy) url = proxied(url, settings.proxyUrl);
 	const { w, h } = parseSize(cfg.size);
+	// gpt-image-* always answers with base64 and rejects `response_format`;
+	// DALL-E and most compatible servers need it asked for.
+	const body: Record<string, unknown> = { model: cfg.model, prompt, size: cfg.size, n: 1 };
+	if (!/^gpt-image/i.test(cfg.model.trim())) body["response_format"] = "b64_json";
 
 	let res: Response;
 	try {
 		res = await fetch(url, {
 			method: "POST",
 			headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-			body: JSON.stringify({ model: cfg.model, prompt, size: cfg.size, n: 1, response_format: "b64_json" }),
+			body: JSON.stringify(body),
 		});
 	} catch (e) {
 		throw new ProviderError(`Image generation network error: ${e instanceof Error ? e.message : String(e)}`, undefined, "Image endpoint may not allow browser (CORS) requests; try the proxy.");

@@ -53,9 +53,14 @@ registerTool({
 		if (count === 0) {
 			// Forgiving: the model may have added stray leading/trailing whitespace.
 			const trimmed = oldStr.trim();
-			if (trimmed && countOccurrences(src, trimmed) === 1) {
-				target = trimmed;
-				count = 1;
+			if (trimmed && trimmed !== oldStr) {
+				const n = countOccurrences(src, trimmed);
+				if (n === 1 || (n > 1 && replaceAll)) {
+					target = trimmed;
+					count = n;
+				} else if (n > 1) {
+					return { content: [text(`That snippet (ignoring surrounding whitespace) appears ${n} times in pass "${pass.name}". Add surrounding lines to make it unique, or set replace_all: true.`)], isError: true };
+				}
 			}
 		}
 		if (count === 0) {
@@ -65,7 +70,8 @@ registerTool({
 			return { content: [text(`That snippet appears ${count} times in pass "${pass.name}". Add surrounding lines to make it unique, or set replace_all: true.`)], isError: true };
 		}
 
-		const updated = replaceAll ? src.split(target).join(newStr) : src.replace(target, newStr);
+		// A function replacer keeps `$&`, `$1` etc. in the model's GLSL literal.
+		const updated = replaceAll ? src.split(target).join(newStr) : src.replace(target, () => newStr);
 		ctx.setPassSource(pass.id, updated, true);
 		return ctx.shaderResult(`Edited pass "${pass.name}" (${replaceAll ? `${count} replacements` : "1 replacement"}).`, input["screenshot"] === true);
 	},
