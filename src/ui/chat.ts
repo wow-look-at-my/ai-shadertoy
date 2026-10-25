@@ -8,12 +8,12 @@ import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
-import { estimateTokens, shouldCompact, type ContextUsage } from "../ai/compact.ts";
+import { estimateTokens, shouldAutoCompact, shouldCompact, type ContextUsage } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
 import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
-import { ProviderError } from "../ai/providers.ts";
+import { listModels, ProviderError } from "../ai/providers.ts";
 import type { Usage } from "../ai/types.ts";
 import { PROVIDERS } from "../state/defaults.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
@@ -89,17 +89,22 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let costTotal = 0;
 	let costTurn = 0;
 	let lastTps = 0;
-	let lastCtxPct = 0;
+	let lastPromptTokens = 0;
 	// Cached share of the last request's input prompt, ONLY from the server-reported cache count: a number (incl.
 	let lastCachePct: number | undefined;
 	let lastUsage: Usage | undefined;
-	let lastCtxEstimated = false;
 	let haveStats = false;
 
 	function fmtCost(c: number): string {
 		if (c >= 1) return `$${c.toFixed(2)}`;
 		if (c >= 0.01) return `$${c.toFixed(3)}`;
 		return `$${c.toFixed(4)}`;
+	}
+	function fmtTokens(n: number): string {
+		if (n < 1000) return String(n);
+		if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
+		if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+		return `${(n / 1_000_000).toFixed(2)}M`;
 	}
 	function renderStats(): void {
 		if (!haveStats) {
@@ -108,9 +113,13 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 		const sep = (): HTMLElement => el("span", { class: "cs-sep" }, "·");
 		const item = (label: string, title: string): HTMLElement => el("span", { class: "cs-item", title }, label);
-		const ctxLabel = `${lastCtxPct < 10 ? lastCtxPct.toFixed(1) : lastCtxPct.toFixed(0)}% ctx${lastCtxEstimated ? " (est.)" : ""}`;
-		const ctxTitle = `${lastCtxEstimated ? "Context window unknown (estimated). " : ""}Click to compact (/compact)`;
-		const ctxItem = el("button", { class: "cs-item cs-action", type: "button", title: ctxTitle, on: { click: () => void compact(measuredContext()) } }, ctxLabel);
+		const window = modelContextWindow(store.settings.chat.model);
+		const fill = window ? Math.min(1, lastPromptTokens / window) : 0;
+		const ctxTitle = window
+			? `${lastPromptTokens.toLocaleString()} of ${window.toLocaleString()} context tokens (${(fill * 100).toFixed(0)}%). Click to compact (/compact)`
+			: `${lastPromptTokens.toLocaleString()} context tokens; this model's context window is unknown, so it never compacts on its own. Click to compact (/compact)`;
+		const bar = el("span", { class: "cs-ctx-bar" }, el("span", { class: "cs-ctx-fill", style: `width:${(fill * 100).toFixed(1)}%` }));
+		const ctxItem = el("button", { class: "cs-item cs-action cs-ctx", type: "button", title: ctxTitle, on: { click: () => void compact(measuredContext()) } }, bar, fmtTokens(lastPromptTokens));
 		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), ctxItem];
 		// Tri-state: undefined => the endpoint reported no cache count, so we hide
 		// the indicator entirely (never a guessed value). A real number — including
@@ -126,6 +135,14 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		append(statsBar, parts);
 		statsBar.hidden = false;
 	}
+
+	// A model the built-in table lacks takes its window from its endpoint's model listing.
+	function loadContextWindow(): void {
+		if (hasContextWindow(store.settings.chat.model)) return;
+		listModels(store.settings).then(renderStats, (e: unknown) => console.warn("Couldn't read the model's context window:", e));
+	}
+	loadContextWindow();
+	store.on("settings", loadContextWindow);
 
 	// A refused write (quota, a closed database) is shown where the user is
 	// looking; the edit is on screen but would not survive a reload.
@@ -376,7 +393,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 
 		const usage = measuredContext();
-		if (usage && shouldCompact(store.project.messages, usage)) await compact(usage);
+		if (shouldAutoCompact(usage)) await compact(usage);
 		store.project.messages.push(userMsg);
 		if (store.project.messages.length === 1) clear(list);
 		list.appendChild(renderMessage(userMsg));
@@ -418,9 +435,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 						}
 						// Cache counts are tri-state: undefined => server didn't report.
 						const totalIn = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
-						const ctx = modelContextWindow(model);
-						lastCtxEstimated = !hasContextWindow(model);
-						if (ctx > 0) lastCtxPct = Math.min(100, (totalIn / ctx) * 100);
+						lastPromptTokens = totalIn;
 						lastCachePct = cachePct(usage);
 						if (usage.outputTokens > 0 && durationMs > 0) lastTps = (usage.outputTokens / durationMs) * 1000;
 						haveStats = true;

@@ -29,15 +29,20 @@ export interface CompactOptions {
 /** Measured prompt size for the compaction gate. */
 export interface ContextUsage {
 	promptTokens: number;
-	window: number;
+	window: number | undefined; // undefined: the model's window is not known
 }
 
 const COMPACT_AT = 0.85;
 
-/** Worth compacting? Measured context usage wins. The message count is the
- * fallback when no usage has been reported. */
+/** Auto-compact before the next send? Only from measured usage against a known window. */
+export function shouldAutoCompact(usage: ContextUsage | undefined): boolean {
+	return !!usage && usage.window !== undefined && usage.window > 0 && usage.promptTokens / usage.window >= COMPACT_AT;
+}
+
+/** Worth compacting on request? Measured context usage wins. The message count
+ * is the fallback when no usage or window is known. */
 export function shouldCompact(messages: Message[], usage?: ContextUsage): boolean {
-	if (usage && usage.window > 0) return usage.promptTokens / usage.window >= COMPACT_AT;
+	if (usage && usage.window) return shouldAutoCompact(usage);
 	return messages.filter((m) => !m.compaction).length >= 4;
 }
 

@@ -497,6 +497,23 @@ textarea:focus {
 	color: var(--fg);
 	text-decoration: underline;
 }
+.cs-ctx {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+.cs-ctx-bar {
+	width: 48px;
+	height: 5px;
+	border-radius: 3px;
+	background: var(--bg-3);
+	overflow: hidden;
+}
+.cs-ctx-fill {
+	display: block;
+	height: 100%;
+	background: var(--accent);
+}
 
 /* Icons: each glyph (SVG path data) lives here as a currentColor-tinted CSS
    mask -- never in .ts. `.glyph` is the shared base; one `.icon-<name>` rule per

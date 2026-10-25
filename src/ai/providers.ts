@@ -7,6 +7,7 @@ import type { Block, ChatConfig, ImageBlock, Message, ReasoningDetailType, Setti
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
+import { recordContextWindows } from "./pricing.ts";
 
 export class ProviderError extends Error {
 	readonly status?: number;
@@ -720,8 +721,28 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
 }
 
+interface ModelListing {
+	id?: string;
+	name?: string;
+	context_length?: unknown; // OpenRouter, Ollama Cloud, Bifrost
+	max_input_tokens?: unknown; // Anthropic
+	top_provider?: { context_length?: unknown };
+}
+
+/** The context window each listed model publishes, by id. */
+export function contextWindows(items: ModelListing[]): Map<string, number> {
+	const out = new Map<string, number>();
+	for (const m of items) {
+		const id = m.id ?? m.name;
+		const tokens = [m.context_length, m.top_provider?.context_length, m.max_input_tokens].find((v): v is number => typeof v === "number" && v > 0);
+		if (id && tokens !== undefined) out.set(id, tokens);
+	}
+	return out;
+}
+
 /** List available model ids from the provider (Anthropic /v1/models or an
- * OpenAI-compatible /models). Throws a ProviderError on failure. */
+ * OpenAI-compatible /models), recording each model's published context window.
+ * Throws a ProviderError on failure. */
 export async function listModels(settings: Settings): Promise<string[]> {
 	const cfg = settings.chat;
 	const url = modelsEndpoint(settings);
@@ -739,9 +760,10 @@ export async function listModels(settings: Settings): Promise<string[]> {
 		throw corsHint(e, cfg);
 	}
 	if (!res.ok) throw await httpError(res);
-	const json = (await res.json()) as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
+	const json = (await res.json()) as { data?: ModelListing[]; models?: ModelListing[] };
 	const items = json.data ?? json.models ?? [];
 	const ids = items.map((m) => m.id ?? m.name ?? "").filter((s) => s.length > 0);
+	recordContextWindows(contextWindows(items));
 	return [...new Set(ids)].sort();
 }
 

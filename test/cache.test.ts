@@ -1,6 +1,8 @@
 // Unit tests for prompt-cache usage accounting.
 
-import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow } from "../src/ai/pricing.ts";
+import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow, recordContextWindows } from "../src/ai/pricing.ts";
+import { contextWindows } from "../src/ai/providers.ts";
+import { shouldAutoCompact } from "../src/ai/compact.ts";
 import type { Usage } from "../src/ai/types.ts";
 
 let passed = 0;
@@ -82,7 +84,20 @@ eq(messageCost("some-unknown-model", { inputTokens: 1000, outputTokens: 100 }), 
 	eq(modelContextWindow("anthropic/claude-opus-5"), 1_000_000, "a provider-prefixed id resolves its base window");
 	eq(hasContextWindow("anthropic/claude-opus-5"), true, "the prefixed id counts as known");
 	eq(hasContextWindow("deepseek/deepseek-chat"), false, "an unknown model has no known window");
-	eq(modelContextWindow("deepseek/deepseek-chat"), 128_000, "an unknown model uses the fallback window");
+	eq(modelContextWindow("deepseek/deepseek-chat"), undefined, "an unknown model's window stays unknown, never a guess");
+
+	const listing = [{ id: "deepseek/deepseek-v4.1-flash-1017", context_length: 1_048_576 }, { id: "claude-opus-5", max_input_tokens: 1_000_000 }, { id: "no-window" }, { id: "nested", top_provider: { context_length: 65_536 } }];
+	const windows = contextWindows(listing);
+	eq(windows.get("deepseek/deepseek-v4.1-flash-1017"), 1_048_576, "context_length is read");
+	eq(windows.get("claude-opus-5"), 1_000_000, "Anthropic's max_input_tokens is read");
+	eq(windows.get("nested"), 65_536, "top_provider.context_length is read");
+	eq(windows.has("no-window"), false, "a model with no published window is left out");
+	recordContextWindows(windows);
+	eq(modelContextWindow("deepseek/deepseek-v4.1-flash-1017"), 1_048_576, "a recorded window is used");
+	eq(hasContextWindow("deepseek/deepseek-v4.1-flash-1017"), true, "and counts as known");
+	eq(shouldAutoCompact({ promptTokens: 265_749, window: modelContextWindow("deepseek/deepseek-v4.1-flash-1017") }), false, "the HAR's 265k prompt is far from compaction on a 1M window");
+	eq(shouldAutoCompact({ promptTokens: 265_749, window: undefined }), false, "an unknown window never auto-compacts");
+	eq(shouldAutoCompact({ promptTokens: 900_000, window: 1_048_576 }), true, "85% of a known window does");
 }
 
 console.log(`ok - ${passed} assertions passed`);

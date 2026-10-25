@@ -14,7 +14,6 @@ interface ModelInfo {
 }
 
 const PER_M = 1_000_000;
-const DEFAULT_CONTEXT = 128_000;
 
 // First matching pattern wins; keep most-specific entries first.
 const TABLE: Array<[RegExp, ModelInfo]> = [
@@ -47,17 +46,22 @@ function find(model: string): ModelInfo | undefined {
 	return undefined;
 }
 
-function lookup(model: string): ModelInfo {
-	return find(model) ?? { context: DEFAULT_CONTEXT };
+// Context windows the endpoint itself published (its /models listing), by model id.
+const published = new Map<string, number>();
+
+/** Record the context windows an endpoint's model listing reported. */
+export function recordContextWindows(windows: Map<string, number>): void {
+	for (const [id, tokens] of windows) published.set(id.toLowerCase(), tokens);
 }
 
-export function modelContextWindow(model: string): number {
-	return lookup(model).context;
+/** The model's context window: what its endpoint published, else the table, else unknown. */
+export function modelContextWindow(model: string): number | undefined {
+	return published.get(model.toLowerCase()) ?? find(model)?.context;
 }
 
-/** True when the table knows the model's context window. */
+/** True when the model's context window is known. */
 export function hasContextWindow(model: string): boolean {
-	return find(model) !== undefined;
+	return modelContextWindow(model) !== undefined;
 }
 
 export function hasPricing(model: string, u?: Usage): boolean {
