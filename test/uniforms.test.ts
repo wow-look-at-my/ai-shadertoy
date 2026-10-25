@@ -1,10 +1,4 @@
-// Unit tests for custom-uniform extraction from shader source. Covers the forms
-// the AI actually writes -- in particular `uniform float u = 1.5;` style baked
-// defaults and precision qualifiers, which used to be silently dropped (declared
-// inline, rendered, but never surfaced as a control -> the editor showed "(none)"),
-// plus trailing `//` / `/* */` comments and de-duplicated header declarations.
-// DOM-free, so plain Node can exercise it:
-//   node --experimental-strip-types test/uniforms.test.ts
+// Unit tests for custom-uniform extraction from shader source.
 
 import { assembleFragment, extractUniformDeclarations, formatUniformDeclarations, reconcileUniforms } from "../src/gl/wrapper.ts";
 import type { Uniform } from "../src/state/types.ts";
@@ -80,9 +74,6 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 }
 
 // ---- GLSL single-precision `f`/`F` suffix on float literals ----------------
-// GLSL ES 3.00 permits `1.5f` / `40.0F` / `1e3f`; `Number()` rejects the suffix,
-// so an idiomatic baked default like `uniform float u_r = 40.0f;` used to parse
-// to NaN and the control silently fell back to 0 (the "0 placeholder" symptom).
 {
 	const src = [
 		"uniform float u_blur = 40.0f;",
@@ -223,7 +214,7 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 {
 	const decl = (name: string, value: number[]): Uniform => ({ name, type: value.length === 1 ? "float" : value.length === 2 ? "vec2" : value.length === 4 ? "vec4" : "vec3", value, min: 0, max: 1, step: 0.01 });
 
-	// New uniform (not previously present) takes its declared default as-is.
+	// New uniform (not present) takes its declared default as-is.
 	{
 		const next = reconcileUniforms([decl("u_a", [0.5])], [], {});
 		near(byName(next, "u_a").value[0], 0.5, "new uniform adopts its declared default");
@@ -231,14 +222,13 @@ void mainImage(out vec4 c, in vec2 f){ c = vec4(u_tint * u_speed, 1.0); }`;
 
 	// Unchanged initializer + a live value (slider / set_uniforms) -> value preserved.
 	{
-		const previous = [decl("u_a", [0.7])]; // user dragged it to 0.7
+		const previous = [decl("u_a", [0.7])];
 		const next = reconcileUniforms([decl("u_a", [0.5])], previous, { u_a: [0.5] });
 		near(byName(next, "u_a").value[0], 0.7, "unchanged initializer keeps the live value");
 	}
 
-	// GOTCHA 2: the initializer was edited (0.5 -> 1.5) -> adopt the new default.
 	{
-		const previous = [decl("u_speed", [0])]; // was bare (0)
+		const previous = [decl("u_speed", [0])];
 		const next = reconcileUniforms([decl("u_speed", [1.5])], previous, { u_speed: [0] });
 		near(byName(next, "u_speed").value[0], 1.5, "a changed initializer takes effect (not silently ignored)");
 	}

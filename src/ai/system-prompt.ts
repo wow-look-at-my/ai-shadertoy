@@ -1,8 +1,6 @@
 // Builds the system prompt. For native tool-calling models the tool *schemas*
-// are sent in the request's `tools` field, so they are NOT duplicated here --
-// the prompt only covers the environment, conventions, and current state. For
-// text-tools mode (models without native tool calling) `textToolInstructions`
-// describes the same catalogue as forgiving XML tags.
+// are sent in the request's `tools` field. They are NOT duplicated here --
+// the prompt only covers the environment, conventions, and current state.
 
 import type { Channel, Layer, Pass, Project } from "../state/types.ts";
 import type { ToolDef } from "./types.ts";

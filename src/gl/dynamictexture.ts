@@ -1,9 +1,4 @@
-// A WebGL2 texture backed by a live HTMLVideoElement -- either an uploaded video
-// clip or the webcam. The current video frame is uploaded every render tick
-// (texImage2D to allocate on the first frame / a size change, texSubImage2D
-// after) so a channel sampling it animates on its own. Playback follows the
-// renderer's clock (play/pause/reset). The renderer owns one of these per
-// dynamic channel slot and disposes it to release the camera.
+// A WebGL2 texture backed by a live HTMLVideoElement -- either an uploaded video clip or the webcam.
 
 import { stopStream } from "../util/media.ts";
 
@@ -12,8 +7,7 @@ export class DynamicTexture {
 	width = 0;
 	height = 0;
 
-	/** Fires when a new frame is decoded while the clip is not playing (first
-	 * frame ready, or a seek landed), so a paused renderer can redraw once. */
+	/** Fires when a new frame is decoded while the clip is not playing (first frame ready, or a seek landed), so a paused renderer can redraw once. */
 	onFrame: (() => void) | null = null;
 
 	private gl: WebGL2RenderingContext;
@@ -31,8 +25,7 @@ export class DynamicTexture {
 		this.stream = stream;
 		video.muted = true;
 		video.playsInline = true;
-		// Playback follows the renderer's explicit play()/pause(); autoplay would
-		// start a clip bound while the renderer is paused.
+		// Playback follows the renderer's explicit play()/pause().
 		video.addEventListener("loadeddata", this.notify);
 		video.addEventListener("seeked", this.notify);
 		video.addEventListener("error", () => {
@@ -78,7 +71,6 @@ export class DynamicTexture {
 		try {
 			this.video.currentTime = 0;
 		} catch {
-			/* not seekable yet */
 		}
 	}
 

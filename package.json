@@ -4,12 +4,6 @@
 	"private": true,
 	"description": "Client-side AI sandbox for building WebGL2 fragment shaders. Single-file, no backend.",
 	"type": "module",
-	"scripts": {
-		"typecheck": "tsc --noEmit",
-		"test": "node --experimental-strip-types --test test/*.test.ts",
-		"build": "ts0 build",
-		"check": "pnpm run typecheck && pnpm run test && pnpm run build"
-	},
 	"devDependencies": {
 		"ts0": "git+https://github.com/wow-look-at-my/ts0.git#072e71b450a7ac2d1a3257dd795c0bed6866ed0a",
 		"typescript": "^5.7.0"

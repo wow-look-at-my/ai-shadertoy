@@ -1,19 +1,12 @@
-// Minimal OpenEXR writer: single-part, scanline, NO_COMPRESSION, HALF channels.
-// Just enough to export an HDR (rgba16f) render losslessly; the result opens in
-// Blender, Photoshop, oiiotool, and OpenEXR's own tools. File layout reference:
-// https://openexr.com/en/latest/OpenEXRFileLayout.html
-//
-// Input is half-float RGBA — the exact bits GL hands back from readPixels on an
-// RGBA16F target (GL HALF_FLOAT == IEEE 754 binary16 == EXR HALF, so no
-// conversion is needed) — laid out top-down, row-major, 4 samples/pixel R,G,B,A.
+// Minimal OpenEXR writer: single-part, scanline, NO_COMPRESSION, HALF channels. enough to export an HDR (rgba16f) render losslessly; the result opens in Blender, Photoshop, oiiotool.
 
-const HALF = 1; // chlist pixel type: 0 = UINT, 1 = HALF, 2 = FLOAT
+const HALF = 1;
 
 const f32 = new Float32Array(1);
 const u32 = new Uint32Array(f32.buffer);
 
-/** IEEE 754 binary32 -> binary16 bits, round-to-nearest-even. Overflow becomes
- * infinity, tiny values become subnormals or signed zero, NaN stays NaN. */
+/** IEEE multiple binary32 -> binary16 bits, round-to-nearest-even. Overflow
+ * becomes infinity, tiny values become subnormals or signed zero, NaN stays NaN. */
 export function floatToHalf(v: number): number {
 	f32[0] = v;
 	const x = u32[0];
@@ -31,7 +24,7 @@ export function floatToHalf(v: number): number {
 		return sign | rounded;
 	}
 	const m = mant + 0x1000 + ((mant >>> 13) & 1) - 1; // round to nearest even
-	if (m & 0x800000) return sign | ((e + 1) << 10); // carry: mantissa is 0, exponent 0x1f is inf
+	if (m & 0x800000) return sign | ((e + 1) << 10);
 	return sign | (e << 10) | (m >>> 13);
 }
 
@@ -61,12 +54,12 @@ export function encodeHalfRGBA(width: number, height: number, rgba: Uint16Array)
 
 	// Channels MUST be listed alphabetically: A, B, G, R.
 	const chans = ["A", "B", "G", "R"];
-	const chlistSize = chans.reduce((n, c) => n + c.length + 1 + 16, 0) + 1; // each: name\0 + 16, then a null terminator
+	const chlistSize = chans.reduce((n, c) => n + c.length + 1 + 16, 0) + 1;
 	attr("channels", "chlist", chlistSize, () => {
 		for (const c of chans) {
 			str(c);
 			i32(HALF);
-			u8(0); u8(0); u8(0); u8(0); // pLinear + 3 reserved bytes
+			u8(0); u8(0); u8(0); u8(0);
 			i32(1); // xSampling
 			i32(1); // ySampling
 		}
@@ -82,7 +75,7 @@ export function encodeHalfRGBA(width: number, height: number, rgba: Uint16Array)
 	H.push(0); // end of header
 
 	// ---- file layout ----
-	const dataSize = width * 4 * 2; // 4 HALF channels * 2 bytes * width
+	const dataSize = width * 4 * 2;
 	const offTableStart = 8 + H.length; // after magic(4) + version(4) + header
 	const firstChunk = offTableStart + height * 8; // after the per-scanline offset table
 	const total = firstChunk + height * (8 + dataSize);
@@ -91,7 +84,6 @@ export function encodeHalfRGBA(width: number, height: number, rgba: Uint16Array)
 	const dv = new DataView(out.buffer);
 	let o = 0;
 
-	// magic (20000630) + version: 2, single-part scanline, no flags
 	out[o++] = 0x76; out[o++] = 0x2f; out[o++] = 0x31; out[o++] = 0x01;
 	out[o++] = 2; out[o++] = 0; out[o++] = 0; out[o++] = 0;
 	out.set(H, o);
@@ -110,7 +102,7 @@ export function encodeHalfRGBA(width: number, height: number, rgba: Uint16Array)
 		dv.setInt32(o, y, true); o += 4;
 		dv.setInt32(o, dataSize, true); o += 4;
 		const row = y * width * 4;
-		for (const ci of [3, 2, 1, 0]) { // A,B,G,R -> source offsets 3,2,1,0
+		for (const ci of [3, 2, 1, 0]) {
 			for (let x = 0; x < width; x++) {
 				dv.setUint16(o, rgba[row + x * 4 + ci], true);
 				o += 2;

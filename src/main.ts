@@ -1,16 +1,14 @@
 // Entry point. Sets up the renderer, store, and UI, then mounts the app.
-// The default shader is loaded from a .glsl asset (embedded into the single-file
-// bundle by ts0's fetch interceptor).
 
 import { Renderer } from "./gl/renderer.ts";
 import { Store } from "./state/store.ts";
+import { MODEL_PRESETS } from "./state/defaults.ts";
 import { createApp } from "./ui/app.ts";
+import { completeOpenRouterSignIn, OPENROUTER_VERIFIER_KEY } from "./ai/openrouter.ts";
 import { el } from "./util/dom.ts";
 
 async function loadText(relPath: string): Promise<string> {
-	// Pass a string (.href), not a URL object: ts0's fetch interceptor only
-	// matches string / Request inputs, so a bare URL object would bypass the
-	// embedded-asset map and hit the (nonexistent) network path.
+	// Pass a string (.href), not a URL object: ts0's fetch interceptor only matches string / Request inputs.
 	const res = await fetch(new URL(relPath, import.meta.url).href);
 	if (!res.ok) throw new Error(`failed to load ${relPath}: ${res.status}`);
 	return res.text();
@@ -47,6 +45,23 @@ async function boot(): Promise<void> {
 	await store.init(renderer, defaultShader);
 
 	mount.appendChild(createApp(store, canvas, () => defaultShader));
+	await finishOpenRouterSignIn(store, mount);
+}
+
+/** Complete an OpenRouter sign-in that returned to this page. */
+async function finishOpenRouterSignIn(store: Store, mount: HTMLElement): Promise<void> {
+	const result = await completeOpenRouterSignIn(location.href, sessionStorage.getItem(OPENROUTER_VERIFIER_KEY));
+	if (!result) return;
+	sessionStorage.removeItem(OPENROUTER_VERIFIER_KEY);
+	history.replaceState(null, "", result.url);
+	if (!result.key) {
+		mount.appendChild(el("div", { class: "banner error", attrs: { role: "status" } }, `OpenRouter sign-in failed: ${result.error ?? "unknown error"}`));
+		return;
+	}
+	const chat = store.settings.chat;
+	const isPreset = Object.values(MODEL_PRESETS).some((list) => list.includes(chat.model));
+	const model = isPreset && !MODEL_PRESETS.openrouter.includes(chat.model) ? MODEL_PRESETS.openrouter[0] : chat.model;
+	store.updateSettings({ chat: { ...chat, provider: "openrouter", apiKey: result.key, model } });
 }
 
 boot().catch((e) => {

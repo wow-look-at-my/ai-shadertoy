@@ -35,8 +35,7 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 	scaleSel.addEventListener("change", () => store.updateSettings({ renderScale: Number(scaleSel.value) }));
 	store.on("settings", () => (scaleSel.value = String(store.settings.renderScale)));
 
-	// Square-pixels toggle: forces an isotropic UV space (iResolution = short side)
-	// so `uv = fragCoord/iResolution.xy` keeps equal x/y scale and circles stay round.
+	// Square-pixels toggle: forces an isotropic UV space (iResolution = short side).
 	const squareBtn = el("button", { class: "btn icon", title: "Square pixels: isotropic UVs (circles stay round)" }, icon("aspectRatio"));
 	const updateSquare = () => {
 		squareBtn.classList.toggle("on", store.settings.squarePixels);
@@ -87,9 +86,7 @@ function createDownloadMenu(store: Store): HTMLElement {
 	const baseName = () => store.project.name.replace(/\s+/g, "_") || "shader";
 
 	const saveRaster = (mime: string) => {
-		// quality 1 -> lossless for both PNG (ignored) and WebP (true VP8L lossless).
-		// The extension follows the bytes actually produced: a browser that cannot
-		// encode WebP hands back PNG.
+		// One quality -> lossless for both PNG (ignored) and WebP (true VP8L lossless).
 		const shot = store.renderer.screenshot(1920, mime, 1);
 		const blob = dataUrlToBlob(shot.dataUrl);
 		downloadFile(`${baseName()}.${blob.type === "image/webp" ? "webp" : "png"}`, blob);

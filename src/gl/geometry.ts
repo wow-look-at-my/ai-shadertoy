@@ -1,9 +1,4 @@
-// Real instanced vertex geometry for layer shapes. One unit quad mesh is drawn
-// once per shape via instancing (gl.drawArraysInstanced); the per-shape transform
-// + style ride in a per-instance attribute buffer, and the actual outline is cut
-// out in the fragment shader by the kind's signed-distance function. Shapes are
-// rasterized into a layer's "geometry" texture with premultiplied "over"
-// blending, in array order (painter's order within the layer).
+// Real instanced vertex geometry for layer shapes.
 
 import type { Shape } from "../state/types.ts";
 import { shapeKindIndex } from "./shapes.ts";
@@ -11,7 +6,6 @@ import { shapeKindIndex } from "./shapes.ts";
 // Per-instance layout: a_box(4) + a_color(4) + a_misc(4) + a_extra(4) = 16 floats.
 const FLOATS_PER_INSTANCE = 16;
 
-// Unit quad corners in [-0.5, 0.5], drawn as a triangle strip.
 const QUAD_CORNERS = new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]);
 
 export class GeometryBatch {
@@ -114,8 +108,7 @@ export class GeometryBatch {
 		}
 	}
 
-	/** Rasterize `shapes` into the bound-to FBO, clearing it to transparent first.
-	 * `opacity` (0..1) scales the whole layer's geometry. */
+	/** Rasterize `shapes` into the bound-to FBO, clearing it to transparent first. */
 	draw(shapes: Shape[], fbo: WebGLFramebuffer, w: number, h: number, opacity: number): void {
 		const gl = this.gl;
 		gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);

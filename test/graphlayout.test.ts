@@ -1,9 +1,4 @@
-// Unit tests for the passes render-graph auto-layout (ui/graphlayout.ts). The
-// graph is a DAG; positions are derived from the pass->pass edges, so a
-// dependency always lands in an earlier (smaller-x) column than the pass that
-// samples it, and an edge spanning more than one column gets routing waypoints so
-// it can bend around the nodes in between. DOM-free, so plain Node can run it:
-//   node --experimental-strip-types test/graphlayout.test.ts
+// Unit tests for the passes render-graph auto-layout (ui/graphlayout.ts).
 
 import { layoutGraph, type GraphNode, type LayoutOpts, type NodePos } from "../src/ui/graphlayout.ts";
 
@@ -17,11 +12,10 @@ function eq(a: unknown, b: unknown, msg: string): void {
 }
 
 const OPTS: LayoutOpts = { nodeWidth: 100, hGap: 40, vGap: 20, margin: 10 };
-const PITCH = OPTS.nodeWidth + OPTS.hGap; // 140
+const PITCH = OPTS.nodeWidth + OPTS.hGap;
 const colX = (c: number): number => OPTS.margin + c * PITCH;
 const node = (id: string, deps: string[] = [], height = 50): GraphNode => ({ id, deps, height });
 
-/** Assert no two same-column nodes overlap vertically. */
 function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 	const byX = new Map<number, GraphNode[]>();
 	for (const n of nodes) {
@@ -52,7 +46,6 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 	eq(pos.get("a")!.y, OPTS.margin, "lone node sits at the top margin");
 }
 
-// ---- chain a -> b -> c: three increasing columns ---------------------------
 {
 	const nodes = [node("a"), node("b", ["a"]), node("c", ["b"])];
 	const { pos, routes } = layoutGraph(nodes, OPTS);
@@ -77,7 +70,6 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 
 // ---- skip edge gets a routing waypoint that avoids the middle node ----------
 {
-	// a -> b -> c, plus a -> c directly: a@0, b@1, c@2; the a->c edge spans col 1.
 	const nodes = [node("a"), node("b", ["a"]), node("c", ["b", "a"])];
 	const { pos, routes } = layoutGraph(nodes, OPTS);
 	eq(pos.get("c")!.x, colX(2), "c lands in column 2 (longest path via b)");
@@ -88,8 +80,7 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 	eq(route![0].x, colX(1), "first waypoint at the skipped column's left edge");
 	eq(route![1].x, colX(1) + OPTS.nodeWidth, "second waypoint at the skipped column's right edge");
 	eq(route![0].y, route![1].y, "the spanning waypoints share a height -> a flat run across the column");
-	// The lane must be clear, i.e. outside the middle node b's band, across the
-	// whole column width (both waypoints are at the same clear height).
+	// The lane must be clear, i.e. outside the middle node b's band, across the whole column width.
 	const b = pos.get("b")!;
 	const wy = route![0].y;
 	check(wy <= b.y + 1e-9 || wy >= b.y + 50 - 1e-9, "routing lane avoids the middle node's vertical span");
@@ -97,7 +88,6 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 
 // ---- longer skip gets one waypoint per skipped column ----------------------
 {
-	// chain a->b->c->d plus a->d (spans columns 1 and 2).
 	const nodes = [node("a"), node("b", ["a"]), node("c", ["b"]), node("d", ["c", "a"])];
 	const { pos, routes } = layoutGraph(nodes, OPTS);
 	eq(pos.get("d")!.x, colX(3), "d in the last column");
@@ -141,12 +131,8 @@ function noOverlap(nodes: GraphNode[], pos: Map<string, NodePos>): void {
 {
 	const { pos } = layoutGraph([node("a", ["b"]), node("b", ["a"])], OPTS);
 	eq(pos.size, 2, "cycle still yields a position per node (no hang)");
-	// One edge of the cycle is dropped, so the two nodes land in columns 0 and 1
-	// with no empty column to their left.
 	const xs = [pos.get("a")!.x, pos.get("b")!.x].sort((p, q) => p - q);
 	eq(xs.join(","), `${colX(0)},${colX(1)}`, "a two-node cycle occupies columns 0 and 1");
-	// A longer cycle fed by a root: the root is leftmost and every column from 0
-	// to the last is occupied (a cycle used to ratchet its members rightward).
 	const ring = layoutGraph([node("src"), node("p", ["src", "r"]), node("q", ["p"]), node("r", ["q"])], OPTS);
 	eq(ring.pos.get("src")!.x, OPTS.margin, "root stays in column 0");
 	const cols = [...new Set([...ring.pos.values()].map((p) => (p.x - OPTS.margin) / PITCH))].sort((p, q) => p - q);

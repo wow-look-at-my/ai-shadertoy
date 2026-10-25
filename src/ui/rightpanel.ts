@@ -1,7 +1,7 @@
 // Right-hand editor panel. Tabs: Layers (the back-to-front stack + per-layer
 // geometry), the per-pass shader Code editor, the Passes render-graph (auto-laid-out
 // pass nodes wired by their channel inputs), live Uniform controls (shared across
-// passes), the iChannel texture bindings for the selected pass, and Assets (the
+// passes). The iChannel texture bindings for the selected pass, and Assets (the
 // shared media library -- upload images/videos for the AI to bind). All edits flow
 // through the store.
 
@@ -88,9 +88,7 @@ export function createRightPanel(store: Store): HTMLElement {
 		if (active === "Assets") renderAssets(store, assetsView);
 	});
 	store.on("compile", () => codeView.syncLog());
-	// Undo/redo: the "project" handler above already refreshed the other tabs and
-	// ran the focus-guarded code sync; this forces the code box to update too even
-	// when it currently holds focus.
+	// Undo/redo.
 	store.on("restore", () => codeView.forceSync());
 
 	renderActive();
@@ -104,8 +102,7 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 	const textarea = el("textarea", { class: "code", attrs: { spellcheck: "false", wrap: "soft" } });
 	textarea.value = store.selectedPass().source;
 
-	// The pass is captured at keystroke time: the selection can change before
-	// the debounce fires, and the edit must land on the pass it was typed into.
+	// The pass is captured at keystroke time: the selection can change before the debounce fires.
 	const applyTo = debounce((passId: string, source: string) => store.setPassSource(passId, source, true), 350);
 	const apply = () => applyTo(store.selectedPassId, textarea.value);
 	textarea.addEventListener("input", apply);
@@ -129,7 +126,7 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 		}
 	};
 	const sync = () => {
-		applyTo.flush(); // a pending edit belongs to the pass it was typed into
+		applyTo.flush(); // a pending edit belongs to the pass.
 		const src = store.selectedPass().source;
 		if (document.activeElement !== textarea && textarea.value !== src) textarea.value = src;
 		syncLog();
@@ -144,7 +141,6 @@ function buildCodeView(store: Store): { root: HTMLElement; sync: () => void; for
 			try {
 				textarea.setSelectionRange(pos, pos);
 			} catch {
-				/* detached / unsupported: ignore */
 			}
 		}
 		syncLog();
@@ -188,10 +184,8 @@ const COL_GAP = 64; // horizontal gap between columns
 const ROW_GAP = 28; // vertical gap between stacked nodes in a column
 const GRAPH_MARGIN = 28; // padding before the first column/row
 
-// Per-node geometry. A node is a header plus one row per input pin (there is NO
-// add-row), so the card is HEADER_H + rows*ROW_H (+ borders). The single output
-// port sits at the card's vertical centre -- valid even with zero input rows, so
-// it never floats off the card.
+// Per-node geometry. A node is a header plus one row per input pin (there is
+// NO add-row), so the card is HEADER_H + rows*ROW_H (+ borders).
 const inPortY = (i: number): number => HEADER_H + ROW_H / 2 + i * ROW_H;
 const nodeHeight = (pass: Pass): number => HEADER_H + pass.channels.length * ROW_H + CARD_BORDER;
 const outPortY = (pass: Pass): number => nodeHeight(pass) / 2;
@@ -210,8 +204,8 @@ function edgePath(points: NodePos[]): string {
 }
 
 /** Auto-layout the active layer's passes: a left-to-right layered DAG layout
- * derived purely from the pass->pass edges (no stored coordinates), plus routing
- * waypoints for edges that span more than one column. */
+ * derived purely. From the pass->pass edges (no stored coordinates), plus
+ * routing waypoints for edges that span more than one column. */
 function layoutPasses(passes: Pass[]): LayoutResult {
 	const nodes = passes.map((p) => ({
 		id: p.id,
@@ -263,8 +257,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 	const at = (id: string): NodePos => layout.pos.get(id) ?? { x: GRAPH_MARGIN, y: GRAPH_MARGIN };
 	const viewport = el("div", { class: "graph-viewport" });
 
-	// Edges (SVG) behind the nodes, inside the transformed viewport. Bounds cover
-	// nodes AND routing waypoints so the SVG never clips a routed edge.
+	// Edges (SVG) behind the nodes, inside the transformed viewport.
 	const xs = [640, ...passes.map((p) => at(p.id).x + NODE_W + 60)];
 	const ys = [360, ...passes.map((p) => at(p.id).y + nodeHeight(p) + 60)];
 	for (const pts of layout.routes.values()) for (const pt of pts) { xs.push(pt.x + 60); ys.push(pt.y + 60); }
@@ -288,8 +281,7 @@ function renderGraph(store: Store, container: HTMLElement, select: (t: Tab) => v
 				const sp = at(src.id);
 				const start = { x: sp.x + NODE_W, y: sp.y + outPortY(src) };
 				const end = { x: tp.x, y: tp.y + inPortY(i) };
-				// Thread any routing waypoints so an edge spanning >1 column bends
-				// around the nodes in between instead of crossing them.
+				// Thread any routing waypoints so an edge spanning >1 column bends around the nodes in between instead of crossing them.
 				const waypoints = layout.routes.get(`${src.id}>${tgt.id}`) ?? [];
 				const path = document.createElementNS(svgNS, "path");
 				path.setAttribute("d", edgePath([start, ...waypoints, end]));
@@ -385,8 +377,7 @@ function buildNode(store: Store, pass: Pass, pos: NodePos, select: (t: Tab) => v
 	const delBtn = el("button", { class: "btn icon tiny", title: "Delete pass", on: { click: () => { const r = store.removePass(pass.id); if (!r.ok && r.error) alert(r.error); } } }, icon("close", { size: 14 }));
 
 	const header = el("div", { class: "gn-head" }, nameEl, el("span", { class: "spacer" }), editBtn, outBtn, delBtn);
-	// Nodes are auto-positioned (no dragging). Click the name/header to select the
-	// pass; double-click the name to rename.
+	// Nodes are auto-positioned (no dragging). Click the name/header to select the pass; double-click the name to rename.
 	nameEl.addEventListener("dblclick", () => beginRename(store, pass, nameEl));
 	header.addEventListener("click", (e) => {
 		if (e.target === nameEl || e.target === header) store.selectPass(pass.id);
@@ -606,9 +597,7 @@ async function addAssetFromFile(store: Store, file: File, type: "image" | "video
 		return null;
 	}
 	const dataUrl = await fileToDataUrl(file);
-	// Content de-dup: identical bytes => identical data URL. Reuse the existing
-	// asset instead of storing the same media twice (so re-dropping a file, or
-	// dropping one already in the library, is a no-op that still binds correctly).
+	// Content de-dup: identical bytes => identical data URL.
 	const dup = store.assets.find((a) => a.dataUrl === dataUrl);
 	if (dup) return dup;
 	let width: number;
@@ -622,8 +611,7 @@ async function addAssetFromFile(store: Store, file: File, type: "image" | "video
 	}
 	const asset: ImageAsset = {
 		id: uid("a_"),
-		// Clean exotic characters out of the filename first (U+202F etc.), then
-		// de-duplicate so the AI can address each asset unambiguously by name.
+		// Clean exotic characters out of the filename first (U+202F etc.), then de-duplicate so the AI can address each asset unambiguously by name.
 		name: file.name.replace(/\.[^.]+$/, ""), // the store sanitizes and uniquifies
 		mediaType: file.type || (type === "video" ? "video/mp4" : "image/png"),
 		dataUrl,
@@ -645,7 +633,7 @@ async function pickAndAddAsset(store: Store, type: "image" | "video"): Promise<I
 }
 
 /** Add a batch of (file, kind) pairs to the library. Sequential so name- and
- * content-de-dup see every prior add; each file is isolated so one bad file
+ * content-de-dup see every prior add. Each file is isolated so one bad file
  * (corrupt / undecodable) alerts but doesn't abort the rest. */
 async function addFilesToLibrary(store: Store, items: Array<{ file: File; kind: "image" | "video" }>): Promise<void> {
 	for (const { file, kind } of items) {
@@ -734,7 +722,7 @@ async function uploadAndBind(store: Store, passId: string, channel: number, type
 
 // ---- assets (shared media library) -----------------------------------------
 
-/** Thumbnail for a library asset: an <img> for stills; for video a muted <video>
+/** Thumbnail for a library asset: an <img> for stills. For video a muted <video>
  * seeked to an early frame so the card shows a still preview instead of black. */
 function assetThumb(a: ImageAsset): HTMLElement {
 	if (a.kind !== "video") return el("img", { class: "asset-thumb", attrs: { src: a.dataUrl, alt: a.name } });
@@ -745,7 +733,6 @@ function assetThumb(a: ImageAsset): HTMLElement {
 		try {
 			v.currentTime = Math.min(0.1, (v.duration || 1) / 2);
 		} catch {
-			/* some browsers reject seeking before canplay; the poster just stays black */
 		}
 	});
 	return v;
@@ -787,7 +774,7 @@ function renderAssets(store: Store, container: HTMLElement): void {
 function numberInput(value: number, onChange: (v: number) => void): HTMLInputElement {
 	const inp = el("input", { class: "u-num", type: "number", value: String(value) });
 	inp.addEventListener("change", () => {
-		if (inp.value === "" || !Number.isFinite(inp.valueAsNumber)) return; // a cleared field is not 0
+		if (inp.value === "" || !Number.isFinite(inp.valueAsNumber)) return;
 		onChange(inp.valueAsNumber);
 	});
 	return inp;

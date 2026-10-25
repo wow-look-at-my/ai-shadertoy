@@ -1523,6 +1523,19 @@ textarea.code {
 	border-radius: 8px;
 }
 
+.banner {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 100;
+	padding: 10px 16px;
+	background: var(--bg-2);
+	border-bottom: 1px solid var(--danger);
+	color: var(--danger);
+	font-size: 13px;
+}
+
 /* ---- scrollbars ---- */
 ::-webkit-scrollbar {
 	width: 10px;

@@ -1,9 +1,9 @@
-// Provider adapters. Two wire formats are supported -- Anthropic Messages and
+// Provider adapters. Wire formats are supported -- Anthropic Messages and
 // OpenAI-compatible Chat Completions -- both streamed (SSE) with vision and
 // tool use. The app's neutral Message[] model (state/types.ts) mirrors
 // Anthropic's content blocks; the OpenAI path down-converts.
 
-import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
+import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock, ThinkingBlock } from "../state/types.ts";
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
@@ -25,10 +25,7 @@ function endpoint(url: string, settings: Settings, useProxy: boolean): string {
 }
 
 /** Whether the chat request goes through the proxy: the user's toggle, OR the
- * provider needing it regardless. Ollama Cloud sends no CORS headers at all, so
- * a direct browser call cannot work; forcing it on there is what makes picking
- * the provider enough to start chatting. The Settings toggle reflects this, so
- * it is stated rather than hidden. */
+ * provider needing it regardless. */
 function chatUsesProxy(cfg: ChatConfig): boolean {
 	return cfg.useProxy || PROVIDERS[cfg.provider].needsProxy;
 }
@@ -44,6 +41,38 @@ export function chatEndpoint(settings: Settings): string {
 	const cfg = settings.chat;
 	const path = PROVIDERS[cfg.provider].wire === "anthropic" ? "/v1/messages" : "/chat/completions";
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
+}
+
+/** The URL a model-list request goes to. */
+export function modelsEndpoint(settings: Settings): string {
+	const cfg = settings.chat;
+	const anthropic = PROVIDERS[cfg.provider].wire === "anthropic";
+	const path = anthropic ? "/v1/models?limit=1000" : "/models";
+	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
+}
+
+/** The Anthropic-wire credential headers. A base-URL override is a gateway, so
+ * the key also goes in `x-bf-vk`. The hosted default keeps its own headers. */
+export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
+	const headers: Record<string, string> = {
+		"x-api-key": cfg.apiKey,
+		"anthropic-version": "2023-06-01",
+		"anthropic-dangerous-direct-browser-access": "true",
+	};
+	const key = cfg.apiKey.trim();
+	if (key && cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
+	return headers;
+}
+
+/** The credential headers for an OpenAI-wire request. A base-URL override is a
+ * gateway, so the key also goes in `x-bf-vk` (Bifrost reads it verbatim). The
+ * hosted default keeps the bearer token alone. */
+export function openaiAuthHeaders(cfg: ChatConfig): Record<string, string> {
+	const key = cfg.apiKey.trim();
+	if (!key) return {};
+	const headers: Record<string, string> = { authorization: `Bearer ${key}` };
+	if (cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
+	return headers;
 }
 
 async function* sseEvents(res: Response): AsyncGenerator<{ event: string; data: string }> {
@@ -76,8 +105,7 @@ async function* sseEvents(res: Response): AsyncGenerator<{ event: string; data: 
 				if (ev) yield ev;
 			}
 		}
-		// A final event with no trailing blank line (a stream cut short, or a
-		// closing `error` event) must still reach the caller.
+		// A final event with no trailing blank line (a stream cut short, or a closing `error` event) must still reach the caller.
 		buf += decoder.decode();
 		const tail = parse(buf);
 		if (tail) yield tail;
@@ -117,11 +145,6 @@ function anthropicContent(blocks: Block[]): ACBlock[] {
 	});
 }
 
-// Two prompt-cache breakpoints (the caller also marks `system`): a `cache_control`
-// marker on the last block of the last real message caches the whole conversation
-// prefix, and the volatile project `state` is appended AFTER it as an uncached,
-// varying suffix so changing state can't invalidate that prefix (the "shared
-// prefix, varying suffix" pattern). Max 4 breakpoints/request -- we use 2.
 function toAnthropicMessages(messages: Message[], state: string): ACBlock[] {
 	const out: ACBlock[] = messages.map((m) => ({
 		role: m.role === "assistant" ? "assistant" : "user", // tool results ride in a user message
@@ -134,21 +157,15 @@ function toAnthropicMessages(messages: Message[], state: string): ACBlock[] {
 	return out;
 }
 
-// Model families that still take a thinking token budget (and accept sampling
-// parameters). Everything newer runs adaptive thinking and rejects temperature,
-// so an unrecognised id is treated as new: adaptive, no temperature. The gate is
-// an allowlist of OLD models so a model released after this code never gets a
-// request shape that 400s.
+// Model families that still take a thinking token budget (and accept sampling parameters).
 const ANTHROPIC_BUDGET_MODELS = /(opus-4-[015])|sonnet-4-[05]|haiku-4-5/i;
 
-// Only the budget-era models accept temperature/top_p/top_k; 4.7+ reject them.
 function anthropicAcceptsTemperature(model: string): boolean {
 	return ANTHROPIC_BUDGET_MODELS.test(model) || /(opus-4-6)|sonnet-4-6/i.test(model);
 }
 
-// Extended thinking. `display: "summarized"` makes the reasoning visible as it
-// streams (the default is omitted on 4.7+). Thinking and temperature are
-// mutually exclusive in our request — see the body assembly below.
+// Extended thinking. Thinking and temperature are mutually exclusive in our
+// request — see the body assembly below.
 function anthropicThinking(model: string, maxTokens: number): Record<string, unknown> | undefined {
 	if (ANTHROPIC_BUDGET_MODELS.test(model)) {
 		const budget = Math.max(1024, Math.min(8192, Math.floor(maxTokens / 2)));
@@ -157,9 +174,6 @@ function anthropicThinking(model: string, maxTokens: number): Record<string, unk
 	return { type: "adaptive", display: "summarized" };
 }
 
-// `output_config.effort` (GA, no beta header) 400s on Sonnet 4.5 / Haiku 4.5 and
-// older; Opus 4.5 and everything newer accept "medium" (the server default is
-// "high"), which trades some depth for lower latency/cost.
 function anthropicEffort(model: string): string | undefined {
 	return /sonnet-4-[05]|haiku-4-5|opus-4-[01]/i.test(model) ? undefined : "medium";
 }
@@ -170,17 +184,14 @@ export function anthropicBody(cfg: ChatConfig, system: string, state: string, me
 	const body: Record<string, unknown> = {
 		model: cfg.model,
 		max_tokens: cfg.maxTokens,
-		// Cache the (stable) system prompt. Tools render before it, so this single
-		// breakpoint covers tools + system. The volatile project state is NOT here
-		// -- it rides at the end of `messages` so it can't invalidate this prefix.
+		// Cache the (stable) system prompt. Tools render before it, so this breakpoint covers tools + system.
 		system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
 		stream: true,
 		messages: toAnthropicMessages(messages, state),
 	};
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
-		// A history that carries tool_use/tool_result blocks must define tools;
-		// `none` keeps them defined while forbidding new calls (compaction).
+		// A history that carries tool_use/tool_result blocks must define tools.
 		if (opts.toolChoice === "none") body["tool_choice"] = { type: "none" };
 	}
 	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
@@ -200,12 +211,7 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 	try {
 		res = await fetch(url, {
 			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-api-key": cfg.apiKey,
-				"anthropic-version": "2023-06-01",
-				"anthropic-dangerous-direct-browser-access": "true",
-			},
+			headers: { "content-type": "application/json", ...anthropicHeaders(cfg) },
 			body: JSON.stringify(body),
 			signal: opts.signal ?? null,
 		});
@@ -232,12 +238,7 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 				const u = (msg["message"] as Record<string, unknown> | undefined)?.["usage"] as Record<string, unknown> | undefined;
 				if (u) {
 					turn.usage.inputTokens = (u["input_tokens"] as number) ?? 0;
-					// Anthropic's `input_tokens` is the UNCACHED remainder only — it
-					// already excludes cache_read_input_tokens and cache_creation_input_tokens,
-					// so the three sum to the full prompt and there is nothing to subtract
-					// (no double-counting). Cache counts are server-truth: a number (incl. 0)
-					// when reported, left undefined when the field is absent so the UI shows
-					// "n/a" rather than a guessed value. Never estimated.
+					// Anthropic's `input_tokens` is the UNCACHED remainder only.
 					const cacheRead = u["cache_read_input_tokens"];
 					const cacheWrite = u["cache_creation_input_tokens"];
 					turn.usage.cacheReadTokens = typeof cacheRead === "number" ? cacheRead : undefined;
@@ -325,10 +326,14 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 			if (text) msg["content"] = text;
 			if (toolCalls.length) msg["tool_calls"] = toolCalls;
 			if (!text && !toolCalls.length) msg["content"] = "";
+			const thinking = m.blocks.filter((b): b is ThinkingBlock => b.type === "thinking");
+			const reasoning = thinking.map((b) => b.thinking).join("");
+			if (reasoning) msg["reasoning_content"] = reasoning;
+			const details = thinking.filter((b) => b.signature).map((b) => ({ type: "reasoning.text", text: b.thinking, signature: b.signature }));
+			if (details.length) msg["reasoning_details"] = details;
 			out.push(msg);
 		} else {
-			// user or tool: tool_result blocks become role:"tool"; any plain
-			// text/image content becomes a following user message.
+			// user or tool: tool_result blocks become role:"tool".
 			const trailing: Array<TextBlock | ImageBlock> = [];
 			for (const b of m.blocks) {
 				if (b.type === "tool_result") {
@@ -342,16 +347,14 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 			if (trailing.length) out.push({ role: "user", content: openaiUserContent(trailing) });
 		}
 	}
-	// Volatile project state as an uncached, varying suffix -- keeps the system +
-	// conversation prefix stable for OpenAI's automatic (server-side) caching.
+	// Volatile project state as an uncached, varying suffix -- keeps the system + conversation prefix stable for OpenAI's automatic (server-side) caching.
 	if (state.trim()) out.push({ role: "user", content: state });
 	return out;
 }
 
-// OpenAI's reasoning models (o-series, gpt-5 family) reject `max_tokens` (they
-// take `max_completion_tokens`) and any temperature other than the default.
-// Only hosted OpenAI is treated this way: compatible servers and gateways
-// accept the classic fields whatever the model id says.
+// OpenAI's reasoning models (o-series, gpt-5 family) reject `max_tokens`
+// (they take `max_completion_tokens`) and any temperature other than the
+// default.
 function isOpenAIReasoningModel(cfg: ChatConfig): boolean {
 	return isHostedOpenAI(cfg) && /^(o\d|gpt-5)/i.test(cfg.model.trim());
 }
@@ -376,26 +379,63 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 		body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 		if (opts.toolChoice === "none") body["tool_choice"] = "none";
 	}
-	// Hosted OpenAI caches automatically (>= 1024-token prefixes); its one knob is
-	// `prompt_cache_key`, a stable string combined with the prefix hash to improve
-	// cache-hit *routing*. Pass the per-conversation key so a project's turns route
-	// together (ignored by servers that don't implement it).
+	// Hosted OpenAI caches automatically (>= 1024-token prefixes).
 	if (opts.cacheKey) body["prompt_cache_key"] = opts.cacheKey;
-	// Self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) opt
-	// into KV-cache prefix reuse with `cache_prompt`: re-use the cache from a prior
-	// request so only the differing suffix is reprocessed. Send it only to
-	// non-hosted endpoints -- hosted OpenAI/Azure 400 on unknown fields, while
-	// lenient local servers that don't use it just ignore it.
+	// Self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) opt into KV-cache prefix reuse with `cache_prompt`: re-use the cache from a prior request.
 	if (!isHostedOpenAI(cfg)) body["cache_prompt"] = true;
 	return body;
+}
+
+export interface ReasoningPiece {
+	text: string;
+	signature: string;
+}
+
+/** Read reasoning text from one streamed OpenAI delta. A `reasoning_details`
+ * entry with text wins, then `reasoning` or `reasoning_content`. */
+export function reasoningDelta(delta: Record<string, unknown> | undefined): ReasoningPiece | null {
+	if (!delta) return null;
+	let detailText = "";
+	let signature = "";
+	const details = delta["reasoning_details"];
+	if (Array.isArray(details)) {
+		for (const entry of details) {
+			if (!entry || typeof entry !== "object") continue;
+			const detail = entry as Record<string, unknown>;
+			const text = detail["text"];
+			if (typeof text === "string" && text) detailText += text;
+			if (typeof detail["signature"] === "string" && detail["signature"]) signature = detail["signature"];
+		}
+	}
+	if (detailText) return { text: detailText, signature };
+	const parts: string[] = [];
+	for (const field of ["reasoning", "reasoning_content"]) {
+		const value = delta[field];
+		if (typeof value === "string" && value && !parts.includes(value)) parts.push(value);
+	}
+	const text = parts.join("");
+	if (!text && !signature) return null;
+	return { text, signature };
+}
+
+/** Append one reasoning piece to the turn's thinking blocks. A signed block is
+ * closed, so later text starts a new block and every signature survives replay. */
+export function appendThinking(turn: AssistantTurn, piece: ReasoningPiece): void {
+	if (!piece.text && !piece.signature) return;
+	let block = turn.thinking[turn.thinking.length - 1];
+	if (!block || block.signature) {
+		block = { thinking: "", signature: "" };
+		turn.thinking.push(block);
+	}
+	block.thinking += piece.text;
+	if (piece.signature) block.signature = piece.signature;
 }
 
 async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
 	const url = chatEndpoint(settings);
 	const body = openaiBody(cfg, system, state, messages, tools, opts);
-	const headers: Record<string, string> = { "content-type": "application/json", ...openaiExtraHeaders(cfg) };
-	if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
+	const headers: Record<string, string> = { "content-type": "application/json", ...openaiExtraHeaders(cfg), ...openaiAuthHeaders(cfg) };
 	let res: Response;
 	try {
 		res = await fetch(url, {
@@ -424,25 +464,25 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 			}
 			const u = msg["usage"] as Record<string, unknown> | undefined;
 			if (u) {
-				// Cached prompt tokens come ONLY from what the server reports —
-				// `prompt_tokens_details.cached_tokens` present => real count (incl. 0);
-				// absent (Ollama/local OpenAI-compatible servers omit it) => leave
-				// cacheReadTokens undefined so the UI shows "n/a", never a guess. We do
-				// not estimate cache hits from the prompt prefix anymore.
+				// Cached prompt tokens come ONLY from what the server reports — `prompt_tokens_details.cached_tokens` present => real count.
 				const details = u["prompt_tokens_details"] as Record<string, unknown> | undefined;
 				const reportedCached = details?.["cached_tokens"];
 				const cached = typeof reportedCached === "number" ? reportedCached : undefined;
 				const prompt = (u["prompt_tokens"] as number) ?? 0;
 				turn.usage.inputTokens = Math.max(0, prompt - (cached ?? 0));
 				turn.usage.cacheReadTokens = cached;
-				// OpenAI-compatible servers don't report/bill a separate cache-write
-				// count; treat it as 0 (no write charge), not "unknown".
 				turn.usage.cacheWriteTokens = 0;
 				turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
 			}
 			const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
 			if (!choice) continue;
 			const delta = choice["delta"] as Record<string, unknown> | undefined;
+			const reasoning = reasoningDelta(delta);
+			if (reasoning) {
+				if (!firstTokenAt) firstTokenAt = performance.now();
+				appendThinking(turn, reasoning);
+				if (reasoning.text) emit(opts, { type: "thinking", delta: reasoning.text });
+			}
 			if (delta?.["content"]) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
 				turn.text += delta["content"] as string;
@@ -452,8 +492,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 			if (tcs) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
 				for (const tc of tcs) {
-					// Fragments are keyed by `index`; a server that omits it starts a new
-					// call on each fresh `id` and continues the last one otherwise.
+					// Fragments are keyed by `index`.
 					const id = typeof tc["id"] === "string" ? (tc["id"] as string) : "";
 					let i = typeof tc["index"] === "number" ? (tc["index"] as number) : -1;
 					if (i < 0) i = id && calls.length && calls[calls.length - 1].id !== id ? calls.length : Math.max(0, calls.length - 1);
@@ -506,18 +545,16 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 
 	const prompt = 'Respond with one word: "Hi"';
 	const isAnthropic = PROVIDERS[cfg.provider].wire === "anthropic";
-	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a
-	// likely cause when the request actually fails.
+	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a likely cause when the request fails.
 	const keyNote = cfg.apiKey.trim() ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {
 		url = chatEndpoint(settings);
-		headers = { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
+		headers = { "content-type": "application/json", ...anthropicHeaders(cfg) };
 	} else {
 		url = chatEndpoint(settings);
-		headers = { "content-type": "application/json", ...openaiExtraHeaders(cfg) };
-		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
+		headers = { "content-type": "application/json", ...openaiExtraHeaders(cfg), ...openaiAuthHeaders(cfg) };
 	}
 	const body = JSON.stringify({ model: cfg.model, [!isAnthropic && isOpenAIReasoningModel(cfg) ? "max_completion_tokens" : "max_tokens"]: 64, messages: [{ role: "user", content: prompt }] });
 
@@ -544,7 +581,6 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 			reply = (choices?.[0]?.message?.content ?? "").trim();
 		}
 	} catch {
-		/* fall through to the generic success below */
 	}
 	const shown = reply.length > 60 ? `${reply.slice(0, 60)}…` : reply;
 	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
@@ -554,17 +590,12 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
  * OpenAI-compatible /models). Throws a ProviderError on failure. */
 export async function listModels(settings: Settings): Promise<string[]> {
 	const cfg = settings.chat;
-	let url: string;
+	const url = modelsEndpoint(settings);
 	const headers: Record<string, string> = {};
 	if (PROVIDERS[cfg.provider].wire === "anthropic") {
-		url = endpoint(`${chatBase(cfg)}/v1/models?limit=1000`, settings, chatUsesProxy(cfg));
-		headers["x-api-key"] = cfg.apiKey;
-		headers["anthropic-version"] = "2023-06-01";
-		headers["anthropic-dangerous-direct-browser-access"] = "true";
+		Object.assign(headers, anthropicHeaders(cfg));
 	} else {
-		url = endpoint(`${chatBase(cfg)}/models`, settings, chatUsesProxy(cfg));
-		Object.assign(headers, openaiExtraHeaders(cfg));
-		if (cfg.apiKey.trim()) headers["authorization"] = `Bearer ${cfg.apiKey}`;
+		Object.assign(headers, openaiExtraHeaders(cfg), openaiAuthHeaders(cfg));
 	}
 
 	let res: Response;
@@ -585,8 +616,7 @@ function emit(opts: StreamOptions, ev: StreamEvent): void {
 }
 
 function emptyUsage(): Usage {
-	// cacheRead/cacheWrite default to undefined ("server didn't report"); the
-	// provider paths set real numbers (incl. 0) only when the server reports them.
+	// cacheRead/cacheWrite default to undefined ("server didn't report"); the provider paths set real numbers (incl.
 	return { inputTokens: 0, outputTokens: 0 };
 }
 
@@ -611,7 +641,6 @@ async function httpError(res: Response): Promise<ProviderError> {
 			detail = text;
 		}
 	} catch {
-		/* ignore */
 	}
 	const hint = res.status === 401 ? "Check your API key in Settings." : undefined;
 	return new ProviderError(`HTTP ${res.status}: ${detail || res.statusText}`, res.status, hint);
@@ -620,25 +649,19 @@ async function httpError(res: Response): Promise<ProviderError> {
 function corsHint(e: unknown, cfg: ChatConfig): ProviderError {
 	const msg = e instanceof Error ? e.message : String(e);
 	if (e instanceof DOMException && e.name === "AbortError") return new ProviderError("Request cancelled.");
-	const ollama = ollamaCorsHint(cfg);
-	const hint = ollama ?? (chatUsesProxy(cfg) ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
+	const hint = ollamaCorsHint(cfg) ?? (chatUsesProxy(cfg) ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
 	return new ProviderError(`Network error: ${msg}`, undefined, hint);
 }
 
 // Detect a LOCAL Ollama endpoint by its default port / name (for the CORS hint).
 // Ollama Cloud is a hosted service with no OLLAMA_ORIGINS to set, and it rides
-// the proxy instead, so the hint must not fire for it.
+// the proxy instead. The hint must not fire for it.
 function isOllamaEndpoint(cfg: ChatConfig): boolean {
 	if (cfg.provider !== "openai") return false;
 	const url = (cfg.baseUrl || "").toLowerCase();
 	return /:11434(\b|\/|$)/.test(url) || url.includes("ollama");
 }
 
-// A hosted API rejects unknown body fields with a 400, so caching extensions
-// like `cache_prompt` must not be sent to one. Only the generic
-// "OpenAI-compatible" provider pointed at a custom base URL is treated as a
-// self-hosted server (llama.cpp, Ollama, LM Studio) where those fields belong;
-// OpenRouter and Ollama Cloud are hosted services and never get them.
 function isHostedOpenAI(cfg: ChatConfig): boolean {
 	if (cfg.provider !== "openai") return true;
 	const url = (cfg.baseUrl || "").trim().toLowerCase();
@@ -646,8 +669,8 @@ function isHostedOpenAI(cfg: ChatConfig): boolean {
 	return /(^|\/\/|\.)api\.openai\.com(\/|:|$)/.test(url) || url.includes(".openai.azure.com");
 }
 
-// OpenRouter attributes a request to the calling app through these two headers
-// and lists it among that model's apps. Both are on OpenRouter's CORS
+// OpenRouter attributes a request to the calling app through these headers and
+// lists it among that model's apps. Both are on OpenRouter's CORS
 // allow-headers list, so they cost no extra preflight failure.
 function openaiExtraHeaders(cfg: ChatConfig): Record<string, string> {
 	if (cfg.provider !== "openrouter") return {};

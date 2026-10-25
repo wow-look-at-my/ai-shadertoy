@@ -2,16 +2,16 @@ name: CI
 
 on:
   push:
+    branches: ['**']
+
+concurrency:
+  group: gha_${{ github.repository }}_${{ github.workflow }}_${{ github.ref != 'refs/heads/master' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 permissions:
   id-token: write
   contents: read
-  # buildhost-publish-site registers the publish as a GitHub Deployment,
-  # records the upload on the org's linked-artifacts page, and comments the
-  # preview URL on the branch's pull request (none has an opt-out short of
-  # comment: "false", and a failure fails the step); its embedded
-  # no-all-builds-job guard scans this run's jobs and the head commit's check
-  # runs.
+  # buildhost-publish-site registers the publish as a GitHub Deployment, records the upload on the org's linked-artifacts page. It comments the preview URL on the branch's pull request (none has an opt-out short of comment: "false", and a failure fails the step). Its embedded no-all-builds-job guard scans this run's jobs and the head commit's check runs.
   deployments: write
   artifact-metadata: write
   pull-requests: write
@@ -20,18 +20,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      # One step type-checks, tests and builds: the action takes no command
-      # input, so a workflow cannot pick a cheaper subset. ts0.cjs carries its
-      # own TypeScript compiler and this project is browser-target with no
-      # runtime dependencies, so nothing has to install node_modules first.
-      - uses: wow-look-at-my/ts0@master
-      # github.ref_name goes in as-is: buildhost resolves a slash-named branch
-      # (claude/foo) by longest match against its own site rows, so it needs no
-      # slug and the site is addressed by the branch's real name.
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-publish-site@master
+      # One step type-checks, tests and builds: the action takes no command input, so a workflow cannot pick a cheaper subset. ts0.cjs carries its own TypeScript compiler and this project is browser-target with no runtime dependencies, so nothing has to install node_modules first.
+      - uses: wow-look-at-my/ts0@lkgb
+      # github.ref_name goes in as-is: buildhost resolves a slash-named branch (claude/foo) by longest match against its own site rows. It needs no slug and the site is addressed by the branch's real name.
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-publish-site@lkgb
         with:
           branch: ${{ github.ref_name }}
           source_dir: dist

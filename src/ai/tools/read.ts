@@ -1,4 +1,4 @@
-// read -- the single inspection tool. Reads a pass's source + bindings + uniforms
+// read -- the inspection tool. Reads a pass's source + bindings + uniforms
 // + compile error, a layer's render graph, or lists layers / passes / shapes /
 // assets / uniforms. Replaces get_shader + every list_* tool. Targets are explicit
 // (layer ref = name|id|index; pass ref = name|id), never an "active" object.

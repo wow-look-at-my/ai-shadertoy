@@ -1,16 +1,11 @@
-// Orchestrates an agent turn. Two modes:
+// Orchestrates an agent turn. Modes:
 //
 // - native: tool/function calling via the provider API. The model emits
-//   tool_use blocks; we execute them and feed tool_result blocks back.
-// - text: for models/endpoints without tool calling. The tool catalogue is
-//   described in the system prompt as forgiving XML tags; we parse the model's
-//   reply text for those tags, execute them, and feed the results back as a
-//   plain user message. No tool_use/tool_result blocks (which the API would
-//   reject when no tools were sent).
-//
-// The offered tool set is byte-stable across the whole conversation (the only
-// conditional is the stable per-session image-generation gate), so the prompt
-// cache prefix never shifts mid-conversation.
+// tool_use blocks; we execute them and feed tool_result blocks back. - text:
+// for models/endpoints without tool calling. The tool catalogue is described
+// in the system prompt as forgiving XML tags. We parse the model's reply text
+// for those tags, execute them, and feed the results back as a plain user
+// message.
 
 import type { ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
 import type { ToolDef, Usage } from "./types.ts";
@@ -36,15 +31,11 @@ export interface AgentCallbacks {
 	onThinkingDelta(text: string): void;
 	onToolActivity(name: string, phase: "start" | "done", detail?: string): void;
 	onMessage(msg: Message): void; // a finalized message; caller persists + renders
-	/** Ask the user to approve a permission-gated tool call. Resolves true to run
-	 * it, false to deny (the denial is fed back to the model). */
+	/** Ask the user to approve a permission-gated tool call. */
 	requestPermission(req: PermissionRequest): Promise<boolean>;
 	/** Token usage + generation time for one model response (cost/context meter). */
 	onUsage?(usage: Usage, durationMs: number): void;
-	/** Drain any messages the user queued mid-turn (steering). Called before each
-	 * model request and before the loop would otherwise stop, so the model picks
-	 * them up on its next response. Returned messages are appended to the
-	 * conversation as-is (the caller has already rendered + persists them). */
+	/** Drain any messages the user queued mid-turn (steering). */
 	takeSteering?(): Message[];
 	signal?: AbortSignal;
 	/** Stable per-conversation key for OpenAI prompt-cache routing (prompt_cache_key). */
@@ -69,11 +60,8 @@ export async function runAgent(
 ): Promise<void> {
 	const textMode = settings.chat.toolMode === "text";
 
-	// Fold any steering messages the user queued mid-turn into the conversation so
-	// the model sees them on its next response. Only ever called at "balanced"
-	// points (after tool results / a no-tool assistant turn), so a user message
-	// here never splits a tool_use from its tool_result. Returns true if any were
-	// added. The caller has already rendered + will persist these messages.
+	// Fold any steering messages the user queued mid-turn into the conversation
+	// so the model sees them on its next response.
 	const drainSteering = (): boolean => {
 		const queued = cb.takeSteering?.() ?? [];
 		for (const m of queued) messages.push(m);
@@ -96,17 +84,13 @@ export async function runAgent(
 		});
 		cb.onUsage?.(turn.usage, turn.durationMs);
 
-		// A response cut off by max_tokens leaves a truncated tool call whose input
-		// never parsed (`_raw`); running it would act on garbage. A refusal carries no
-		// content at all. Both get a UI note; the model's own text stays verbatim.
+		// A response cut off by max_tokens leaves a truncated tool call whose input never parsed (`_raw`).
 		const truncated = turn.stopReason === "max_tokens" || turn.stopReason === "length";
 		const refused = turn.stopReason === "refusal";
 		const toolCalls = truncated ? turn.toolCalls.filter((tc) => !isTruncatedInput(tc.input)) : turn.toolCalls;
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : toolCalls;
 
-		// Thinking blocks ride at the front of the assistant turn; Anthropic requires
-		// them replayed unchanged or tool-use continuations 400. An empty text block
-		// is never stored: the API rejects it on the next request.
+		// Thinking blocks ride at the front of the assistant turn.
 		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
 		const textBlocks: TextBlock[] = turn.text.trim() ? [{ type: "text", text: turn.text }] : [];
 		const assistantMsg: Message = {
@@ -126,12 +110,7 @@ export async function runAgent(
 		cb.onMessage(assistantMsg);
 
 		if (calls.length === 0) {
-			// No tool calls means the model is done. The user watches the live
-			// canvas, and the model can inspect the render itself any time
-			// (screenshot:true on an edit, or capture_screenshot) -- so we do NOT
-			// force a final screenshot + verification turn.
-			// Before ending, fold in anything the user steered in while the model was
-			// finishing; if there is any, give it another turn instead of stopping.
+			// No tool calls means the model is done.
 			if (drainSteering()) continue;
 			return;
 		}
@@ -139,8 +118,7 @@ export async function runAgent(
 		// Execute every call.
 		const results: Array<{ id: string; result: ToolResult }> = [];
 		for (const tc of calls) {
-			// Permission-gated tools: ask the user before they take effect. A
-			// denial is fed back to the model instead of running the tool.
+			// Permission-gated tools: ask the user before they take effect.
 			const tool = getTool(tc.name);
 			const input = (tc.input ?? {}) as Record<string, unknown>;
 			const gated = tool && (typeof tool.requiresPermission === "function" ? tool.requiresPermission(input) : tool.requiresPermission === true);

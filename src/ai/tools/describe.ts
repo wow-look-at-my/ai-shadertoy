@@ -1,5 +1,4 @@
-// Shared read-only formatters for the `read` tool: render a channel binding, a
-// pass line, and a layer's render-graph summary as plain text. Not a tool itself.
+// Shared read-only formatters for the `read` tool: render a channel binding, a pass line.
 
 import type { Channel, ImageAsset, Layer, Pass } from "../../state/types.ts";
 

@@ -1,10 +1,4 @@
-// Unit test for the minimal OpenEXR writer (src/util/exr.ts). Run with:
-//   node --experimental-strip-types test/exr.test.ts
-// Encodes a small half-float RGBA image and parses the bytes back, asserting the
-// header (magic / version / compression / data window / channel list) and that
-// every half sample round-trips through the A,B,G,R channel layout. (The GL
-// bottom-up -> top-down flip lives in the renderer, not the encoder, so the
-// encoder is a straight top-down passthrough here.)
+// Unit test for the minimal OpenEXR writer (src/util/exr.ts).
 
 import { encodeHalfRGBA, floatToHalf } from "../src/util/exr.ts";
 
@@ -26,7 +20,6 @@ for (let i = 0; i < src.length; i++) src[i] = (i * 37 + 11) & 0xffff;
 const buf = encodeHalfRGBA(W, H, src);
 const dv = new DataView(buf.buffer);
 
-// magic (20000630) + version (2, no flags)
 eq(buf[0], 0x76, "magic 0"); eq(buf[1], 0x2f, "magic 1"); eq(buf[2], 0x31, "magic 2"); eq(buf[3], 0x01, "magic 3");
 eq(buf[4], 2, "version number 2");
 eq(buf[5] | buf[6] | buf[7], 0, "version flags 0");
@@ -66,7 +59,6 @@ eq(buf[attrs.lineOrder.start], 0, "lineOrder = INCREASING_Y");
 	eq(dv.getInt32(s + 12, true), H - 1, "dataWindow yMax");
 }
 
-// channel list: alphabetical A,B,G,R, all HALF, sampling 1/1
 const channels: string[] = [];
 {
 	let p = attrs.channels.start;
@@ -76,7 +68,7 @@ const channels: string[] = [];
 		while (buf[p] !== 0) name += String.fromCharCode(buf[p++]);
 		p++; // null
 		eq(dv.getInt32(p, true), 1, `channel ${name} pixelType HALF`); p += 4;
-		p += 4; // pLinear + 3 reserved
+		p += 4;
 		eq(dv.getInt32(p, true), 1, `channel ${name} xSampling`); p += 4;
 		eq(dv.getInt32(p, true), 1, `channel ${name} ySampling`); p += 4;
 		channels.push(name);

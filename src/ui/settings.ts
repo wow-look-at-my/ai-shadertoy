@@ -6,6 +6,7 @@ import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
 import { DEFAULT_SETTINGS, MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
+import { createPkcePair, openRouterAuthUrl, OPENROUTER_VERIFIER_KEY } from "../ai/openrouter.ts";
 import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -17,17 +18,13 @@ export interface SettingsModal {
 export function createSettings(store: Store): SettingsModal {
 	const provider = el("select", {}, ...(Object.keys(PROVIDERS) as ProviderId[]).map((id) => el("option", { value: id }, PROVIDERS[id].label)));
 	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
-	// Model id: free-text combobox backed by <datalist>. Autofill/capitalize/
-	// correct/spellcheck off so a model id is never mangled or flagged. The key
-	// fields below are plain text (not type=password), so the browser no longer
-	// mistakes this for a login username and won't pop a credential dropdown here.
+	// Model id: free-text combobox backed by <datalist>. Autofill/capitalize/ correct/spellcheck off so a model id is never mangled or flagged.
 	const model = el("input", { type: "text", attrs: { list: "model-presets", placeholder: "model id", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const modelList = el("datalist", { id: "model-presets" });
-	// API keys are secrets but NOT browser passwords. A type=password field drags
-	// in the whole password-manager apparatus: save prompts, strong-password
-	// suggestions, and the credential dropdown that latched onto the model combobox
-	// above. Plain text inputs with autofill/suggestions off keep the browser out.
+	// API keys are secrets but NOT browser passwords.
 	const apiKey = el("input", { type: "text", placeholder: "sk-... / your API key", attrs: { autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
+	const signInBtn = el("button", { class: "btn", type: "button" }, "Sign in with OpenRouter");
+	const signInStatus = el("span", { class: "hint" });
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -54,9 +51,7 @@ export function createSettings(store: Store): SettingsModal {
 		proxyUrl: proxyUrl.value.trim() || DEFAULT_SETTINGS.proxyUrl,
 	});
 
-	// Model combobox. The <datalist> is the native combobox: it suggests
-	// completions as you type while still accepting any free-text value. We seed
-	// it with static presets and merge in whatever the provider's /models lists.
+	// Model combobox.
 	let fetchedModels: string[] = [];
 	const modelRefreshBtn = el("button", { class: "btn icon", type: "button", title: "Fetch available models from the provider" }, icon("refresh"));
 	const modelStatus = el("span", { class: "hint" });
@@ -66,8 +61,7 @@ export function createSettings(store: Store): SettingsModal {
 		const merged = [...new Set([...fetchedModels, ...MODEL_PRESETS[p]])];
 		modelList.replaceChildren(...merged.map((m) => el("option", { value: m })));
 	};
-	// OpenRouter and Ollama Cloud serve their model list unauthenticated, so the
-	// combobox can fill itself before a key is entered.
+	// OpenRouter and Ollama Cloud serve their model list unauthenticated, so the combobox can fill itself before a key is entered.
 	const canFetchModels = () => apiKey.value.trim().length > 0 || (provider.value === "openai" && baseUrl.value.trim().length > 0) || !PROVIDERS[provider.value as ProviderId].needsKeyForModels;
 	const refreshModels = async () => {
 		if (!canFetchModels()) {
@@ -89,14 +83,26 @@ export function createSettings(store: Store): SettingsModal {
 	};
 	const refreshModelsDebounced = debounce(() => void refreshModels(), 700);
 	modelRefreshBtn.addEventListener("click", () => void refreshModels());
-	// `change`, not `input`: a fetch per keystroke would send every prefix of the
-	// key to the provider (401 noise, partial secret on the wire).
+	// `change`, not `input`: a fetch per keystroke would send every prefix of the key to the provider.
 	apiKey.addEventListener("change", refreshModelsDebounced);
 	baseUrl.addEventListener("change", refreshModelsDebounced);
 
+	signInBtn.addEventListener("click", async () => {
+		signInBtn.disabled = true;
+		signInStatus.textContent = "";
+		try {
+			const pair = await createPkcePair();
+			sessionStorage.setItem(OPENROUTER_VERIFIER_KEY, pair.verifier);
+			location.assign(openRouterAuthUrl(location.href, pair.challenge));
+		} catch (e) {
+			signInStatus.textContent = e instanceof Error ? e.message : String(e);
+			signInBtn.disabled = false;
+		}
+	});
+
 	// A provider whose endpoint sends no CORS headers cannot be called directly
-	// from a page, so picking it ticks the proxy on rather than leaving the user
-	// to find the toggle after a failed request. Ticking the real checkbox (and
+	// from a page. Picking it ticks the proxy on rather than leaving the user to
+	// find the toggle after a failed request. Ticking the real checkbox (and
 	// saying why) keeps it visible and still overridable.
 	const applyProxyRequirement = () => {
 		const info = PROVIDERS[provider.value as ProviderId];
@@ -108,9 +114,7 @@ export function createSettings(store: Store): SettingsModal {
 		const p = provider.value as ProviderId;
 		fetchedModels = []; // provider changed; the previous list no longer applies
 		applyModelOptions();
-		// The old provider's model id is left in the box and would fail on the new
-		// one. Replace it only when it is some provider's preset -- an id the user
-		// typed is theirs and stays put.
+		// The provider's model id is left in the box and would fail on the new one.
 		const current = model.value.trim();
 		const isSomePreset = Object.values(MODEL_PRESETS).some((list) => list.includes(current));
 		if (isSomePreset && !PROVIDERS[p].models.includes(current)) model.value = PROVIDERS[p].models[0];
@@ -167,6 +171,7 @@ export function createSettings(store: Store): SettingsModal {
 		field("Provider", provider),
 		modelField,
 		secretField("API key", apiKey, "Stored only in your browser (localStorage)."),
+		el("div", { class: "test-row" }, signInBtn, signInStatus),
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		field("Tool calling", toolMode, "Text tags = forgiving XML in the reply, for models/endpoints without function calling."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),

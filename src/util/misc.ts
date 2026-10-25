@@ -47,17 +47,7 @@ export function withScheme(url: string): string {
 	return `https://${u}`;
 }
 
-/** Route a request through the CORS proxy. The setting is a TEMPLATE naming
- * where the target goes, so any proxy shape works:
- *
- *   {{.url}}     the target, percent-encoded -- what a query parameter needs
- *                (`https://proxy.pazer.ai/?url={{.url}}`)
- *   {{.rawurl}}  the target verbatim -- what a path-prefix proxy needs
- *                (`https://cors.example.com/{{.rawurl}}`)
- *
- * A template with neither token is read as the bare prefix form and gets the
- * target appended, so a proxy URL written before templates existed still works.
- * An empty setting is not a proxy: the target goes out untouched. */
+/** Route a request through the CORS proxy. */
 const PROXY_TOKEN_RE = /\{\{\s*\.(rawurl|url)\s*\}\}/g;
 
 export function proxied(target: string, template: string): string {
@@ -112,7 +102,6 @@ export async function copyText(text: string): Promise<boolean> {
 			return true;
 		}
 	} catch {
-		// Permission denied or no secure context -- fall through to the legacy path.
 	}
 	try {
 		const ta = document.createElement("textarea");

@@ -1,8 +1,6 @@
 // destroy_object -- the single "remove a thing" tool. `type` selects what to
 // remove: a layer, a pass (in a layer), a shape (in a layer, by index), or a
-// layer's mask. Store guards stay: can't remove the only layer/pass; removing a
-// pass clears channels that referenced it. Replaces remove_layer / remove_pass /
-// remove_shape / remove_mask. Targets are explicit refs.
+// layer's mask.
 
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";

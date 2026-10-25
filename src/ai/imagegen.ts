@@ -1,7 +1,5 @@
 // Optional text-to-image generation via an OpenAI-compatible
-// /images/generations endpoint. Used by the generate_texture tool to create
-// textures the shader can sample. Independent of the chat provider so it can
-// point at DALL-E, a local SD server, or any compatible API.
+// /images/generations endpoint.
 
 import type { Settings } from "../state/types.ts";
 import { ProviderError } from "./providers.ts";
@@ -28,8 +26,7 @@ export async function generateImage(settings: Settings, prompt: string): Promise
 	let url = `${base}/images/generations`;
 	if (cfg.useProxy) url = proxied(url, settings.proxyUrl);
 	const { w, h } = parseSize(cfg.size);
-	// gpt-image-* always answers with base64 and rejects `response_format`;
-	// DALL-E and most compatible servers need it asked for.
+	// gpt-image-* always answers with base64 and rejects `response_format`.
 	const body: Record<string, unknown> = { model: cfg.model, prompt, size: cfg.size, n: 1 };
 	if (!/^gpt-image/i.test(cfg.model.trim())) body["response_format"] = "b64_json";
 
