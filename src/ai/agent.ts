@@ -91,7 +91,7 @@ export async function runAgent(
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : toolCalls;
 
 		// Thinking blocks ride at the front of the assistant turn.
-		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
+		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, ...t }));
 		const textBlocks: TextBlock[] = turn.text.trim() ? [{ type: "text", text: turn.text }] : [];
 		const assistantMsg: Message = {
 			id: uid("m_"),
@@ -107,6 +107,7 @@ export async function runAgent(
 			assistantMsg.note = `Cut off at ${limit}${toolCalls.length < turn.toolCalls.length ? "; an incomplete tool call was dropped" : ""}. Raise "Max tokens" in Settings, or ask for a smaller step.`;
 		}
 		else if (refused) assistantMsg.note = "The model declined this request (safety refusal).";
+		if (turn.note) assistantMsg.note = assistantMsg.note ? `${assistantMsg.note} ${turn.note}` : turn.note;
 		// An assistant turn must carry content; the API rejects an empty one.
 		if (assistantMsg.blocks.length === 0) assistantMsg.blocks.push({ type: "text", text: refused ? "(declined)" : "(no response)" });
 		messages.push(assistantMsg);

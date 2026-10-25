@@ -1,6 +1,6 @@
 // Helpers for editing the stored conversation and serializing it.
 
-import type { Block, ImageBlock, Message, Role } from "../state/types.ts";
+import type { Block, ImageBlock, Message, Role, ThinkingBlock } from "../state/types.ts";
 
 /** A real user prompt: the boundary that starts a conversation "round". */
 export function isTurnStart(m: Message): boolean {
@@ -49,7 +49,7 @@ export type TranscriptContent = TranscriptText | TranscriptImage;
 export type TranscriptBlock =
 	| TranscriptText
 	| TranscriptImage
-	| { type: "thinking"; text: string; signature: string }
+	| ({ type: "thinking"; text: string } & Omit<ThinkingBlock, "type" | "thinking">)
 	| { type: "tool_use"; id: string; name: string; input: unknown }
 	| { type: "tool_result"; toolUseId: string; isError: boolean; content: TranscriptContent[] };
 
@@ -83,8 +83,10 @@ function transcriptBlock(b: Block): TranscriptBlock {
 			return { type: "text", text: b.text };
 		case "image":
 			return imageContent(b);
-		case "thinking":
-			return { type: "thinking", text: b.thinking, signature: b.signature };
+		case "thinking": {
+			const { type: _type, thinking, ...rest } = b;
+			return { type: "thinking", text: thinking, ...rest };
+		}
 		case "tool_use":
 			return { type: "tool_use", id: b.id, name: b.name, input: b.input };
 		case "tool_result":

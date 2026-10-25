@@ -1,7 +1,7 @@
 // Unit tests for the provider registry and the endpoint it composes.
 
 import { PROVIDERS, DEFAULT_SETTINGS, mergeSettings, providerBaseUrl } from "../src/state/defaults.ts";
-import { anthropicBody, anthropicHeaders, appendThinking, chatApiKey, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
+import { anthropicBody, anthropicHeaders, appendThinking, chatApiKey, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningPieces, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
 import type { Message, ProviderId, Settings } from "../src/state/types.ts";
 import type { AssistantTurn, ToolDef } from "../src/ai/types.ts";
 
@@ -125,15 +125,38 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 
 // ---- reasoning capture ------------------------------------------------------
 {
-	eq(reasoningDelta({ reasoning: "r1" })?.text, "r1", "the reasoning field is captured");
-	eq(reasoningDelta({ reasoning_content: "r2" })?.text, "r2", "the reasoning_content field is captured");
-	eq(reasoningDelta({ reasoning: "We", reasoning_content: "We", reasoning_details: [{ format: "text", text: "We" }] })?.text, "We", "details win over duplicate spellings");
-	eq(reasoningDelta({ reasoning_details: [{ format: "text", text: "We" }] })?.text, "We", "an untyped detail still carries text");
-	eq(reasoningDelta({ reasoning: "We", reasoning_content: "We" })?.text, "We", "identical string spellings count once");
-	const detail = reasoningDelta({ reasoning_details: [{ type: "reasoning.text", text: "r3", signature: "s3" }] });
-	eq(detail?.text, "r3", "a reasoning.text detail is captured");
-	eq(detail?.signature, "s3", "its signature is kept");
-	eq(reasoningDelta({ reasoning_details: [{ type: "reasoning.encrypted", data: "x" }] }), null, "an encrypted-only detail carries no text");
+	const only = (delta: Record<string, unknown>) => {
+		const pieces = reasoningPieces(delta);
+		eq(pieces.length, 1, `one piece from ${JSON.stringify(delta)}`);
+		return pieces[0];
+	};
+	eq(only({ reasoning: "r1" }).text, "r1", "the reasoning field is captured");
+	eq(only({ reasoning_content: "r2" }).text, "r2", "the reasoning_content field is captured");
+	eq(only({ reasoning: "We", reasoning_content: "We", reasoning_details: [{ format: "text", text: "We" }] }).text, "We", "details win over duplicate spellings");
+	eq(only({ reasoning_details: [{ format: "text", text: "We" }] }).text, "We", "an untyped detail still carries text");
+	eq(only({ reasoning: "We", reasoning_content: "We" }).text, "We", "identical string spellings count once");
+	const detail = only({ reasoning_details: [{ type: "reasoning.text", text: "r3", signature: "s3" }] });
+	eq(detail.text, "r3", "a reasoning.text detail is captured");
+	eq(detail.signature, "s3", "its signature is kept");
+
+	// The shape the HAR shows from deepseek V4.1 Flash via OpenRouter/Together.
+	const deepseek = only({ reasoning: "Let", reasoning_details: [{ type: "reasoning.text", text: "Let", format: "unknown", index: 0 }] });
+	eq(deepseek.detailType, "reasoning.text", "the detail type is kept");
+	eq(deepseek.detailFormat, "unknown", "the detail format is kept");
+	eq(deepseek.detailIndex, 0, "the detail index is kept");
+
+	const encrypted = only({ reasoning_details: [{ type: "reasoning.encrypted", data: "x", format: "openai-responses-v1", id: "rs_1" }] });
+	eq(encrypted.encrypted, "x", "an encrypted detail keeps its data");
+	eq(encrypted.detailId, "rs_1", "and its id");
+	eq(only({ reasoning: "sum", reasoning_details: [{ type: "reasoning.summary", summary: "sum" }] }).detailType, "reasoning.summary", "a summary detail is captured");
+
+	const unknown = only({ reasoning_details: [{ type: "reasoning.future", blob: 1 }] });
+	eq(JSON.stringify(unknown.raw), '{"type":"reasoning.future","blob":1}', "an unknown detail type is kept verbatim");
+	eq(unknown.rawWire, "openai", "from the OpenAI wire");
+
+	const extra = reasoningPieces({ reasoning: "more", reasoning_details: [{ type: "reasoning.text", text: "less" }] });
+	eq(extra.length, 2, "text beyond the details is its own piece");
+	eq(extra[1].text, "more", "and it holds the extra text");
 
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 };
 	appendThinking(turn, { text: "a", signature: "" });
@@ -145,6 +168,15 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	eq(turn.thinking.length, 2, "text after a signature starts a new block");
 	eq(turn.thinking[0].signature, "sig", "the signature stays on its block");
 	eq(turn.thinking[1].thinking, "c", "the new block holds the later text");
+
+	const streamed: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 };
+	for (const t of ["Let", " me", " look"]) for (const p of reasoningPieces({ reasoning: t, reasoning_details: [{ type: "reasoning.text", text: t, format: "unknown", index: 0 }] })) appendThinking(streamed, p);
+	eq(streamed.thinking.length, 1, "chunks of one detail entry make one block");
+	eq(streamed.thinking[0].thinking, "Let me look", "the block holds the whole text");
+	for (const p of reasoningPieces({ reasoning_details: [{ type: "reasoning.encrypted", data: "ab", index: 1 }] })) appendThinking(streamed, p);
+	for (const p of reasoningPieces({ reasoning_details: [{ type: "reasoning.encrypted", data: "cd", index: 1 }] })) appendThinking(streamed, p);
+	eq(streamed.thinking.length, 2, "a new entry index starts a new block");
+	eq(streamed.thinking[1].encrypted, "abcd", "encrypted chunks concatenate");
 }
 
 // ---- reasoning replay -------------------------------------------------------
@@ -181,6 +213,44 @@ const THINKING: Message = {
 	eq(content[0]["type"], "thinking", "the thinking block leads the Anthropic turn");
 	eq(content[0]["thinking"], "plan", "the thinking text is replayed");
 	eq(content[0]["signature"], "sig", "the signature is replayed");
+}
+
+// ---- every captured reasoning form replays ----------------------------------
+{
+	const FORMS: Message = {
+		id: "m3",
+		role: "assistant",
+		ts: 0,
+		blocks: [
+			{ type: "thinking", thinking: "plan", signature: "", detailType: "reasoning.text", detailFormat: "unknown", detailIndex: 0 },
+			{ type: "thinking", thinking: "", signature: "", encrypted: "ant-redacted" },
+			{ type: "thinking", thinking: "", signature: "", encrypted: "oai-blob", detailType: "reasoning.encrypted", detailFormat: "openai-responses-v1", detailId: "rs_1" },
+			{ type: "thinking", thinking: "?", signature: "", raw: { type: "reasoning.future", blob: 1 }, rawWire: "openai" },
+			{ type: "thinking", thinking: "", signature: "", raw: { type: "future_thinking", x: 2 }, rawWire: "anthropic" },
+			{ type: "text", text: "answer" },
+		],
+	};
+	const msg = (toOpenAIMessages("sys", [FORMS], "") as Array<Record<string, unknown>>)[1];
+	eq(msg["reasoning_content"], "plan", "only readable, modelled text goes in reasoning_content");
+	eq(
+		JSON.stringify(msg["reasoning_details"]),
+		JSON.stringify([
+			{ type: "reasoning.text", text: "plan", format: "unknown", index: 0 },
+			{ type: "reasoning.encrypted", data: "ant-redacted" },
+			{ type: "reasoning.encrypted", data: "oai-blob", format: "openai-responses-v1", id: "rs_1" },
+			{ type: "reasoning.future", blob: 1 },
+		]),
+		"every OpenAI-wire form is rebuilt as its reasoning_details entry",
+	);
+
+	const content = (anthropicBody(DEFAULT_SETTINGS.chat, "sys", "", [FORMS], [])["messages"] as Array<Record<string, unknown>>)[0]["content"] as Array<Record<string, unknown>>;
+	eq(
+		JSON.stringify(content.map((c) => c["type"])),
+		JSON.stringify(["thinking", "redacted_thinking", "future_thinking", "text"]),
+		"Anthropic gets every form it has a shape for, and the rest stay on the message",
+	);
+	eq(content[1]["data"], "ant-redacted", "redacted thinking replays its data");
+	eq(content[2]["x"], 2, "a raw Anthropic block replays verbatim");
 }
 
 const HISTORY: Message[] = [{ id: "m1", role: "user", ts: 0, blocks: [{ type: "text", text: "hi" }] }];
@@ -263,6 +333,63 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	} finally {
 		globalThis.fetch = original;
 	}
+}
+
+/** Run one streamed chat against a canned SSE body and return the turn plus the request body sent. */
+async function streamed(settings: Settings, sse: string): Promise<{ turn: AssistantTurn; sent: Record<string, unknown> }> {
+	const original = globalThis.fetch;
+	let sent: Record<string, unknown> = {};
+	globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+		sent = JSON.parse(String(init?.body));
+		return { ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(sse)); c.close(); } }) } as Response;
+	}) as typeof fetch;
+	try {
+		return { turn: await streamChat(settings, "sys", "", HISTORY, []), sent };
+	} finally {
+		globalThis.fetch = original;
+	}
+}
+const sse = (events: unknown[]) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") + "data: [DONE]\n\n";
+const OPENROUTER = settingsFor("openrouter", { apiKeys: { openrouter: "sk-or" }, model: "deepseek/deepseek-v4.1-flash-1017" });
+
+// The HAR's stream, chunk for chunk: reasoning arrives in both spellings and
+// replays as reasoning_content plus its reasoning_details entry.
+{
+	const chunk = (t: string) => ({ choices: [{ delta: { content: "", role: "assistant", reasoning: t, reasoning_details: [{ type: "reasoning.text", text: t, format: "unknown", index: 0 }] }, finish_reason: null }] });
+	const { turn, sent } = await streamed(OPENROUTER, sse([chunk("Let"), chunk(" me look"), { choices: [{ delta: { content: "" }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 10, completion_tokens: 5, completion_tokens_details: { reasoning_tokens: 3 } } }]));
+	eq(turn.thinking.length, 1, "the HAR's stream makes one thinking block");
+	eq(turn.thinking[0].thinking, "Let me look", "with all of its text");
+	eq(turn.note, undefined, "captured reasoning raises no note");
+	eq(JSON.stringify(sent["reasoning"]), '{"enabled":true}', "OpenRouter gets reasoning on at its default effort");
+	const replay = (toOpenAIMessages("sys", [{ id: "a", role: "assistant", ts: 0, blocks: [{ type: "thinking", ...turn.thinking[0] }, { type: "text", text: "x" }] }], "") as Array<Record<string, unknown>>)[1];
+	eq(replay["reasoning_content"], "Let me look", "the turn replays as reasoning_content");
+	eq(JSON.stringify(replay["reasoning_details"]), '[{"type":"reasoning.text","text":"Let me look","format":"unknown","index":0}]', "and as its reasoning_details entry");
+}
+{
+	const { sent } = await streamed(settingsFor("openai", { apiKeys: { openai: "k" } }), sse([{ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }]));
+	ok(!("reasoning" in sent), "a non-OpenRouter endpoint gets no reasoning field");
+}
+{
+	const { turn } = await streamed(OPENROUTER, sse([{ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 30, completion_tokens_details: { reasoning_tokens: 20 } } }]));
+	ok(!!turn.note && turn.note.includes("20 reasoning tokens"), "billed reasoning that never arrived is noted on the turn");
+}
+{
+	const { turn } = await streamed(settingsFor("anthropic", { apiKeys: { anthropic: "k" } }), sse([
+		{ type: "content_block_start", index: 0, content_block: { type: "redacted_thinking", data: "opaque" } },
+		{ type: "content_block_stop", index: 0 },
+		{ type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "orphan" } },
+		{ type: "content_block_delta", index: 1, delta: { type: "signature_delta", signature: "s" } },
+		{ type: "content_block_stop", index: 1 },
+		{ type: "content_block_start", index: 2, content_block: { type: "future_thinking", x: 1 } },
+		{ type: "content_block_start", index: 3, content_block: { type: "thinking", thinking: "" } },
+		{ type: "content_block_delta", index: 3, delta: { type: "thinking_delta", thinking: "unclosed" } },
+	]));
+	eq(turn.thinking.length, 4, "every Anthropic reasoning block is captured");
+	eq(turn.thinking[0].encrypted, "opaque", "redacted thinking keeps its data");
+	eq(turn.thinking[1].thinking, "orphan", "a delta with no start event still lands in a block");
+	eq(turn.thinking[1].signature, "s", "with its signature");
+	eq(turn.thinking[2].raw?.["x"], 1, "an unknown reasoning block is kept verbatim");
+	eq(turn.thinking[3].thinking, "unclosed", "a block the stream never closed is kept");
 }
 
 // ---- server-reported cost ---------------------------------------------------
