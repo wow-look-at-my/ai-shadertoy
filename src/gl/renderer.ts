@@ -64,6 +64,9 @@ interface Target {
 	fbo: WebGLFramebuffer;
 }
 
+/** Channel kinds backed by a canvas-sized render target. */
+const CANVAS_TARGET_KINDS: ReadonlySet<Channel["kind"]> = new Set(["pass", "under", "geometry", "mask"]);
+
 interface ChannelSlot {
 	kind: Channel["kind"];
 	passId?: string;
@@ -848,6 +851,8 @@ export class Renderer {
 		this.setFloat4(p, "iDate", d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds());
 
 		const chRes: number[] = [];
+		const chRemap: number[] = [];
+		const chFetch: number[] = [];
 		for (let i = 0; i < p.channels.length; i++) {
 			const slot = p.channels[i];
 			const r = this.resolveChannel(slot, p, rendered);
@@ -856,10 +861,24 @@ export class Renderer {
 			gl.bindSampler(i, this.sampler(slot, r.float));
 			const l = this.loc(p, `iChannel${i}`);
 			if (l) gl.uniform1i(l, i);
-			chRes.push(r.width, r.height, 1);
+			// A canvas render target is stored in texture space; in square-pixel mode its lookups and reported size follow the square space mainImage sees.
+			const target = resSide > 0 && CANVAS_TARGET_KINDS.has(slot.kind);
+			if (target) {
+				chRes.push((r.width * resSide) / p.width, (r.height * resSide) / p.height, 1);
+				chRemap.push(resSide / p.width, resSide / p.height, offX / p.width, offY / p.height);
+				chFetch.push(Math.round((offX * r.width) / p.width), Math.round((offY * r.height) / p.height));
+			} else {
+				chRes.push(r.width, r.height, 1);
+				chRemap.push(1, 1, 0, 0);
+				chFetch.push(0, 0);
+			}
 		}
 		const lcr = this.loc(p, "iChannelResolution[0]");
 		if (lcr) gl.uniform3fv(lcr, chRes);
+		const lrm = this.loc(p, "ai_chanRemap[0]");
+		if (lrm) gl.uniform4fv(lrm, chRemap);
+		const lft = this.loc(p, "ai_chanFetch[0]");
+		if (lft) gl.uniform2iv(lft, chFetch);
 
 		for (const u of this.uniforms) {
 			const l = this.loc(p, u.name);
