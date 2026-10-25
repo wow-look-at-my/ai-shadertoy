@@ -487,6 +487,16 @@ textarea:focus {
 .cs-item {
 	white-space: nowrap;
 }
+.cs-action {
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+}
+.cs-action:hover {
+	color: var(--fg);
+	text-decoration: underline;
+}
 
 /* Icons: each glyph (SVG path data) lives here as a currentColor-tinted CSS
    mask -- never in .ts. `.glyph` is the shared base; one `.icon-<name>` rule per

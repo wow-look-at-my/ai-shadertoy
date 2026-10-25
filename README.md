@@ -71,6 +71,8 @@ You do not have to wait for the AI to finish. While it works, keep typing and hi
 
 A long session piles up prompts, tool calls, and (heavy) screenshots, steadily filling the model's **context window** — the same one the usage indicator meters. Type **`/compact`** in the chat and send it: it does what you'd do by hand. Asks the model to *"summarize this entire conversation in detail for a future instance of yourself to pick up,"* then starts a fresh chat that **begins with that summary**, replacing the long history.
 
+Click the context percentage in the usage indicator to compact too. When the last reported prompt approaches the window, the app compacts automatically before the next send. An unknown model's window is estimated and labelled.
+
 The live project state (current layers, passes, shapes, uniforms, the active layer's live GLSL source, last compile error) is always sent fresh, so the summary only needs to carry the *conversational* context. Your goal, stylistic intent, what was tried and rejected, and what is left — not the shader code. The result is shown as a single collapsible **"Conversation compacted"** card. The next message continues from there with a much smaller (and cheaper) prompt. Your shader, layers, and assets are untouched — only the chat transcript is summarized.
 
 ### Undo / redo

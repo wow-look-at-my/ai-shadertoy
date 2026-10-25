@@ -36,18 +36,32 @@ const TABLE: Array<[RegExp, ModelInfo]> = [
 	[/gpt-4\.1/, { rate: { in: 2, out: 8, cacheRead: 0.5, cacheWrite: 0 }, context: 1_000_000 }],
 ];
 
-function lookup(model: string): ModelInfo {
+function find(model: string): ModelInfo | undefined {
 	const m = model.toLowerCase();
 	for (const [re, info] of TABLE) if (re.test(m)) return info;
-	return { context: DEFAULT_CONTEXT };
+	const slash = m.lastIndexOf("/");
+	if (slash >= 0) {
+		const tail = m.slice(slash + 1);
+		for (const [re, info] of TABLE) if (re.test(tail)) return info;
+	}
+	return undefined;
+}
+
+function lookup(model: string): ModelInfo {
+	return find(model) ?? { context: DEFAULT_CONTEXT };
 }
 
 export function modelContextWindow(model: string): number {
 	return lookup(model).context;
 }
 
+/** True when the table knows the model's context window. */
+export function hasContextWindow(model: string): boolean {
+	return find(model) !== undefined;
+}
+
 export function hasPricing(model: string, u?: Usage): boolean {
-	return (u?.cost !== undefined && Number.isFinite(u.cost)) || lookup(model).rate !== undefined;
+	return (u?.cost !== undefined && Number.isFinite(u.cost)) || find(model)?.rate !== undefined;
 }
 
 /** Cost in USD for one request's usage, or null when neither the server nor the
@@ -55,7 +69,7 @@ export function hasPricing(model: string, u?: Usage): boolean {
  * fallback. */
 export function messageCost(model: string, u: Usage): number | null {
 	if (u.cost !== undefined && Number.isFinite(u.cost)) return u.cost;
-	const rate = lookup(model).rate;
+	const rate = find(model)?.rate;
 	if (!rate) return null;
 	const cacheRead = u.cacheReadTokens ?? 0;
 	const cacheWrite = u.cacheWriteTokens ?? 0;

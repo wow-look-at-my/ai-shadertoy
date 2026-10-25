@@ -1,6 +1,6 @@
 // Unit tests for prompt-cache usage accounting.
 
-import { cachePct, hasPricing, messageCost } from "../src/ai/pricing.ts";
+import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow } from "../src/ai/pricing.ts";
 import type { Usage } from "../src/ai/types.ts";
 
 let passed = 0;
@@ -75,6 +75,14 @@ eq(messageCost("some-unknown-model", { inputTokens: 1000, outputTokens: 100 }), 
 	eq(messageCost("some-unknown-model", absent), null, "an absent cost is not guessed");
 	eq(hasPricing("some-unknown-model", absent), false, "an absent cost leaves the readout hidden");
 	eq(hasPricing("gpt-4o", absent), true, "the local table still prices a known model");
+}
+
+// ---- context windows resolve through a provider prefix ----------------------
+{
+	eq(modelContextWindow("anthropic/claude-opus-5"), 1_000_000, "a provider-prefixed id resolves its base window");
+	eq(hasContextWindow("anthropic/claude-opus-5"), true, "the prefixed id counts as known");
+	eq(hasContextWindow("deepseek/deepseek-chat"), false, "an unknown model has no known window");
+	eq(modelContextWindow("deepseek/deepseek-chat"), 128_000, "an unknown model uses the fallback window");
 }
 
 console.log(`ok - ${passed} assertions passed`);

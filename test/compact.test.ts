@@ -1,7 +1,7 @@
 // Unit tests for conversation compaction. Run with: node --experimental-strip-types test/compact.test.ts Pure + DOM-free. This is the gate (shouldCompact), the replacement round (buildCompactedMessages), and that the result serializes to a valid user/assistant alternation for the
 // providers.
 
-import { buildCompactedMessages, COMPACT_REQUEST_TEXT, hasCompactionSummary, shouldCompact } from "../src/ai/compact.ts";
+import { buildCompactedMessages, COMPACT_REQUEST_TEXT, estimateTokens, hasCompactionSummary, shouldCompact } from "../src/ai/compact.ts";
 import { deletionRange, isDeletable, isTurnStart } from "../src/util/conversation.ts";
 import { toOpenAIMessages } from "../src/ai/providers.ts";
 import type { Message } from "../src/state/types.ts";
@@ -26,6 +26,17 @@ const msg = (role: Message["role"], text = "", extra: Partial<Message> = {}): Me
 	const compactedOnly = [msg("user", "x", { compaction: "request" }), msg("assistant", "s", { compaction: "summary" })];
 	eq(shouldCompact(compactedOnly), false, "a bare summary is not itself re-compactable");
 	eq(shouldCompact([...compactedOnly, msg("user"), msg("assistant"), msg("tool"), msg("assistant")]), true, "summary + a fresh round past threshold compacts again");
+
+	// Measured usage wins over the message count.
+	const usage = (promptTokens: number, window = 100_000) => ({ promptTokens, window });
+	eq(shouldCompact([msg("user")], usage(90_000)), true, "measured usage triggers before the message count");
+	const many = Array.from({ length: 10 }, () => msg("user"));
+	eq(shouldCompact(many, usage(10_000)), false, "measured usage below the threshold does not compact");
+	eq(shouldCompact(many, usage(85_000)), true, "the threshold is inclusive");
+	eq(shouldCompact([msg("user")], usage(0)), false, "zero tokens is below the threshold");
+	eq(shouldCompact([msg("user")]), false, "no usage falls back to the count");
+	eq(estimateTokens("abc"), 1, "text rounds up to a token");
+	eq(estimateTokens("abcdef"), 2, "longer text scales linearly");
 }
 
 // ---- buildCompactedMessages ------------------------------------------------
