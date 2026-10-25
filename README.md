@@ -105,7 +105,9 @@ Open the app, click **Settings**, and add:
 
 Use **Test connection** to run a tiny real inference (it prompts the model for a one-word reply and shows it), confirming the key, model, base URL, and (CORS) connectivity all work before you start chatting.
 
-**Bifrost.** Bifrost is OpenAI-compatible, so pick **OpenAI-compatible** and set the base URL to `http://localhost:8080/v1` (the gateway's default). Paste the virtual key: the app sends it in both `x-bf-vk` and `Authorization: Bearer`, so either form authenticates. Model ids name the provider Bifrost routes to (`<provider>/<model>`), and the refresh button lists your deployment's catalogue. For a direct browser connection, add `x-bf-vk` to Bifrost's `allowed_headers` (an origin allowance alone is not enough).
+**Bifrost.** Bifrost speaks both wire formats. For OpenAI models pick **OpenAI-compatible** and set the base URL to `http://localhost:8080/v1`. For Anthropic models pick **Anthropic** and set it to `http://localhost:8080/anthropic`. Any base-URL override sends the virtual key in `x-bf-vk` beside the normal credential header. Model ids name the provider Bifrost routes to (`<provider>/<model>`) on the OpenAI wire. A direct browser connection needs `x-bf-vk` in Bifrost's `allowed_headers`.
+
+**OpenRouter sign-in.** Settings offers **Sign in with OpenRouter**. It opens OpenRouter's authorize page and returns with a code. The app exchanges that code for an API key, selects OpenRouter, and stores the key. The page must be served over http(s).
 
 If CORS blocks direct browser calls, tick **Route chat through CORS proxy**. Ollama Cloud sends no CORS headers at all, so choosing it ticks the box for you and says why. You can still untick it.
 

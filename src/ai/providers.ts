@@ -3,7 +3,7 @@
 // tool use. The app's neutral Message[] model (state/types.ts) mirrors
 // Anthropic's content blocks; the OpenAI path down-converts.
 
-import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock } from "../state/types.ts";
+import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock, ThinkingBlock } from "../state/types.ts";
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
@@ -43,15 +43,36 @@ export function chatEndpoint(settings: Settings): string {
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
-/** The credential headers for an OpenAI-wire request. Bifrost is
- * OpenAI-compatible but reads its virtual key from `x-bf-vk` (verbatim, so a
- * key without the `sk-bf-` prefix works), so the generic provider sends the
- * key both ways and either form authenticates. */
+/** The URL a model-list request goes to. */
+export function modelsEndpoint(settings: Settings): string {
+	const cfg = settings.chat;
+	const anthropic = PROVIDERS[cfg.provider].wire === "anthropic";
+	const path = anthropic ? "/v1/models?limit=1000" : "/models";
+	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
+}
+
+/** The Anthropic-wire credential headers. A base-URL override is a gateway, so
+ * the key also goes in `x-bf-vk`. The hosted default keeps its own headers. */
+export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
+	const headers: Record<string, string> = {
+		"x-api-key": cfg.apiKey,
+		"anthropic-version": "2023-06-01",
+		"anthropic-dangerous-direct-browser-access": "true",
+	};
+	const key = cfg.apiKey.trim();
+	if (key && cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
+	return headers;
+}
+
+/** The credential headers for an OpenAI-wire request. A base-URL override is a
+ * gateway, so the key also goes in `x-bf-vk` (Bifrost reads it verbatim). The
+ * hosted default keeps the bearer token alone. */
 export function openaiAuthHeaders(cfg: ChatConfig): Record<string, string> {
 	const key = cfg.apiKey.trim();
 	if (!key) return {};
-	if (cfg.provider === "openai") return { authorization: `Bearer ${key}`, "x-bf-vk": key };
-	return { authorization: `Bearer ${key}` };
+	const headers: Record<string, string> = { authorization: `Bearer ${key}` };
+	if (cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
+	return headers;
 }
 
 async function* sseEvents(res: Response): AsyncGenerator<{ event: string; data: string }> {
@@ -190,12 +211,7 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 	try {
 		res = await fetch(url, {
 			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-api-key": cfg.apiKey,
-				"anthropic-version": "2023-06-01",
-				"anthropic-dangerous-direct-browser-access": "true",
-			},
+			headers: { "content-type": "application/json", ...anthropicHeaders(cfg) },
 			body: JSON.stringify(body),
 			signal: opts.signal ?? null,
 		});
@@ -310,6 +326,11 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 			if (text) msg["content"] = text;
 			if (toolCalls.length) msg["tool_calls"] = toolCalls;
 			if (!text && !toolCalls.length) msg["content"] = "";
+			const thinking = m.blocks.filter((b): b is ThinkingBlock => b.type === "thinking");
+			const reasoning = thinking.map((b) => b.thinking).join("");
+			if (reasoning) msg["reasoning_content"] = reasoning;
+			const details = thinking.filter((b) => b.signature).map((b) => ({ type: "reasoning.text", text: b.thinking, signature: b.signature }));
+			if (details.length) msg["reasoning_details"] = details;
 			out.push(msg);
 		} else {
 			// user or tool: tool_result blocks become role:"tool".
@@ -365,6 +386,48 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 	return body;
 }
 
+export interface ReasoningPiece {
+	text: string;
+	signature: string;
+}
+
+/** Read reasoning text from one streamed OpenAI delta. Providers spell it
+ * `reasoning`, `reasoning_content`, or typed `reasoning_details` entries. */
+export function reasoningDelta(delta: Record<string, unknown> | undefined): ReasoningPiece | null {
+	if (!delta) return null;
+	const parts: string[] = [];
+	let signature = "";
+	for (const field of ["reasoning", "reasoning_content"]) {
+		const value = delta[field];
+		if (typeof value === "string" && value) parts.push(value);
+	}
+	const details = delta["reasoning_details"];
+	if (Array.isArray(details)) {
+		for (const entry of details) {
+			if (!entry || typeof entry !== "object") continue;
+			const detail = entry as Record<string, unknown>;
+			if (detail["type"] !== "reasoning.text") continue;
+			if (typeof detail["text"] === "string" && detail["text"]) parts.push(detail["text"]);
+			if (typeof detail["signature"] === "string" && detail["signature"]) signature = detail["signature"];
+		}
+	}
+	if (!parts.length && !signature) return null;
+	return { text: parts.join(""), signature };
+}
+
+/** Append one reasoning piece to the turn's thinking blocks. A signed block is
+ * closed, so later text starts a new block and every signature survives replay. */
+export function appendThinking(turn: AssistantTurn, piece: ReasoningPiece): void {
+	if (!piece.text && !piece.signature) return;
+	let block = turn.thinking[turn.thinking.length - 1];
+	if (!block || block.signature) {
+		block = { thinking: "", signature: "" };
+		turn.thinking.push(block);
+	}
+	block.thinking += piece.text;
+	if (piece.signature) block.signature = piece.signature;
+}
+
 async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
 	const cfg = settings.chat;
 	const url = chatEndpoint(settings);
@@ -411,6 +474,12 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 			const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
 			if (!choice) continue;
 			const delta = choice["delta"] as Record<string, unknown> | undefined;
+			const reasoning = reasoningDelta(delta);
+			if (reasoning) {
+				if (!firstTokenAt) firstTokenAt = performance.now();
+				appendThinking(turn, reasoning);
+				if (reasoning.text) emit(opts, { type: "thinking", delta: reasoning.text });
+			}
 			if (delta?.["content"]) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
 				turn.text += delta["content"] as string;
@@ -479,7 +548,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	let headers: Record<string, string>;
 	if (isAnthropic) {
 		url = chatEndpoint(settings);
-		headers = { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
+		headers = { "content-type": "application/json", ...anthropicHeaders(cfg) };
 	} else {
 		url = chatEndpoint(settings);
 		headers = { "content-type": "application/json", ...openaiExtraHeaders(cfg), ...openaiAuthHeaders(cfg) };
@@ -518,15 +587,11 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
  * OpenAI-compatible /models). Throws a ProviderError on failure. */
 export async function listModels(settings: Settings): Promise<string[]> {
 	const cfg = settings.chat;
-	let url: string;
+	const url = modelsEndpoint(settings);
 	const headers: Record<string, string> = {};
 	if (PROVIDERS[cfg.provider].wire === "anthropic") {
-		url = endpoint(`${chatBase(cfg)}/v1/models?limit=1000`, settings, chatUsesProxy(cfg));
-		headers["x-api-key"] = cfg.apiKey;
-		headers["anthropic-version"] = "2023-06-01";
-		headers["anthropic-dangerous-direct-browser-access"] = "true";
+		Object.assign(headers, anthropicHeaders(cfg));
 	} else {
-		url = endpoint(`${chatBase(cfg)}/models`, settings, chatUsesProxy(cfg));
 		Object.assign(headers, openaiExtraHeaders(cfg), openaiAuthHeaders(cfg));
 	}
 

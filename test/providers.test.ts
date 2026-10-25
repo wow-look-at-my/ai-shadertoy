@@ -1,9 +1,9 @@
 // Unit tests for the provider registry and the endpoint it composes.
 
 import { PROVIDERS, DEFAULT_SETTINGS, providerBaseUrl } from "../src/state/defaults.ts";
-import { anthropicBody, chatEndpoint, openaiAuthHeaders, openaiBody } from "../src/ai/providers.ts";
+import { anthropicBody, anthropicHeaders, appendThinking, chatEndpoint, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, toOpenAIMessages } from "../src/ai/providers.ts";
 import type { Message, ProviderId, Settings } from "../src/state/types.ts";
-import type { ToolDef } from "../src/ai/types.ts";
+import type { AssistantTurn, ToolDef } from "../src/ai/types.ts";
 
 let passed = 0;
 function eq(a: unknown, b: unknown, msg: string): void {
@@ -51,6 +51,11 @@ eq(providerBaseUrl("openrouter", "https://my.gateway/v1"), "https://my.gateway/v
 eq(chatEndpoint(settingsFor("anthropic")), "https://api.anthropic.com/v1/messages", "Anthropic posts to /v1/messages, unproxied");
 eq(chatEndpoint(settingsFor("openai")), "https://api.openai.com/v1/chat/completions", "OpenAI posts to /chat/completions, unproxied");
 eq(chatEndpoint(settingsFor("openrouter")), "https://openrouter.ai/api/v1/chat/completions", "OpenRouter sends CORS headers, so it is called directly");
+eq(chatEndpoint(settingsFor("openai", { baseUrl: "http://localhost:8080/v1" })), "http://localhost:8080/v1/chat/completions", "OpenAI-wire Bifrost posts to its chat route");
+eq(chatEndpoint(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic" })), "http://localhost:8080/anthropic/v1/messages", "Anthropic-wire Bifrost posts to its messages route");
+eq(modelsEndpoint(settingsFor("openai", { baseUrl: "http://localhost:8080/v1" })), "http://localhost:8080/v1/models", "OpenAI-wire models use the override base");
+eq(modelsEndpoint(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic" })), "http://localhost:8080/anthropic/v1/models?limit=1000", "Anthropic-wire models use the override base");
+eq(modelsEndpoint(settingsFor("anthropic")), "https://api.anthropic.com/v1/models?limit=1000", "the default Anthropic base keeps its models path");
 
 // Ollama Cloud answers with no access-control-allow-origin, so a direct browser
 // call cannot be read. Picking it has to route through the proxy on its own --
@@ -91,19 +96,79 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 
 // ---- credential header ------------------------------------------------------
 
-// Bifrost is OpenAI-compatible and reads its virtual key from `x-bf-vk`
-// verbatim, so a key without the `sk-bf-` prefix works there. The generic
-// provider sends the key both ways; hosted providers get only the bearer form.
+// A base-URL override is a gateway, so its virtual key rides in x-bf-vk as well.
 {
-	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " vk-abc " });
-	eq(generic["x-bf-vk"], "vk-abc", "the OpenAI-compatible provider sends the trimmed key in x-bf-vk");
-	eq(generic["authorization"], "Bearer vk-abc", "and it also sends the bearer form");
+	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " vk-abc ", baseUrl: "http://localhost:8080/v1" });
+	eq(generic["x-bf-vk"], "vk-abc", "the OpenAI-compatible gateway gets the trimmed key in x-bf-vk");
+	eq(generic["authorization"], "Bearer vk-abc", "and it also gets the bearer form");
 	eq(openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " " })["x-bf-vk"], undefined, "a blank key sends no header");
 	const hosted = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openrouter", apiKey: "sk-x" });
-	eq(hosted["authorization"], "Bearer sk-x", "hosted providers keep the bearer token");
-	ok(!("x-bf-vk" in hosted), "hosted providers get no x-bf-vk");
+	eq(hosted["authorization"], "Bearer sk-x", "the hosted default keeps the bearer token");
+	ok(!("x-bf-vk" in hosted), "the hosted default gets no x-bf-vk");
+	const anthropic = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKey: "sk-ant" });
+	eq(anthropic["x-api-key"], "sk-ant", "the default Anthropic headers carry x-api-key");
+	ok(!("x-bf-vk" in anthropic), "the default Anthropic endpoint gets no x-bf-vk");
+	const bifrost = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKey: "vk", baseUrl: "http://localhost:8080/anthropic" });
+	eq(bifrost["x-api-key"], "vk", "the Anthropic gateway keeps x-api-key");
+	eq(bifrost["x-bf-vk"], "vk", "the Anthropic gateway also gets x-bf-vk");
 }
 
+// ---- reasoning capture ------------------------------------------------------
+{
+	eq(reasoningDelta({ reasoning: "r1" })?.text, "r1", "the reasoning field is captured");
+	eq(reasoningDelta({ reasoning_content: "r2" })?.text, "r2", "the reasoning_content field is captured");
+	const detail = reasoningDelta({ reasoning_details: [{ type: "reasoning.text", text: "r3", signature: "s3" }] });
+	eq(detail?.text, "r3", "a reasoning.text detail is captured");
+	eq(detail?.signature, "s3", "its signature is kept");
+	eq(reasoningDelta({ reasoning_details: [{ type: "reasoning.encrypted", data: "x" }] }), null, "an encrypted-only detail carries no text");
+
+	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 };
+	appendThinking(turn, { text: "a", signature: "" });
+	appendThinking(turn, { text: "b", signature: "" });
+	eq(turn.thinking.length, 1, "unsigned deltas extend one block");
+	eq(turn.thinking[0].thinking, "ab", "the block accumulates the text");
+	appendThinking(turn, { text: "", signature: "sig" });
+	appendThinking(turn, { text: "c", signature: "" });
+	eq(turn.thinking.length, 2, "text after a signature starts a new block");
+	eq(turn.thinking[0].signature, "sig", "the signature stays on its block");
+	eq(turn.thinking[1].thinking, "c", "the new block holds the later text");
+}
+
+// ---- reasoning replay -------------------------------------------------------
+const THINKING: Message = {
+	id: "m2",
+	role: "assistant",
+	ts: 0,
+	blocks: [
+		{ type: "thinking", thinking: "plan", signature: "sig" },
+		{ type: "text", text: "answer" },
+	],
+};
+{
+	const messages = toOpenAIMessages("sys", [THINKING], "") as Array<Record<string, unknown>>;
+	eq(messages[1]["reasoning_content"], "plan", "the thinking text becomes reasoning_content");
+	const details = messages[1]["reasoning_details"] as Array<Record<string, unknown>>;
+	eq(details[0]["type"], "reasoning.text", "a signed block becomes a reasoning.text detail");
+	eq(details[0]["text"], "plan", "the detail carries the text");
+	eq(details[0]["signature"], "sig", "the detail carries the signature");
+
+	const unsigned = toOpenAIMessages("sys", [{ ...THINKING, blocks: [{ type: "thinking", thinking: "plan", signature: "" }] }], "") as Array<Record<string, unknown>>;
+	eq(unsigned[1]["reasoning_content"], "plan", "an unsigned block still replays its text");
+	ok(!("reasoning_details" in unsigned[1]), "no detail without a signature");
+
+	const compacted = openaiBody(settingsFor("openai").chat, "sys", "", [THINKING], [], { toolChoice: "none" });
+	const compactMessages = compacted["messages"] as Array<Record<string, unknown>>;
+	eq(compactMessages[1]["reasoning_content"], "plan", "compaction uses the same conversion");
+}
+
+// ---- Anthropic thinking replay ----------------------------------------------
+{
+	const body = anthropicBody(DEFAULT_SETTINGS.chat, "sys", "", [THINKING], []);
+	const content = (body["messages"] as Array<Record<string, unknown>>)[0]["content"] as Array<Record<string, unknown>>;
+	eq(content[0]["type"], "thinking", "the thinking block leads the Anthropic turn");
+	eq(content[0]["thinking"], "plan", "the thinking text is replayed");
+	eq(content[0]["signature"], "sig", "the signature is replayed");
+}
 
 const HISTORY: Message[] = [{ id: "m1", role: "user", ts: 0, blocks: [{ type: "text", text: "hi" }] }];
 const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "object", properties: {} } };

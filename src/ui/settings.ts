@@ -6,6 +6,7 @@ import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
 import { DEFAULT_SETTINGS, MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
+import { createPkcePair, openRouterAuthUrl, OPENROUTER_VERIFIER_KEY } from "../ai/openrouter.ts";
 import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
@@ -22,6 +23,8 @@ export function createSettings(store: Store): SettingsModal {
 	const modelList = el("datalist", { id: "model-presets" });
 	// API keys are secrets but NOT browser passwords.
 	const apiKey = el("input", { type: "text", placeholder: "sk-... / your API key", attrs: { autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
+	const signInBtn = el("button", { class: "btn", type: "button" }, "Sign in with OpenRouter");
+	const signInStatus = el("span", { class: "hint" });
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -83,6 +86,19 @@ export function createSettings(store: Store): SettingsModal {
 	// `change`, not `input`: a fetch per keystroke would send every prefix of the key to the provider.
 	apiKey.addEventListener("change", refreshModelsDebounced);
 	baseUrl.addEventListener("change", refreshModelsDebounced);
+
+	signInBtn.addEventListener("click", async () => {
+		signInBtn.disabled = true;
+		signInStatus.textContent = "";
+		try {
+			const pair = await createPkcePair();
+			sessionStorage.setItem(OPENROUTER_VERIFIER_KEY, pair.verifier);
+			location.assign(openRouterAuthUrl(location.href, pair.challenge));
+		} catch (e) {
+			signInStatus.textContent = e instanceof Error ? e.message : String(e);
+			signInBtn.disabled = false;
+		}
+	});
 
 	// A provider whose endpoint sends no CORS headers cannot be called directly
 	// from a page. Picking it ticks the proxy on rather than leaving the user to
@@ -155,6 +171,7 @@ export function createSettings(store: Store): SettingsModal {
 		field("Provider", provider),
 		modelField,
 		secretField("API key", apiKey, "Stored only in your browser (localStorage)."),
+		el("div", { class: "test-row" }, signInBtn, signInStatus),
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		field("Tool calling", toolMode, "Text tags = forgiving XML in the reply, for models/endpoints without function calling."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),
