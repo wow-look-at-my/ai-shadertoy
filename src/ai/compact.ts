@@ -26,6 +26,7 @@ export interface CompactOptions {
 	signal?: AbortSignal;
 }
 
+<<<<<<< HEAD
 /** Measured prompt size for the compaction gate. */
 export interface ContextUsage {
 	promptTokens: number;
@@ -43,6 +44,11 @@ export function shouldAutoCompact(usage: ContextUsage | undefined): boolean {
  * is the fallback when no usage or window is known. */
 export function shouldCompact(messages: Message[], usage?: ContextUsage): boolean {
 	if (usage && usage.window) return shouldAutoCompact(usage);
+=======
+/** Worth compacting? Needs at least a couple of rounds of real history; below
+ * that there's nothing to save. */
+export function shouldCompact(messages: Message[]): boolean {
+>>>>>>> origin/master
 	return messages.filter((m) => !m.compaction).length >= 4;
 }
 

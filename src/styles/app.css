@@ -1563,6 +1563,7 @@ textarea.code {
 	font-size: 13px;
 }
 
+<<<<<<< HEAD
 .histogram-canvas {
 	display: block;
 	width: 100%;
@@ -1577,6 +1578,8 @@ textarea.code {
 	margin-top: 8px;
 }
 
+=======
+>>>>>>> origin/master
 /* ---- scrollbars ---- */
 ::-webkit-scrollbar {
 	width: 10px;

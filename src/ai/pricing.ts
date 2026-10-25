@@ -59,6 +59,7 @@ export function modelContextWindow(model: string): number | undefined {
 	return published.get(model.toLowerCase()) ?? find(model)?.context;
 }
 
+<<<<<<< HEAD
 /** True when the model's context window is known. */
 export function hasContextWindow(model: string): boolean {
 	return modelContextWindow(model) !== undefined;
@@ -71,6 +72,12 @@ export function hasPricing(model: string, u?: Usage): boolean {
 /** Cost in USD for one request's usage, or null when neither the server nor the
  * local table gives a cost. The server-reported cost wins; token math is the
  * fallback. */
+=======
+/** Cost in USD for one request's usage, or null when the model's pricing is
+ * unknown. Computed purely from the server-reported token counts: base input
+ * at the full rate, cache-read tokens at the read discount. This also covers
+ * cache-write tokens at the write premium, output at the output rate. */
+>>>>>>> origin/master
 export function messageCost(model: string, u: Usage): number | null {
 	if (u.cost !== undefined && Number.isFinite(u.cost)) return u.cost;
 	const rate = find(model)?.rate;

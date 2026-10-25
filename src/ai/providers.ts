@@ -3,7 +3,11 @@
 // tool use. The app's neutral Message[] model (state/types.ts) mirrors
 // Anthropic's content blocks; the OpenAI path down-converts.
 
+<<<<<<< HEAD
 import type { Block, ChatConfig, ImageBlock, Message, ReasoningDetailType, Settings, TextBlock, ThinkingBlock } from "../state/types.ts";
+=======
+import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock, ThinkingBlock } from "../state/types.ts";
+>>>>>>> origin/master
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
@@ -52,6 +56,7 @@ export function modelsEndpoint(settings: Settings): string {
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
+<<<<<<< HEAD
 /** The active provider's key. */
 export function chatApiKey(cfg: ChatConfig): string {
 	return (cfg.apiKeys[cfg.provider] ?? "").trim();
@@ -66,6 +71,17 @@ export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
 		"anthropic-version": "2023-06-01",
 		"anthropic-dangerous-direct-browser-access": "true",
 	};
+=======
+/** The Anthropic-wire credential headers. A base-URL override is a gateway, so
+ * the key also goes in `x-bf-vk`. The hosted default keeps its own headers. */
+export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
+	const headers: Record<string, string> = {
+		"x-api-key": cfg.apiKey,
+		"anthropic-version": "2023-06-01",
+		"anthropic-dangerous-direct-browser-access": "true",
+	};
+	const key = cfg.apiKey.trim();
+>>>>>>> origin/master
 	if (key && cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
 	return headers;
 }
@@ -74,7 +90,11 @@ export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
  * gateway, so the key also goes in `x-bf-vk` (Bifrost reads it verbatim). The
  * hosted default keeps the bearer token alone. */
 export function openaiAuthHeaders(cfg: ChatConfig): Record<string, string> {
+<<<<<<< HEAD
 	const key = chatApiKey(cfg);
+=======
+	const key = cfg.apiKey.trim();
+>>>>>>> origin/master
 	if (!key) return {};
 	const headers: Record<string, string> = { authorization: `Bearer ${key}` };
 	if (cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
@@ -146,6 +166,7 @@ function anthropicContent(blocks: Block[]): ACBlock[] {
 	});
 }
 
+<<<<<<< HEAD
 function anthropicBlock(b: Exclude<Block, ThinkingBlock>): ACBlock {
 	switch (b.type) {
 		case "text":
@@ -164,6 +185,8 @@ function anthropicBlock(b: Exclude<Block, ThinkingBlock>): ACBlock {
 	}
 }
 
+=======
+>>>>>>> origin/master
 function toAnthropicMessages(messages: Message[], state: string): ACBlock[] {
 	const out: ACBlock[] = messages.map((m) => ({
 		role: m.role === "assistant" ? "assistant" : "user", // tool results ride in a user message
@@ -185,7 +208,11 @@ function anthropicAcceptsTemperature(model: string): boolean {
 
 // Extended thinking. Thinking and temperature are mutually exclusive in our
 // request — see the body assembly below.
+<<<<<<< HEAD
 function anthropicThinking(model: string, maxTokens?: number): Record<string, unknown> | undefined {
+=======
+function anthropicThinking(model: string, maxTokens: number): Record<string, unknown> | undefined {
+>>>>>>> origin/master
 	if (ANTHROPIC_BUDGET_MODELS.test(model)) {
 		if (maxTokens === undefined) return undefined; // a budget needs a limit
 		const budget = Math.max(1024, Math.min(8192, Math.floor(maxTokens / 2)));
@@ -203,6 +230,10 @@ function anthropicEffort(model: string): string | undefined {
 export function anthropicBody(cfg: ChatConfig, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: cfg.model,
+<<<<<<< HEAD
+=======
+		max_tokens: cfg.maxTokens,
+>>>>>>> origin/master
 		// Cache the (stable) system prompt. Tools render before it, so this breakpoint covers tools + system.
 		system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
 		stream: true,
@@ -400,6 +431,7 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 			if (toolCalls.length) msg["tool_calls"] = toolCalls;
 			if (!text && !toolCalls.length) msg["content"] = "";
 			const thinking = m.blocks.filter((b): b is ThinkingBlock => b.type === "thinking");
+<<<<<<< HEAD
 			const reasoning = thinking
 				.filter((b) => b.encrypted === undefined && !b.raw)
 				.map((b) => b.thinking)
@@ -407,6 +439,11 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 			if (reasoning) msg["reasoning_content"] = reasoning;
 			// A raw Anthropic block has no Chat Completions form; it stays on the message for a switch back.
 			const details = thinking.filter((b) => (b.raw ? b.rawWire === "openai" : b.signature || b.encrypted !== undefined || b.detailType)).map(reasoningDetail);
+=======
+			const reasoning = thinking.map((b) => b.thinking).join("");
+			if (reasoning) msg["reasoning_content"] = reasoning;
+			const details = thinking.filter((b) => b.signature).map((b) => ({ type: "reasoning.text", text: b.thinking, signature: b.signature }));
+>>>>>>> origin/master
 			if (details.length) msg["reasoning_details"] = details;
 			out.push(msg);
 		} else {
@@ -456,8 +493,11 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 		body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 		if (opts.toolChoice === "none") body["tool_choice"] = "none";
 	}
+<<<<<<< HEAD
 	// Reasoning on, at the model's default effort.
 	if (cfg.provider === "openrouter") body["reasoning"] = { enabled: true };
+=======
+>>>>>>> origin/master
 	// Hosted OpenAI caches automatically (>= 1024-token prefixes).
 	if (opts.cacheKey) body["prompt_cache_key"] = opts.cacheKey;
 	// Self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) opt into KV-cache prefix reuse with `cache_prompt`: re-use the cache from a prior request.
@@ -465,6 +505,7 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 	return body;
 }
 
+<<<<<<< HEAD
 /** One streamed fragment of a thinking block. */
 export type ReasoningPiece = Omit<ThinkingBlock, "type" | "thinking"> & { text: string };
 
@@ -536,11 +577,44 @@ function continuesBlock(block: Omit<ThinkingBlock, "type">, piece: ReasoningPiec
 	if (block.detailType !== piece.detailType) return false;
 	if (piece.detailIndex !== undefined && block.detailIndex !== undefined && piece.detailIndex !== block.detailIndex) return false;
 	return !(piece.detailId !== undefined && block.detailId !== undefined && piece.detailId !== block.detailId);
+=======
+export interface ReasoningPiece {
+	text: string;
+	signature: string;
+}
+
+/** Read reasoning text from one streamed OpenAI delta. A `reasoning_details`
+ * entry with text wins, then `reasoning` or `reasoning_content`. */
+export function reasoningDelta(delta: Record<string, unknown> | undefined): ReasoningPiece | null {
+	if (!delta) return null;
+	let detailText = "";
+	let signature = "";
+	const details = delta["reasoning_details"];
+	if (Array.isArray(details)) {
+		for (const entry of details) {
+			if (!entry || typeof entry !== "object") continue;
+			const detail = entry as Record<string, unknown>;
+			const text = detail["text"];
+			if (typeof text === "string" && text) detailText += text;
+			if (typeof detail["signature"] === "string" && detail["signature"]) signature = detail["signature"];
+		}
+	}
+	if (detailText) return { text: detailText, signature };
+	const parts: string[] = [];
+	for (const field of ["reasoning", "reasoning_content"]) {
+		const value = delta[field];
+		if (typeof value === "string" && value && !parts.includes(value)) parts.push(value);
+	}
+	const text = parts.join("");
+	if (!text && !signature) return null;
+	return { text, signature };
+>>>>>>> origin/master
 }
 
 /** Append one reasoning piece to the turn's thinking blocks. A signed block is
  * closed, so later text starts a new block and every signature survives replay. */
 export function appendThinking(turn: AssistantTurn, piece: ReasoningPiece): void {
+<<<<<<< HEAD
 	if (piece.raw) {
 		turn.thinking.push({ thinking: piece.text, signature: "", raw: piece.raw, rawWire: piece.rawWire });
 		return;
@@ -559,6 +633,16 @@ export function appendThinking(turn: AssistantTurn, piece: ReasoningPiece): void
 	if (piece.detailFormat !== undefined) block.detailFormat ??= piece.detailFormat;
 	if (piece.detailId !== undefined) block.detailId ??= piece.detailId;
 	if (piece.detailIndex !== undefined) block.detailIndex ??= piece.detailIndex;
+=======
+	if (!piece.text && !piece.signature) return;
+	let block = turn.thinking[turn.thinking.length - 1];
+	if (!block || block.signature) {
+		block = { thinking: "", signature: "" };
+		turn.thinking.push(block);
+	}
+	block.thinking += piece.text;
+	if (piece.signature) block.signature = piece.signature;
+>>>>>>> origin/master
 }
 
 async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
@@ -612,10 +696,18 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 			const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
 			if (!choice) continue;
 			const delta = choice["delta"] as Record<string, unknown> | undefined;
+<<<<<<< HEAD
 			for (const piece of reasoningPieces(delta)) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
 				appendThinking(turn, piece);
 				if (piece.text) emit(opts, { type: "thinking", delta: piece.text });
+=======
+			const reasoning = reasoningDelta(delta);
+			if (reasoning) {
+				if (!firstTokenAt) firstTokenAt = performance.now();
+				appendThinking(turn, reasoning);
+				if (reasoning.text) emit(opts, { type: "thinking", delta: reasoning.text });
+>>>>>>> origin/master
 			}
 			if (delta?.["content"]) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
@@ -681,7 +773,11 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	const prompt = 'Respond with one word: "Hi"';
 	const isAnthropic = PROVIDERS[cfg.provider].wire === "anthropic";
 	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a likely cause when the request fails.
+<<<<<<< HEAD
 	const keyNote = chatApiKey(cfg) ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
+=======
+	const keyNote = cfg.apiKey.trim() ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
+>>>>>>> origin/master
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {

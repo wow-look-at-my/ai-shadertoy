@@ -1,7 +1,12 @@
 // Unit tests for the provider registry and the endpoint it composes.
 
+<<<<<<< HEAD
 import { PROVIDERS, DEFAULT_SETTINGS, mergeSettings, providerBaseUrl } from "../src/state/defaults.ts";
 import { anthropicBody, anthropicHeaders, appendThinking, chatApiKey, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningPieces, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
+=======
+import { PROVIDERS, DEFAULT_SETTINGS, providerBaseUrl } from "../src/state/defaults.ts";
+import { anthropicBody, anthropicHeaders, appendThinking, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
+>>>>>>> origin/master
 import type { Message, ProviderId, Settings } from "../src/state/types.ts";
 import type { AssistantTurn, ToolDef } from "../src/ai/types.ts";
 
@@ -94,6 +99,7 @@ for (const id of ["anthropic", "openrouter", "ollama-cloud"] as ProviderId[]) {
 eq(PROVIDERS.openrouter.needsKeyForModels, false, "OpenRouter lists models unauthenticated");
 eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists models unauthenticated");
 
+<<<<<<< HEAD
 // ---- per-provider keys ------------------------------------------------------
 {
 	const migrated = mergeSettings({ chat: { provider: "openrouter", apiKey: "sk-or-legacy" } } as unknown as Partial<Settings>);
@@ -104,10 +110,13 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	eq(chatApiKey({ ...keys.chat, provider: "openrouter" }), "o", "another provider's key is still there");
 }
 
+=======
+>>>>>>> origin/master
 // ---- credential header ------------------------------------------------------
 
 // A base-URL override is a gateway, so its virtual key rides in x-bf-vk as well.
 {
+<<<<<<< HEAD
 	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKeys: { openai: " vk-abc " }, baseUrl: "http://localhost:8080/v1" });
 	eq(generic["x-bf-vk"], "vk-abc", "the OpenAI-compatible gateway gets the trimmed key in x-bf-vk");
 	eq(generic["authorization"], "Bearer vk-abc", "and it also gets the bearer form");
@@ -119,12 +128,26 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	eq(anthropic["x-api-key"], "sk-ant", "the default Anthropic headers carry x-api-key");
 	ok(!("x-bf-vk" in anthropic), "the default Anthropic endpoint gets no x-bf-vk");
 	const bifrost = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKeys: { anthropic: "vk" }, baseUrl: "http://localhost:8080/anthropic" });
+=======
+	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " vk-abc ", baseUrl: "http://localhost:8080/v1" });
+	eq(generic["x-bf-vk"], "vk-abc", "the OpenAI-compatible gateway gets the trimmed key in x-bf-vk");
+	eq(generic["authorization"], "Bearer vk-abc", "and it also gets the bearer form");
+	eq(openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " " })["x-bf-vk"], undefined, "a blank key sends no header");
+	const hosted = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openrouter", apiKey: "sk-x" });
+	eq(hosted["authorization"], "Bearer sk-x", "the hosted default keeps the bearer token");
+	ok(!("x-bf-vk" in hosted), "the hosted default gets no x-bf-vk");
+	const anthropic = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKey: "sk-ant" });
+	eq(anthropic["x-api-key"], "sk-ant", "the default Anthropic headers carry x-api-key");
+	ok(!("x-bf-vk" in anthropic), "the default Anthropic endpoint gets no x-bf-vk");
+	const bifrost = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKey: "vk", baseUrl: "http://localhost:8080/anthropic" });
+>>>>>>> origin/master
 	eq(bifrost["x-api-key"], "vk", "the Anthropic gateway keeps x-api-key");
 	eq(bifrost["x-bf-vk"], "vk", "the Anthropic gateway also gets x-bf-vk");
 }
 
 // ---- reasoning capture ------------------------------------------------------
 {
+<<<<<<< HEAD
 	const only = (delta: Record<string, unknown>) => {
 		const pieces = reasoningPieces(delta);
 		eq(pieces.length, 1, `one piece from ${JSON.stringify(delta)}`);
@@ -157,6 +180,17 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	const extra = reasoningPieces({ reasoning: "more", reasoning_details: [{ type: "reasoning.text", text: "less" }] });
 	eq(extra.length, 2, "text beyond the details is its own piece");
 	eq(extra[1].text, "more", "and it holds the extra text");
+=======
+	eq(reasoningDelta({ reasoning: "r1" })?.text, "r1", "the reasoning field is captured");
+	eq(reasoningDelta({ reasoning_content: "r2" })?.text, "r2", "the reasoning_content field is captured");
+	eq(reasoningDelta({ reasoning: "We", reasoning_content: "We", reasoning_details: [{ format: "text", text: "We" }] })?.text, "We", "details win over duplicate spellings");
+	eq(reasoningDelta({ reasoning_details: [{ format: "text", text: "We" }] })?.text, "We", "an untyped detail still carries text");
+	eq(reasoningDelta({ reasoning: "We", reasoning_content: "We" })?.text, "We", "identical string spellings count once");
+	const detail = reasoningDelta({ reasoning_details: [{ type: "reasoning.text", text: "r3", signature: "s3" }] });
+	eq(detail?.text, "r3", "a reasoning.text detail is captured");
+	eq(detail?.signature, "s3", "its signature is kept");
+	eq(reasoningDelta({ reasoning_details: [{ type: "reasoning.encrypted", data: "x" }] }), null, "an encrypted-only detail carries no text");
+>>>>>>> origin/master
 
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 };
 	appendThinking(turn, { text: "a", signature: "" });
@@ -168,6 +202,7 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	eq(turn.thinking.length, 2, "text after a signature starts a new block");
 	eq(turn.thinking[0].signature, "sig", "the signature stays on its block");
 	eq(turn.thinking[1].thinking, "c", "the new block holds the later text");
+<<<<<<< HEAD
 
 	const streamed: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: { inputTokens: 0, outputTokens: 0 }, durationMs: 0 };
 	for (const t of ["Let", " me", " look"]) for (const p of reasoningPieces({ reasoning: t, reasoning_details: [{ type: "reasoning.text", text: t, format: "unknown", index: 0 }] })) appendThinking(streamed, p);
@@ -177,6 +212,8 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	for (const p of reasoningPieces({ reasoning_details: [{ type: "reasoning.encrypted", data: "cd", index: 1 }] })) appendThinking(streamed, p);
 	eq(streamed.thinking.length, 2, "a new entry index starts a new block");
 	eq(streamed.thinking[1].encrypted, "abcd", "encrypted chunks concatenate");
+=======
+>>>>>>> origin/master
 }
 
 // ---- reasoning replay -------------------------------------------------------
@@ -214,6 +251,7 @@ const THINKING: Message = {
 	eq(content[0]["thinking"], "plan", "the thinking text is replayed");
 	eq(content[0]["signature"], "sig", "the signature is replayed");
 }
+<<<<<<< HEAD
 
 // ---- every captured reasoning form replays ----------------------------------
 {
@@ -252,6 +290,8 @@ const THINKING: Message = {
 	eq(content[1]["data"], "ant-redacted", "redacted thinking replays its data");
 	eq(content[2]["x"], 2, "a raw Anthropic block replays verbatim");
 }
+=======
+>>>>>>> origin/master
 
 const HISTORY: Message[] = [{ id: "m1", role: "user", ts: 0, blocks: [{ type: "text", text: "hi" }] }];
 const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "object", properties: {} } };
@@ -266,10 +306,17 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 		return { ok: true, status: 200, json: async () => json } as Response;
 	}) as typeof fetch;
 	try {
+<<<<<<< HEAD
 		await listModels(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }));
 		await listModels(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKeys: { anthropic: "vk" } }));
 		await testConnection(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }));
 		await testConnection(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKeys: { anthropic: "vk" } }));
+=======
+		await listModels(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }));
+		await listModels(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }));
+		await testConnection(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }));
+		await testConnection(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }));
+>>>>>>> origin/master
 	} finally {
 		globalThis.fetch = original;
 	}
@@ -294,8 +341,13 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 		return { ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(body)); c.close(); } }) } as Response;
 	}) as typeof fetch;
 	try {
+<<<<<<< HEAD
 		await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }), "sys", "", HISTORY, []);
 		await streamChat(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKeys: { anthropic: "vk" } }), "sys", "", HISTORY, []);
+=======
+		await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, []);
+		await streamChat(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }), "sys", "", HISTORY, []);
+>>>>>>> origin/master
 	} finally {
 		globalThis.fetch = original;
 	}
@@ -313,7 +365,11 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	const stream = `data: ${JSON.stringify({ choices: [{ delta, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
 	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
 	try {
+<<<<<<< HEAD
 		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+=======
+		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+>>>>>>> origin/master
 		eq(turn.thinking.length, 1, "the combined delta makes one thinking block");
 		eq(turn.thinking[0].thinking, "We", "the combined delta is not duplicated");
 		eq(events.join(""), "We", "the combined delta emits one thinking delta");
@@ -327,7 +383,11 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	const stream = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_details: [{ format: "text", text: "We" }] }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
 	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
 	try {
+<<<<<<< HEAD
 		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+=======
+		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+>>>>>>> origin/master
 		eq(turn.thinking[0].thinking, "We", "an untyped detail reaches the thinking block");
 		eq(events.join(""), "We", "an untyped detail emits a thinking delta");
 	} finally {
@@ -335,6 +395,7 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	}
 }
 
+<<<<<<< HEAD
 /** Run one streamed chat against a canned SSE body and return the turn plus the request body sent. */
 async function streamed(settings: Settings, sse: string): Promise<{ turn: AssistantTurn; sent: Record<string, unknown> }> {
 	const original = globalThis.fetch;
@@ -411,6 +472,8 @@ const OPENROUTER = settingsFor("openrouter", { apiKeys: { openrouter: "sk-or" },
 	}
 }
 
+=======
+>>>>>>> origin/master
 // Anthropic: adaptive thinking on current models, a token budget on 4.5-era ones,
 // and temperature only where sampling is still accepted. An id this code has
 // never seen is treated as new (adaptive, no temperature).
@@ -436,12 +499,15 @@ const OPENROUTER = settingsFor("openrouter", { apiKeys: { openrouter: "sk-or" },
 		eq(limited["max_tokens"], 8192, `${m}: max_tokens passes through`);
 	}
 	eq((body("claude-opus-4-5")["output_config"] as { effort: string })?.effort, "medium", "Opus 4.5 accepts effort");
+<<<<<<< HEAD
 	const blank = body("claude-opus-5");
 	ok(!("max_tokens" in blank), "a blank max tokens is omitted");
 	ok(!("temperature" in blank), "a blank temperature is omitted");
 	const sampled = body("claude-sonnet-4-5", { temperature: 0.3 });
 	eq(sampled["temperature"], 0.3, "an explicit temperature passes through when no thinking is sent");
 	ok(!("max_tokens" in sampled), "an omitted max tokens stays omitted");
+=======
+>>>>>>> origin/master
 	// The history holds tool blocks after a turn, so tools must stay defined even when the model may not call any.
 	const none = anthropicBody(DEFAULT_SETTINGS.chat, "sys", "", HISTORY, [TOOL], { toolChoice: "none" });
 	ok(Array.isArray(none["tools"]), "tools stay defined with tool_choice none");

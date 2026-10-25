@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 // Helpers for editing the stored conversation and serializing it.
+=======
+// Helpers for editing the stored conversation (chat edit/delete).
+>>>>>>> origin/master
 
 import type { Block, ImageBlock, Message, Role, ThinkingBlock } from "../state/types.ts";
 

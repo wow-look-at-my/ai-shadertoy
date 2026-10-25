@@ -56,6 +56,7 @@ function near(a: number, b: number, msg: string): void {
 	eq((assembled.match(/uniform vec3 u_tint;/g) ?? []).length, 1, "vec3 custom uniform declared once in assembled shader");
 }
 
+<<<<<<< HEAD
 // Square-pixel mode: direct lookups on a channel go through its remap so a
 // pass reading another pass with fragCoord / iResolution.xy stays aligned.
 {
@@ -72,6 +73,8 @@ function near(a: number, b: number, msg: string): void {
 	check(!assembleFragment(body, [], 0).source.includes("ai_chanRemap"), "a pass with no inputs declares no remap");
 }
 
+=======
+>>>>>>> origin/master
 // migration: old single shaderSource -> Base layer
 {
 	const legacy = { id: "p1", name: "Old", shaderSource: "void mainImage(out vec4 c, in vec2 f){ c = vec4(0.5); }", channels: [{ kind: "builtin", builtin: "checker" }] };

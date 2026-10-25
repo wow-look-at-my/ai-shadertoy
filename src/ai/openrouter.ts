@@ -1,11 +1,19 @@
+<<<<<<< HEAD
 // OpenRouter PKCE sign-in helpers.
 
 import type { ChatConfig } from "../state/types.ts";
+=======
+// OpenRouter PKCE sign-in. Pure helpers for the authorize URL and the code
+// exchange. The UI supplies the browser APIs.
+>>>>>>> origin/master
 
 export const OPENROUTER_AUTH_URL = "https://openrouter.ai/auth";
 export const OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/auth/keys";
 export const OPENROUTER_VERIFIER_KEY = "openrouter-code-verifier";
+<<<<<<< HEAD
 export const OPENROUTER_DRAFT_KEY = "openrouter-settings-draft";
+=======
+>>>>>>> origin/master
 
 export function base64url(bytes: Uint8Array): string {
 	let binary = "";
@@ -44,7 +52,10 @@ export function openRouterAuthUrl(pageUrl: string, challenge: string): string {
 	url.searchParams.set("callback_url", callback.toString());
 	url.searchParams.set("code_challenge", challenge);
 	url.searchParams.set("code_challenge_method", "S256");
+<<<<<<< HEAD
 	url.searchParams.set("key_label", "AI Shadertoy");
+=======
+>>>>>>> origin/master
 	return url.toString();
 }
 
@@ -88,6 +99,7 @@ export interface SignInCallback {
 	error?: string;
 }
 
+<<<<<<< HEAD
 /** Serialize the live form into the session draft for the redirect. */
 export function draftSettings(chat: ChatConfig): string {
 	return JSON.stringify(chat);
@@ -110,6 +122,8 @@ export function mergeSettingsDraft(chat: ChatConfig, draft: Partial<ChatConfig> 
 	return { ...chat, ...draft, apiKeys: { ...chat.apiKeys, ...(draft.apiKeys ?? {}) } };
 }
 
+=======
+>>>>>>> origin/master
 /** Exchange a callback code when the page URL carries one. A failure keeps the
  * stored key untouched and reports the reason instead. */
 export async function completeOpenRouterSignIn(pageUrl: string, verifier: string | null, doFetch: typeof fetch = fetch): Promise<SignInCallback | null> {

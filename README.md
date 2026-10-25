@@ -7,7 +7,10 @@ A single-page, **client-side** sandbox where an AI builds 2D WebGL2 fragment sha
 - **Multi-pass render graph.** Within a layer (and the classic single-layer case), build a *graph* of passes, each rendering to its own texture. Sampling the output of others — e.g. effect → blur X → blur Y → composite — with per-pass feedback (a pass reading its own previous frame). Each pass has as many inputs as the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html` (no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
 - **Export the render.** Consider the preview's download button. That button offers lossless **PNG** and lossless **WebP**, plus lossless **EXR** (16-bit float) when the output pass is an HDR (`rgba16f`) target. So HDR renders leave the browser without clipping.
+<<<<<<< HEAD
 - **Inspect a render.** The preview's **Histogram** button charts the viewport or any pass buffer. It offers luma, saturation, value, R, G, B, and additive RGB modes.
+=======
+>>>>>>> origin/master
 - **Bring your own model.** Works with Anthropic (Claude) or any OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator shows tokens/sec, context use, and cost per turn + per session.
 - **Undo everything.** One unified history covers every change — your manual edits *and* the AI's — so a single undo reverts a whole AI turn.
@@ -71,8 +74,11 @@ You do not have to wait for the AI to finish. While it works, keep typing and hi
 
 A long session piles up prompts, tool calls, and (heavy) screenshots, steadily filling the model's **context window** — the same one the usage indicator meters. Type **`/compact`** in the chat and send it: it does what you'd do by hand. Asks the model to *"summarize this entire conversation in detail for a future instance of yourself to pick up,"* then starts a fresh chat that **begins with that summary**, replacing the long history.
 
+<<<<<<< HEAD
 Click the context percentage in the usage indicator to compact too. When the last reported prompt approaches the window, the app compacts automatically before the next send. An unknown model's window is estimated and labelled.
 
+=======
+>>>>>>> origin/master
 The live project state (current layers, passes, shapes, uniforms, the active layer's live GLSL source, last compile error) is always sent fresh, so the summary only needs to carry the *conversational* context. Your goal, stylistic intent, what was tried and rejected, and what is left — not the shader code. The result is shown as a single collapsible **"Conversation compacted"** card. The next message continues from there with a much smaller (and cheaper) prompt. Your shader, layers, and assets are untouched — only the chat transcript is summarized.
 
 ### Undo / redo
@@ -104,14 +110,22 @@ Open the app, click **Settings**, and add:
 
 - **Provider** - Anthropic (Claude), OpenRouter, Ollama Cloud, or any OpenAI-compatible endpoint. Each brings its own base URL, model presets and CORS handling, so picking one and pasting a key is enough.
 - **Model** - defaults to `claude-opus-5`. Presets are provided. Any model id is allowed. OpenRouter and Ollama Cloud publish their catalogues without a key, so the model list fills itself before you paste one.
+<<<<<<< HEAD
 - **API key** - stored only in your browser's `localStorage`. Each provider keeps its own key, so switching providers does not overwrite the others.
 - **Max tokens / Temperature** - leave blank to use the provider's defaults. A value caps the output or pins the sampling.
+=======
+- **API key** - stored only in your browser's `localStorage`.
+>>>>>>> origin/master
 
 Use **Test connection** to run a tiny real inference (it prompts the model for a one-word reply and shows it), confirming the key, model, base URL, and (CORS) connectivity all work before you start chatting.
 
 **Bifrost.** Bifrost speaks both wire formats. For OpenAI models pick **OpenAI-compatible** and set the base URL to `http://localhost:8080/v1`. For Anthropic models pick **Anthropic** and set it to `http://localhost:8080/anthropic`. Any base-URL override sends the virtual key in `x-bf-vk` beside the normal credential header. Model ids name the provider Bifrost routes to (`<provider>/<model>`) on the OpenAI wire. A direct browser connection needs `x-bf-vk` in Bifrost's `allowed_headers`.
 
+<<<<<<< HEAD
 **OpenRouter sign-in.** Settings offers **Sign in with OpenRouter**. It opens OpenRouter's authorize page and returns with a code. The app exchanges that code for an API key labeled AI Shadertoy, selects OpenRouter, and stores the key. The open Settings form is restored after the redirect. The page must be served over http(s).
+=======
+**OpenRouter sign-in.** Settings offers **Sign in with OpenRouter**. It opens OpenRouter's authorize page and returns with a code. The app exchanges that code for an API key, selects OpenRouter, and stores the key. The page must be served over http(s).
+>>>>>>> origin/master
 
 If CORS blocks direct browser calls, tick **Route chat through CORS proxy**. Ollama Cloud sends no CORS headers at all, so choosing it ticks the box for you and says why. You can still untick it.
 
@@ -132,7 +146,11 @@ Anthropic browser calls send `anthropic-dangerous-direct-browser-access: true`. 
 
 The chat panel shows a small live indicator: output **tokens/sec** and **context window used**. This also covers **% cached**, and — for models with known pricing — **cost this turn** and **cost this session**.
 
+<<<<<<< HEAD
 The **% cached** rate and the spend figure are shown **only from the true, server-reported usage** — they are never estimated or inferred. If the endpoint reports how many prompt tokens were served from cache, that exact number is used (an explicit `0` shows as `0% cached`). If it reports no cache count at all (some local OpenAI-compatible servers omit it), the **% cached** indicator is hidden rather than guessed. Likewise, cost is a true calculation: the real input, output, cache-read, and cache-write token counts multiplied by the model's known published rates (cache writes bill at ~1.25× the base input rate, cache reads at ~0.1×). It is not an estimate. OpenRouter's reported `usage.cost` is used verbatim when it arrives. Without that or a known table rate, the readout shows tokens only.
+=======
+The **% cached** rate and the spend figure are shown **only from the true, server-reported usage** — they are never estimated or inferred. If the endpoint reports how many prompt tokens were served from cache, that exact number is used (an explicit `0` shows as `0% cached`). If it reports no cache count at all (some local OpenAI-compatible servers omit it), the **% cached** indicator is hidden rather than guessed. Likewise, cost is a true calculation: the real input, output, cache-read, and cache-write token counts multiplied by the model's known published rates (cache writes bill at ~1.25× the base input rate, cache reads at ~0.1×). It is not an estimate — but it is only shown for models with a known price. Unrecognized endpoints show tokens only, no dollar figure.
+>>>>>>> origin/master
 
 Requests use **prompt caching** to cut cost and latency. Consider the stable system prompt and the growing conversation history. That prompt are cached, while the fast-changing project state (each layer's live output-pass source, uniforms, channels, last compile error) is sent as a separate trailing message so it never invalidates the cache. For Anthropic this uses `cache_control` breakpoints. For hosted OpenAI we send a stable `prompt_cache_key` and the server caches the matching prefix automatically. For self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) we send `cache_prompt: true` to opt into KV-cache prefix reuse.
 
@@ -142,7 +160,11 @@ These extra fields are sent only to non-hosted endpoints, since hosted OpenAI/Az
 
 Projects, conversations, and media assets (images and videos) are stored in **IndexedDB**. Settings in `localStorage`. Videos are kept inline like images, so prefer short, low-resolution loops (uploads are capped at 32 MB). Webcam channels store only the *binding* — the camera is re-requested on load. The app requests persistent storage so the browser will not evict it. The top bar manages projects: create a **New** one, **Duplicate** the current one (a full independent copy of its passes, uniforms, and conversation — handy for forking an experiment), switch between them, or **Delete**.
 
+<<<<<<< HEAD
 Use **Export** / **Import** to move everything as a single JSON file (API keys excluded by default). **Transcript** downloads the current chat as JSON, with every image embedded.
+=======
+Use **Export** / **Import** to move everything as a single JSON file (API keys excluded by default).
+>>>>>>> origin/master
 
 ## Develop
 

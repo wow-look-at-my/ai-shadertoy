@@ -6,8 +6,13 @@ import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
 import { DEFAULT_SETTINGS, MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
+<<<<<<< HEAD
 import { createPkcePair, draftSettings, openRouterAuthUrl, OPENROUTER_DRAFT_KEY, OPENROUTER_VERIFIER_KEY } from "../ai/openrouter.ts";
 import type { ApiKeys, ProviderId, Settings, ToolMode } from "../state/types.ts";
+=======
+import { createPkcePair, openRouterAuthUrl, OPENROUTER_VERIFIER_KEY } from "../ai/openrouter.ts";
+import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
+>>>>>>> origin/master
 import type { Store } from "../state/store.ts";
 
 export interface SettingsModal {
@@ -25,12 +30,15 @@ export function createSettings(store: Store): SettingsModal {
 	const apiKey = el("input", { type: "text", placeholder: "sk-... / your API key", attrs: { autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const signInBtn = el("button", { class: "btn", type: "button" }, "Sign in with OpenRouter");
 	const signInStatus = el("span", { class: "hint" });
+<<<<<<< HEAD
 	const signInRow = el("div", { class: "test-row" }, signInBtn, signInStatus);
 	const applySignInVisibility = () => {
 		signInRow.hidden = provider.value !== "openrouter";
 	};
 	let draftKeys: ApiKeys = {};
 	let activeProvider: ProviderId = DEFAULT_SETTINGS.chat.provider;
+=======
+>>>>>>> origin/master
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", placeholder: "provider default", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", placeholder: "provider default", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -99,7 +107,10 @@ export function createSettings(store: Store): SettingsModal {
 		try {
 			const pair = await createPkcePair();
 			sessionStorage.setItem(OPENROUTER_VERIFIER_KEY, pair.verifier);
+<<<<<<< HEAD
 			sessionStorage.setItem(OPENROUTER_DRAFT_KEY, draftSettings(currentProbe().chat));
+=======
+>>>>>>> origin/master
 			location.assign(openRouterAuthUrl(location.href, pair.challenge));
 		} catch (e) {
 			signInStatus.textContent = e instanceof Error ? e.message : String(e);
@@ -183,7 +194,11 @@ export function createSettings(store: Store): SettingsModal {
 		field("Provider", provider),
 		modelField,
 		secretField("API key", apiKey, "Stored only in your browser (localStorage)."),
+<<<<<<< HEAD
 		signInRow,
+=======
+		el("div", { class: "test-row" }, signInBtn, signInStatus),
+>>>>>>> origin/master
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		field("Tool calling", toolMode, "Text tags = forgiving XML in the reply, for models/endpoints without function calling."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),

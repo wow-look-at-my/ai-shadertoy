@@ -89,7 +89,11 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let costTotal = 0;
 	let costTurn = 0;
 	let lastTps = 0;
+<<<<<<< HEAD
 	let lastPromptTokens = 0;
+=======
+	let lastCtxPct = 0;
+>>>>>>> origin/master
 	// Cached share of the last request's input prompt, ONLY from the server-reported cache count: a number (incl.
 	let lastCachePct: number | undefined;
 	let lastUsage: Usage | undefined;
