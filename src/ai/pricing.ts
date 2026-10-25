@@ -1,6 +1,7 @@
 // Per-model pricing + context windows for the chat usage indicator (cost and context-window %).
 
 import type { Usage } from "./types.ts";
+import { publishedModel } from "./modelinfo.ts";
 
 interface Rate {
 	in: number;
@@ -46,17 +47,9 @@ function find(model: string): ModelInfo | undefined {
 	return undefined;
 }
 
-// Context windows the endpoint itself published (its /models listing), by model id.
-const published = new Map<string, number>();
-
-/** Record the context windows an endpoint's model listing reported. */
-export function recordContextWindows(windows: Map<string, number>): void {
-	for (const [id, tokens] of windows) published.set(id.toLowerCase(), tokens);
-}
-
-/** The model's context window: what its endpoint published, else the table, else unknown. */
+/** The model's context window: what a listing published, else the table, else unknown. */
 export function modelContextWindow(model: string): number | undefined {
-	return published.get(model.toLowerCase()) ?? find(model)?.context;
+	return publishedModel(model)?.contextWindow ?? find(model)?.context;
 }
 
 /** True when the model's context window is known. */
@@ -64,8 +57,12 @@ export function hasContextWindow(model: string): boolean {
 	return modelContextWindow(model) !== undefined;
 }
 
+function modelRate(model: string): Rate | undefined {
+	return publishedModel(model)?.rate ?? find(model)?.rate;
+}
+
 export function hasPricing(model: string, u?: Usage): boolean {
-	return (u?.cost !== undefined && Number.isFinite(u.cost)) || find(model)?.rate !== undefined;
+	return (u?.cost !== undefined && Number.isFinite(u.cost)) || modelRate(model) !== undefined;
 }
 
 /** Cost in USD for one request's usage, or null when neither the server nor the
@@ -73,7 +70,7 @@ export function hasPricing(model: string, u?: Usage): boolean {
  * fallback. */
 export function messageCost(model: string, u: Usage): number | null {
 	if (u.cost !== undefined && Number.isFinite(u.cost)) return u.cost;
-	const rate = find(model)?.rate;
+	const rate = modelRate(model);
 	if (!rate) return null;
 	const cacheRead = u.cacheReadTokens ?? 0;
 	const cacheWrite = u.cacheWriteTokens ?? 0;

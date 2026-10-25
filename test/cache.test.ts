@@ -1,7 +1,7 @@
 // Unit tests for prompt-cache usage accounting.
 
-import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow, recordContextWindows } from "../src/ai/pricing.ts";
-import { contextWindows } from "../src/ai/providers.ts";
+import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow } from "../src/ai/pricing.ts";
+import { recordModelListing } from "../src/ai/modelinfo.ts";
 import { shouldAutoCompact } from "../src/ai/compact.ts";
 import type { Usage } from "../src/ai/types.ts";
 
@@ -86,14 +86,12 @@ eq(messageCost("some-unknown-model", { inputTokens: 1000, outputTokens: 100 }), 
 	eq(hasContextWindow("deepseek/deepseek-chat"), false, "an unknown model has no known window");
 	eq(modelContextWindow("deepseek/deepseek-chat"), undefined, "an unknown model's window stays unknown, never a guess");
 
-	const listing = [{ id: "deepseek/deepseek-v4.1-flash-1017", context_length: 1_048_576 }, { id: "claude-opus-5", max_input_tokens: 1_000_000 }, { id: "no-window" }, { id: "nested", top_provider: { context_length: 65_536 } }];
-	const windows = contextWindows(listing);
-	eq(windows.get("deepseek/deepseek-v4.1-flash-1017"), 1_048_576, "context_length is read");
-	eq(windows.get("claude-opus-5"), 1_000_000, "Anthropic's max_input_tokens is read");
-	eq(windows.get("nested"), 65_536, "top_provider.context_length is read");
-	eq(windows.has("no-window"), false, "a model with no published window is left out");
-	recordContextWindows(windows);
-	eq(modelContextWindow("deepseek/deepseek-v4.1-flash-1017"), 1_048_576, "a recorded window is used");
+	recordModelListing([{ id: "deepseek/deepseek-v4.1-flash-1017", context_length: 1_048_576, pricing: { prompt: "0.00000015", completion: "0.0000006", input_cache_read: "0.000000003" } }, { id: "nested", top_provider: { context_length: 65_536 } }, { id: "no-window" }]);
+	eq(modelContextWindow("deepseek/deepseek-v4.1-flash-1017"), 1_048_576, "a listed window is used");
+	eq(modelContextWindow("nested"), 65_536, "top_provider.context_length is read");
+	eq(modelContextWindow("no-window"), undefined, "a listing with no window leaves it unknown");
+	eq(hasPricing("deepseek/deepseek-v4.1-flash-1017"), true, "listed prices count as pricing");
+	close(messageCost("deepseek/deepseek-v4.1-flash-1017", { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }) ?? -1, 0.15 + 0.6 + 0.003, "listed per-token prices are billed per class", 1e-6);
 	eq(hasContextWindow("deepseek/deepseek-v4.1-flash-1017"), true, "and counts as known");
 	eq(shouldAutoCompact({ promptTokens: 265_749, window: modelContextWindow("deepseek/deepseek-v4.1-flash-1017") }), false, "the HAR's 265k prompt is far from compaction on a 1M window");
 	eq(shouldAutoCompact({ promptTokens: 265_749, window: undefined }), false, "an unknown window never auto-compacts");

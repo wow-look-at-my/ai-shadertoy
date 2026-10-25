@@ -7,7 +7,7 @@ import type { Block, ChatConfig, ImageBlock, Message, ReasoningDetailType, Setti
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
-import { recordContextWindows } from "./pricing.ts";
+import { acceptsImages, acceptsParam, publishedModel, recordModelListing } from "./modelinfo.ts";
 
 export class ProviderError extends Error {
 	readonly status?: number;
@@ -198,6 +198,12 @@ function anthropicEffort(model: string): string | undefined {
 	return /sonnet-4-[05]|haiku-4-5|opus-4-[01]/i.test(model) ? undefined : "medium";
 }
 
+/** The configured output limit, held to the most the model publishes it can write. */
+function outputLimit(cfg: ChatConfig): number | undefined {
+	const max = publishedModel(cfg.model)?.maxOutput;
+	return cfg.maxTokens !== undefined && max !== undefined ? Math.min(cfg.maxTokens, max) : cfg.maxTokens;
+}
+
 /** The Anthropic Messages request body. Exported so the model gates (thinking vs
  * temperature, effort, tool_choice) can be asserted without a request. */
 export function anthropicBody(cfg: ChatConfig, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Record<string, unknown> {
@@ -208,13 +214,14 @@ export function anthropicBody(cfg: ChatConfig, system: string, state: string, me
 		stream: true,
 		messages: toAnthropicMessages(messages, state),
 	};
-	if (cfg.maxTokens !== undefined) body["max_tokens"] = cfg.maxTokens;
+	const maxTokens = outputLimit(cfg);
+	if (maxTokens !== undefined) body["max_tokens"] = maxTokens;
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
 		// A history that carries tool_use/tool_result blocks must define tools.
 		if (opts.toolChoice === "none") body["tool_choice"] = { type: "none" };
 	}
-	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
+	const thinking = anthropicThinking(cfg.model, maxTokens);
 	if (thinking) body["thinking"] = thinking;
 	else if (cfg.temperature !== undefined && anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
 	const effort = anthropicEffort(cfg.model);
@@ -381,7 +388,8 @@ function reasoningDetail(b: ThinkingBlock): Record<string, unknown> {
 	return out;
 }
 
-export function toOpenAIMessages(system: string, messages: Message[], state: string): unknown[] {
+/** `textOnlyModel` names a model that takes no image input; its requests carry a note in place of each image. */
+export function toOpenAIMessages(system: string, messages: Message[], state: string, textOnlyModel?: string): unknown[] {
 	const out: unknown[] = [{ role: "system", content: system }];
 	for (const m of messages) {
 		if (m.role === "assistant") {
@@ -421,7 +429,9 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 					trailing.push(b);
 				}
 			}
-			if (trailing.length) out.push({ role: "user", content: openaiUserContent(trailing) });
+			// A model that takes no image input gets a note in each image's place; the message keeps the image.
+			const sendable = textOnlyModel ? trailing.map((b): TextBlock | ImageBlock => (b.type === "image" ? { type: "text", text: `[image not sent: ${textOnlyModel} takes no image input]` } : b)) : trailing;
+			if (sendable.length) out.push({ role: "user", content: openaiUserContent(sendable) });
 		}
 	}
 	// Volatile project state as an uncached, varying suffix -- keeps the system + conversation prefix stable for OpenAI's automatic (server-side) caching.
@@ -444,20 +454,21 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 		stream: true,
 		// ask for a final usage chunk so we can report cost + context use
 		stream_options: { include_usage: true },
-		messages: toOpenAIMessages(system, messages, state),
+		messages: toOpenAIMessages(system, messages, state, acceptsImages(cfg.model) ? undefined : cfg.model),
 	};
+	const maxTokens = outputLimit(cfg);
 	if (isOpenAIReasoningModel(cfg)) {
-		if (cfg.maxTokens !== undefined) body["max_completion_tokens"] = cfg.maxTokens;
+		if (maxTokens !== undefined) body["max_completion_tokens"] = maxTokens;
 	} else {
-		if (cfg.maxTokens !== undefined) body["max_tokens"] = cfg.maxTokens;
-		if (cfg.temperature !== undefined) body["temperature"] = cfg.temperature;
+		if (maxTokens !== undefined) body["max_tokens"] = maxTokens;
+		if (cfg.temperature !== undefined && acceptsParam(cfg.model, "temperature")) body["temperature"] = cfg.temperature;
 	}
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 		if (opts.toolChoice === "none") body["tool_choice"] = "none";
 	}
-	// Reasoning on, at the model's default effort.
-	if (cfg.provider === "openrouter") body["reasoning"] = { enabled: true };
+	// Reasoning on, at the model's default effort, wherever the model takes it.
+	if (cfg.provider === "openrouter" && acceptsParam(cfg.model, "reasoning")) body["reasoning"] = { enabled: true };
 	// Hosted OpenAI caches automatically (>= 1024-token prefixes).
 	if (opts.cacheKey) body["prompt_cache_key"] = opts.cacheKey;
 	// Self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) opt into KV-cache prefix reuse with `cache_prompt`: re-use the cache from a prior request.
@@ -721,28 +732,9 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	return { ok: true, message: reply ? `${cfg.model} replied: "${shown}"` : `${cfg.model} responded (no text).` };
 }
 
-interface ModelListing {
-	id?: string;
-	name?: string;
-	context_length?: unknown; // OpenRouter, Ollama Cloud, Bifrost
-	max_input_tokens?: unknown; // Anthropic
-	top_provider?: { context_length?: unknown };
-}
-
-/** The context window each listed model publishes, by id. */
-export function contextWindows(items: ModelListing[]): Map<string, number> {
-	const out = new Map<string, number>();
-	for (const m of items) {
-		const id = m.id ?? m.name;
-		const tokens = [m.context_length, m.top_provider?.context_length, m.max_input_tokens].find((v): v is number => typeof v === "number" && v > 0);
-		if (id && tokens !== undefined) out.set(id, tokens);
-	}
-	return out;
-}
-
 /** List available model ids from the provider (Anthropic /v1/models or an
- * OpenAI-compatible /models), recording each model's published context window.
- * Throws a ProviderError on failure. */
+ * OpenAI-compatible /models), recording what each entry publishes about its
+ * model (limits, prices, accepted parameters). Throws a ProviderError on failure. */
 export async function listModels(settings: Settings): Promise<string[]> {
 	const cfg = settings.chat;
 	const url = modelsEndpoint(settings);
@@ -760,10 +752,10 @@ export async function listModels(settings: Settings): Promise<string[]> {
 		throw corsHint(e, cfg);
 	}
 	if (!res.ok) throw await httpError(res);
-	const json = (await res.json()) as { data?: ModelListing[]; models?: ModelListing[] };
+	const json = (await res.json()) as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
 	const items = json.data ?? json.models ?? [];
 	const ids = items.map((m) => m.id ?? m.name ?? "").filter((s) => s.length > 0);
-	recordContextWindows(contextWindows(items));
+	recordModelListing(items);
 	return [...new Set(ids)].sort();
 }
 

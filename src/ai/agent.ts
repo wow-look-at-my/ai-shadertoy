@@ -12,6 +12,7 @@ import type { ToolDef, Usage } from "./types.ts";
 import type { ToolResult } from "./tools/index.ts";
 import { getTool, text } from "./tools/index.ts";
 import { streamChat } from "./providers.ts";
+import { acceptsParam } from "./modelinfo.ts";
 import { parseTextToolCalls } from "./texttools.ts";
 import { textToolInstructions } from "./system-prompt.ts";
 import { uid } from "../util/misc.ts";
@@ -58,7 +59,8 @@ export async function runAgent(
 	applyTool: (name: string, input: unknown) => Promise<ToolResult>,
 	cb: AgentCallbacks,
 ): Promise<void> {
-	const textMode = settings.chat.toolMode === "text";
+	// A model whose endpoint lists no native tool support gets the text-tag protocol.
+	const textMode = settings.chat.toolMode === "text" || !acceptsParam(settings.chat.model, "tools");
 
 	// Fold any steering messages the user queued mid-turn into the conversation
 	// so the model sees them on its next response.

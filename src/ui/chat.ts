@@ -10,10 +10,11 @@ import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
 import { estimateTokens, shouldAutoCompact, shouldCompact, type ContextUsage } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
-import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
+import { cachePct, hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
 import { listModels, ProviderError } from "../ai/providers.ts";
+import { fetchCatalogueEntry } from "../ai/modelinfo.ts";
 import type { Usage } from "../ai/types.ts";
 import { PROVIDERS } from "../state/defaults.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
@@ -136,13 +137,22 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		statsBar.hidden = false;
 	}
 
-	// A model the built-in table lacks takes its window from its endpoint's model listing.
-	function loadContextWindow(): void {
-		if (hasContextWindow(store.settings.chat.model)) return;
-		listModels(store.settings).then(renderStats, (e: unknown) => console.warn("Couldn't read the model's context window:", e));
+	// What the active model accepts and costs: the endpoint's /models listing plus the shared catalogue, read once per endpoint and model.
+	let loadedModelKey = "";
+	function loadModelInfo(): void {
+		const chat = store.settings.chat;
+		const modelKey = `${chat.provider}|${chat.baseUrl}|${chat.model}`;
+		if (modelKey === loadedModelKey || !chat.model.trim()) return;
+		loadedModelKey = modelKey;
+		for (const [what, load] of [
+			["the endpoint's model listing", listModels(store.settings)],
+			["the modelinfo.pazer.ai catalogue", fetchCatalogueEntry(chat.model)],
+		] as const) {
+			load.then(renderStats, (e: unknown) => console.warn(`Couldn't read ${what} for ${chat.model}:`, e));
+		}
 	}
-	loadContextWindow();
-	store.on("settings", loadContextWindow);
+	loadModelInfo();
+	store.on("settings", loadModelInfo);
 
 	// A refused write (quota, a closed database) is shown where the user is
 	// looking; the edit is on screen but would not survive a reload.
