@@ -64,6 +64,8 @@ export interface ToolContext {
 	renameProject(name: string): void;
 	addAsset(asset: ImageAsset): void;
 	screenshotBlock(): ShotBlock;
+	/** Draw the latest state and wait for the browser to present a frame. */
+	nextFrame(): Promise<void>;
 	/** Build the standard compile result. */
 	shaderResult(okPrefix: string, withImage: boolean): ToolResult;
 	/** Current compile error log (across all passes), or null when all compile. */

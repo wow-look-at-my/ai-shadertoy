@@ -965,6 +965,7 @@ export class Store {
 			renameProject: (n) => this.renameProject(n),
 			addAsset: (a) => this.addAsset(a),
 			screenshotBlock: () => this.screenshotBlock(),
+			nextFrame: () => this.renderer.nextFrame(),
 			shaderResult: (p, w) => this.shaderResult(p, w),
 			compileError: () => (this.lastCompile && !this.lastCompile.ok ? this.lastCompile.log : null),
 		};

@@ -45,6 +45,13 @@ function makeCtx(project: Project): ToolContext {
 	};
 	const passById = (id: string): Pass | undefined => layerOfPass(id)?.passes.find((p) => p.id === id);
 
+	let rendered = "";
+	const render = (): void => {
+		const layer = topLayer();
+		const out = layer?.passes.find((p) => p.id === layer.outputPassId) ?? layer?.passes[0];
+		rendered = out?.source ?? "";
+	};
+
 	const resolveLayer = (ref?: string | number): Layer | null => {
 		if (ref === undefined || ref === "") return topLayer();
 		if (typeof ref === "number" && Number.isInteger(ref)) return project.layers[ref] ?? null;
@@ -171,7 +178,10 @@ function makeCtx(project: Project): ToolContext {
 			project.name = n;
 		},
 		addAsset: () => {},
-		screenshotBlock: () => ({ type: "image", mediaType: "image/webp", data: "", _avg: "avg rgb(0,0,0)" }),
+		screenshotBlock: () => ({ type: "image", mediaType: "image/webp", data: rendered, _avg: "avg rgb(0,0,0)" }),
+		nextFrame: async () => {
+			render();
+		},
 		shaderResult: (prefix) => ({ content: [{ type: "text", text: prefix }] }),
 		compileError: () => null,
 	};
@@ -183,6 +193,12 @@ function run(ctx: ToolContext, name: string, input: Record<string, unknown>): To
 	const r = tool.execute(ctx, input);
 	if (r instanceof Promise) throw new Error("FAIL: sync test path expected");
 	return r;
+}
+
+async function runAsync(ctx: ToolContext, name: string, input: Record<string, unknown>): Promise<ToolResult> {
+	const tool = getTool(name);
+	if (!tool) throw new Error(`FAIL: tool ${name} not registered`);
+	return await tool.execute(ctx, input);
 }
 
 // ---- ref resolution: layer by name / id / stack index ----------------------
@@ -331,6 +347,17 @@ function run(ctx: ToolContext, name: string, input: Record<string, unknown>): To
 	// No per-conversation / per-state gating: identical before vs after authoring.
 	const expected = ["read", "create_object", "destroy_object", "edit_object", "edit_shader", "connect_pins", "set_uniforms", "capture_screenshot"];
 	eq(JSON.stringify(names), JSON.stringify(expected), "exactly the 8 generic + kept tools, in order");
+}
+
+// ---- screenshot barrier -----------------------------------------------------
+{
+	const project = makeProject("T", DEFAULT_SRC);
+	const ctx = makeCtx(project);
+	await runAsync(ctx, "edit_shader", { old: "vec4(0.0)", new: "vec4(1.0, 0.0, 0.0, 1.0)" });
+	const shot = await runAsync(ctx, "capture_screenshot", {});
+	const image = shot.content.find((b) => b.type === "image");
+	check(image?.type === "image" && image.data.includes("vec4(1.0, 0.0, 0.0, 1.0)"), "a screenshot after an edit reads the post-edit frame");
+	check(image?.type === "image" && !image.data.includes("vec4(0.0)"), "the pre-edit source is gone");
 }
 
 console.log(`tools.test.ts: ${passed} checks passed`);

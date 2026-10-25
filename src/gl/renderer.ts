@@ -953,6 +953,17 @@ export class Renderer {
 
 	// ---- screenshot ---------------------------------------------------------
 
+	/** Draw the latest state and resolve after the browser presents a frame. */
+	nextFrame(): Promise<void> {
+		this.renderFrame();
+		return new Promise((resolve) => {
+			requestAnimationFrame(() => {
+				this.renderFrame();
+				resolve();
+			});
+		});
+	}
+
 	screenshot(maxDim = 512, mime = "image/webp", quality = 0.85): Screenshot {
 		this.renderFrame();
 		const sw = this.canvas.width;
