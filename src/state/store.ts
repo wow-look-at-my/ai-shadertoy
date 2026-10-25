@@ -1,7 +1,7 @@
-// Central application store. Owns settings, the current project (a back-to-front
-// stack of layers, each its own render graph plus geometry), the asset library,
-// and the renderer, and is the single place that mutates state + persists it.
-// Also implements tool execution for the agent.
+// Central application store. Owns settings, the current project (a
+// back-to-front stack of layers, each its own render graph plus geometry),
+// the asset library, and the renderer, and is the place that mutates state +
+// persists it. Also implements tool execution for the agent.
 
 import type { Channel, ImageAsset, Layer, Pass, PassFormat, Project, Settings, Shape, ShapeKind, Uniform } from "./types.ts";
 import { channelsForSource, ensureMaskCompositePass, LAYER_COMPOSITE_SOURCE, makeCompositeLayer, makeMaskLayer, makePass, makeShape, MASK_SOURCE, removeMaskCompositePass } from "./types.ts";
@@ -21,9 +21,7 @@ import { loadImageEl, requestWebcam, sanitizeAssetName, stopStream, uniqueAssetN
 type EventName = "project" | "projects" | "settings" | "assets" | "compile" | "busy" | "stats" | "playback" | "storageError" | "toolActivity" | "selectedPass" | "selectedLayer" | "selectedShape" | "history" | "restore";
 
 /** The slice of a Project that undo/redo restores: the visible/editable state
- * (name, layer stack, uniforms). The conversation log and identity/timestamps
- * are intentionally excluded -- you don't "undo" the chat history, and ids must
- * stay stable. Snapshots are deep-cloned on the way in and out. */
+ * (name, layer stack, uniforms). */
 interface ProjectSnapshot {
 	name: string;
 	layers: Layer[];
@@ -47,23 +45,17 @@ export class Store {
 	selectedLayerId = "";
 	/** Which pass (within the active layer) the editor/inspector is focused on. */
 	selectedPassId = "";
-	/** Which shape (in the active layer) is selected for direct manipulation on the
-	 * canvas, or "" for none. Cleared when the active layer changes. */
+	/** Which shape (in the active layer) is selected for direct manipulation on the canvas, or "" for none. */
 	selectedShapeId = "";
 	busy = false;
-	/** Undo/redo over project snapshots. Reset whenever the active project
-	 * changes so history never crosses project boundaries. */
+	/** Undo/redo over project snapshots. */
 	history!: History<ProjectSnapshot>;
-	/** The fresh-project default shader source, kept so a tool can tell whether a
-	 * layer's output pass is still the UNAUTHORED default (vs real authored work). */
+	/** The fresh-project default shader source, kept so a tool can tell whether a layer's output pass is still the UNAUTHORED default. */
 	private defaultShaderSource = "";
 
 	private listeners = new Map<EventName, Set<(p: unknown) => void>>();
 	private saveDebounced = debounce(() => void this.saveProjectNow(), 700);
-	/** Per-uniform default last seen in shader source (name -> value), so the next
-	 * sync can distinguish a deliberately edited `= <default>` initializer from an
-	 * unchanged one. Session-only; reset on project switch / snapshot restore so
-	 * those always preserve the persisted/restored values. */
+	/** Per-uniform default last seen in shader source (name -> value). */
 	private declaredDefaults: Record<string, number[]> = {};
 
 	on(event: EventName, cb: (payload: unknown) => void): () => void {
@@ -271,9 +263,7 @@ export class Store {
 			}
 		});
 		const next = reconcileUniforms(declared, this.project.uniforms, this.declaredDefaults);
-		// Remember each uniform's declared default so the NEXT sync can tell a
-		// deliberately edited initializer (adopt it) from an unchanged one (preserve
-		// the live slider / set_uniforms value).
+		// Remember each uniform's declared default so the NEXT sync can tell a deliberately edited initializer (adopt it) from an unchanged one.
 		this.declaredDefaults = Object.fromEntries(declared.map((u) => [u.name, u.value.slice()]));
 		if (!uniformListsEqual(this.project.uniforms, next)) {
 			this.project.uniforms = next;
@@ -315,8 +305,7 @@ export class Store {
 				this.renderer.disconnectInput(passId, index);
 				return;
 			}
-			// Idempotent: the renderer keeps the playing clip when the key matches,
-			// so re-applying on an unrelated edit doesn't restart playback.
+			// Idempotent: the renderer keeps the playing clip when the key matches.
 			this.renderer.connectVideoInput(passId, index, asset.dataUrl, asset.id, ch.filter, ch.wrap);
 		} else if (ch.kind === "webcam") {
 			// Already streaming? Refresh filter/wrap instead of re-acquiring the camera.
@@ -379,8 +368,7 @@ export class Store {
 		this.project.uniforms = structuredClone(s.uniforms);
 		// A restore must reproduce the snapshot exactly, never re-adopt an initializer.
 		this.declaredDefaults = {};
-		// Keep the selected layer when it survives; only the pass falls back (to its
-		// output), so undoing "Add pass" does not jump the editor to another layer.
+		// Keep the selected layer when it survives.
 		const layer = this.layerById(this.selectedLayerId);
 		if (!layer) this.resetSelection();
 		else if (!layer.passes.some((p) => p.id === this.selectedPassId)) this.selectedPassId = layer.outputPassId;
@@ -390,9 +378,7 @@ export class Store {
 		this.emit("selectedLayer", this.selectedLayerId);
 		this.emit("selectedPass", this.selectedPassId);
 		this.emit("selectedShape", this.selectedShapeId);
-		// Source changed out from under the editor: force the code box to refresh
-		// even if it currently has focus (a normal "project" sync won't clobber a
-		// focused textarea, but an undo/redo must always be reflected).
+		// Source changed out from under the editor: force the code box to refresh even if it has focus.
 		this.emit("restore");
 		this.touch();
 	}
@@ -421,8 +407,7 @@ export class Store {
 		if (s) this.applySnapshot(s);
 	}
 
-	/** Group every project mutation until endHistoryGroup() into one undo step.
-	 * The chat wraps an agent turn in this so a whole turn reverts at once. */
+	/** Group every project mutation until endHistoryGroup() into one undo step. */
 	beginHistoryGroup(label: string): void {
 		this.history.beginGroup(label);
 	}
@@ -430,8 +415,7 @@ export class Store {
 		this.history.endGroup();
 	}
 
-	/** The chat UI edited/deleted entries in `project.messages` in place. Bump the
-	 * timestamp, refresh the project list, and persist immediately. */
+	/** The chat UI edited/deleted entries in `project.messages` in place. */
 	commitMessages(): void {
 		this.touch();
 		void this.saveProjectNow();
@@ -505,8 +489,7 @@ export class Store {
 		pass.channels[index] = next;
 		const sourceSame = prev.kind === next.kind && prev.assetId === next.assetId && prev.builtin === next.builtin && prev.passId === next.passId;
 		if (sourceSame && next.kind !== "none") {
-			// Only filter/wrap changed -> cheap update (no image reload, no clip
-			// restart, no webcam re-acquire).
+			// Only filter/wrap changed -> cheap update (no image reload, no clip restart, no webcam re-acquire).
 			this.renderer.setInputParams(passId, index, next.filter, next.wrap);
 		} else {
 			void this.applyChannel(passId, index);
@@ -621,7 +604,6 @@ export class Store {
 		return { ok: true };
 	}
 
-	/** Move a layer to a new index in the stack (0 = bottom/back). */
 	reorderLayer(layerId: string, toIndex: number): void {
 		const from = this.project.layers.findIndex((l) => l.id === layerId);
 		if (from === -1) return;
@@ -659,9 +641,7 @@ export class Store {
 		if (!layer) return;
 		layer.opacity = Math.max(0, Math.min(1, opacity));
 		this.renderer.setLayerProps(layerId, { opacity: layer.opacity });
-		// A live slider drag must NOT emit "project" -- that would rebuild the
-		// Layers panel mid-drag and destroy the slider being held. The renderer is
-		// already updated; programmatic (AI) calls emit so the panel refreshes.
+		// A live slider drag must NOT emit "project".
 		if (!live) this.emit("project", this.project);
 		this.commit(`Set "${layer.name}" opacity`, `opacity:${layerId}`, true);
 		this.touch();
@@ -722,8 +702,7 @@ export class Store {
 		const shape = makeShape(kind, { ...(shapeDef(kind)?.defaults ?? {}), ...patch });
 		layer.shapes.push(shape);
 		this.renderer.setLayerShapes(layerId, layer.shapes);
-		// Auto-select the new shape so its canvas handles appear immediately (only
-		// when it lands in the active layer; otherwise selection would be invalid).
+		// Auto-select the new shape so its canvas handles appear immediately.
 		if (layerId === this.activeLayer().id) this.selectedShapeId = shape.id;
 		this.emit("project", this.project);
 		this.emit("selectedShape", this.selectedShapeId);
@@ -738,9 +717,7 @@ export class Store {
 		if (!layer || !shape) return;
 		Object.assign(shape, patch);
 		this.renderer.setLayerShapes(layerId, layer.shapes);
-		// `coalesce` marks a live drag/type from the shape editor: skip the
-		// "project" emit so the panel isn't rebuilt mid-gesture (it would steal
-		// focus / interrupt the drag). One-shot/AI edits emit so the fields refresh.
+		// `coalesce` marks a live drag/type from the shape editor: skip the "project" emit so the panel isn't rebuilt mid-gesture.
 		if (!coalesce) this.emit("project", this.project);
 		this.commit(`Edit shape in "${layer.name}"`, `shape:${shapeId}`, coalesce);
 		this.touch();
@@ -772,8 +749,7 @@ export class Store {
 	deleteAsset(id: string): void {
 		this.assets = this.assets.filter((a) => a.id !== id);
 		db.deleteAsset(id).catch((e) => this.reportStorageError("delete asset", e));
-		// Detach from every pass channel using it (image or video), masks included,
-		// as one undo step.
+		// Detach from every pass channel using it (image or video), masks included, as one undo step.
 		this.beginHistoryGroup("Delete asset");
 		this.eachLayer((layer) => {
 			for (const p of layer.passes) {
@@ -841,7 +817,7 @@ export class Store {
 
 	/** Clone the current project (layers, passes, channels, geometry, uniforms,
 	 * conversation) into a new independent project and switch to it. Layer/pass/
-	 * shape ids are remapped so the copy shares no state with the original; image
+	 * shape ids are remapped so the copy shares no state with the original. Image
 	 * assets are referenced by id from the shared library, so they need no copy. */
 	async duplicateProject(): Promise<void> {
 		await this.saveProjectNow();
@@ -889,9 +865,9 @@ export class Store {
 	}
 
 	/** Re-read the database after an import. The current project stays current
-	 * when it still exists (a merge never yanks the user elsewhere); otherwise the
+	 * when it still exists (a merge never yanks the user elsewhere). Otherwise the
 	 * newest imported project is adopted, or a fresh one made when the import held
-	 * none, so a deleted project is never resurrected by the next autosave. */
+	 * none. A deleted project is never resurrected by the next autosave. */
 	private async reloadAfterImport(): Promise<void> {
 		this.assets = await db.loadAssets();
 		let projects = await db.loadProjects();
@@ -995,13 +971,12 @@ export class Store {
 	}
 
 	/** The default tool target layer when a tool allows an omitted layer ref: the
-	 * top layer (the visible composite). Distinct from the editor's UI selection. */
+	 * top layer (the visible composite). */
 	private topLayer(): Layer | null {
 		return this.project.layers[this.project.layers.length - 1] ?? null;
 	}
 
-	/** Resolve a layer for a TOOL by explicit ref: name, id, or stack index
-	 * (0 = bottom/back). No ref = the top layer. Never consults the UI selection. */
+	/** No ref = the top layer. Never consults the UI selection. */
 	private resolveLayerRef(ref?: string | number): Layer | null {
 		if (ref === undefined || ref === "") return this.topLayer();
 		if (typeof ref === "number" && Number.isInteger(ref)) return this.project.layers[ref] ?? null;
@@ -1013,8 +988,7 @@ export class Store {
 		}
 		const byId = this.layerById(s);
 		if (byId) return byId;
-		// Stack layers win a name match; a mask (the prompts tell the model to
-		// address it by name) is found only when no stack layer carries the name.
+		// Stack layers win a name match.
 		const n = s.toLowerCase();
 		const named = this.project.layers.find((l) => l.name.toLowerCase() === n);
 		if (named) return named;

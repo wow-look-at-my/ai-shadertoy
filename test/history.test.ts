@@ -1,6 +1,4 @@
-// Unit tests for the undo/redo History class. Run with:
-//   node --experimental-strip-types test/history.test.ts
-// DOM-free by design, so plain Node can exercise it.
+// Unit tests for the undo/redo History class.
 
 import { History } from "../src/state/history.ts";
 
@@ -20,7 +18,6 @@ const make = (initial = 0, limit = 200, coalesceMs = 100000) => new History<numb
 function spin(ms: number): void {
 	const t = Date.now();
 	while (Date.now() - t < ms) {
-		/* spin */
 	}
 }
 
@@ -51,7 +48,7 @@ function spin(ms: number): void {
 	const h = make(0);
 	h.commit(1, "a", "t1");
 	h.commit(2, "b", "t2");
-	h.undo(); // back to 1, redo available
+	h.undo(); // back to a set limit, redo available
 	eq(h.canRedo(), true, "redo available after undo");
 	h.commit(9, "c", "t3"); // new branch
 	eq(h.canRedo(), false, "new commit clears redo");
@@ -61,7 +58,7 @@ function spin(ms: number): void {
 // ---- coalescing ------------------------------------------------------------
 {
 	const h = make(0);
-	h.commit(1, "type", "code:p1", true); // first edit: pushes baseline 0
+	h.commit(1, "type", "code:p1", true);
 	h.commit(2, "type", "code:p1", true); // same tag within window: merges
 	h.commit(3, "type", "code:p1", true); // still merges
 	eq(h.undo(), 0, "coalesced edits collapse to one undo back to baseline");
@@ -124,7 +121,7 @@ function spin(ms: number): void {
 
 // ---- limit -----------------------------------------------------------------
 {
-	const h = make(0, 3); // keep only 3 entries
+	const h = make(0, 3); // keep entries
 	for (let i = 1; i <= 6; i++) h.commit(i, `c${i}`, `t${i}`);
 	let depth = 0;
 	while (h.canUndo()) {

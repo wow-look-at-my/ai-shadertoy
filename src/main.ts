@@ -1,6 +1,4 @@
 // Entry point. Sets up the renderer, store, and UI, then mounts the app.
-// The default shader is loaded from a .glsl asset (embedded into the single-file
-// bundle by ts0's fetch interceptor).
 
 import { Renderer } from "./gl/renderer.ts";
 import { Store } from "./state/store.ts";
@@ -8,9 +6,7 @@ import { createApp } from "./ui/app.ts";
 import { el } from "./util/dom.ts";
 
 async function loadText(relPath: string): Promise<string> {
-	// Pass a string (.href), not a URL object: ts0's fetch interceptor only
-	// matches string / Request inputs, so a bare URL object would bypass the
-	// embedded-asset map and hit the (nonexistent) network path.
+	// Pass a string (.href), not a URL object: ts0's fetch interceptor only matches string / Request inputs.
 	const res = await fetch(new URL(relPath, import.meta.url).href);
 	if (!res.ok) throw new Error(`failed to load ${relPath}: ${res.status}`);
 	return res.text();

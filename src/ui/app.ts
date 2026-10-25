@@ -1,9 +1,7 @@
 // Composes the whole UI: top bar and a two-column workspace -- chat on the
-// left, and a main column on the right that stacks the live preview ON TOP of
-// the editor (code / passes / uniforms / textures), separated by a draggable
-// splitter so the code gets the full width to read. On ultrawide displays the
-// main column instead lays the preview and editor side-by-side (see
-// THREE_COL_QUERY / app.css), giving a chat | preview | editor three-column view.
+// left. A main column on the right that stacks the live preview ON TOP of the
+// editor (code / passes / uniforms / textures), separated by a draggable
+// splitter. So the code gets the full width to read.
 
 import { el } from "../util/dom.ts";
 import { createTopbar } from "./topbar.ts";
@@ -40,8 +38,8 @@ export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader
 	});
 
 	// Global undo/redo. Inside a text field (code editor, chat box, name inputs)
-	// we defer to the browser's native per-character undo, which is what the user
-	// expects there; everywhere else these drive the project-level history.
+	// we defer to the browser's native per-character undo. This is what the user
+	// expects there, everywhere else these drive the project-level history.
 	window.addEventListener("keydown", (e) => {
 		const mod = e.ctrlKey || e.metaKey;
 		if (!mod || e.altKey) return;
@@ -69,13 +67,11 @@ function isTextEntry(t: HTMLElement | null): boolean {
 	return false;
 }
 
-// Must match the ultrawide media query in app.css. When it matches, .main-col is
-// a side-by-side column split and the handle resizes width; otherwise it is the
-// stacked row split and the handle resizes height.
+// Must match the ultrawide media query in app.css.
 const THREE_COL_QUERY = "(min-width: 1600px) and (min-aspect-ratio: 2 / 1)";
 
 // Resize the preview / editor split. The boundary is horizontal in the stacked
-// (default) layout and vertical in the ultrawide three-column layout, so the
+// (default) layout and vertical in the ultrawide three-column layout. The
 // handle drives --preview-h (height %) or --preview-w (width %) accordingly.
 // The canvas auto-resizes from its container each animation frame either way.
 function wireSplitter(main: HTMLElement, handle: HTMLElement): void {

@@ -1,7 +1,5 @@
-// Assembles the full WebGL2 (GLSL ES 3.00) fragment shader from the user's
-// Shadertoy-style `mainImage` body plus a fixed header of built-in and custom
-// uniforms. A `#line 1` directive is emitted immediately before the user code
-// so the driver's compile log reports user-relative line numbers.
+
+// iChannelN (any N) is a reserved input sampler name; the count is dynamic.
 
 import type { Uniform, UniformType } from "../state/types.ts";
 
@@ -23,17 +21,7 @@ export function glslType(t: UniformType): string {
 const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // iChannelN (any N) is a reserved input sampler name; the count is dynamic.
 const CHANNEL_NAME = /^iChannel\d+$/;
-// One custom-uniform declaration on its own line. Tolerates, in order: an optional
-// precision qualifier (highp/mediump/lowp); an optional `= <default>` initializer so
-// the AI can bake a default value right into the declaration; and an optional
-// trailing `// ...` or single-line `/* ... */` comment after the `;`. Groups: 1 =
-// type, 2 = name, 3 = the initializer expression (without the `=`), if any. The SAME
-// regex drives both extraction and stripping, so whatever we surface as a control is
-// exactly what we remove from the user body (the header re-declares it without the
-// initializer, which GLSL ES requires). The comment tolerance matters because people
-// naturally annotate uniforms; when a comment broke the match the declaration was
-// neither hoisted into the header (the control never appeared) nor stripped from the
-// body (re-declaring it produced a GLSL redefinition).
+// One custom-uniform declaration on its own line.
 const CUSTOM_UNIFORM_RE = /^[ \t]*uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?(float|vec2|vec3|vec4)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=[ \t]*([^;\n]*?))?[ \t]*;[ \t]*(?:\/\/[^\n]*|\/\*[^\n]*?\*\/[ \t]*)?\r?$/gm;
 
 // Comments blanked to spaces (newlines kept), so a declaration inside a block
@@ -43,7 +31,7 @@ function maskComments(source: string): string {
 }
 
 /** Every custom-uniform declaration outside a comment, as regex matches whose
- * indices address the ORIGINAL source. Extraction and stripping share this list. */
+ * indices address the ORIGINAL source. */
 function declarationMatches(source: string): RegExpMatchArray[] {
 	return [...maskComments(source).matchAll(CUSTOM_UNIFORM_RE)];
 }
@@ -55,21 +43,14 @@ export function isValidUniformName(name: string): boolean {
 	return !BUILTIN_NAMES.has(name);
 }
 
-/** Parse one GLSL numeric literal to a JS number. GLSL ES 3.00 allows a trailing
- * single-precision suffix on float literals (`1.5f`, `40.0F`, `1e3f`) that JS
- * `Number()` rejects -- without tolerating it an idiomatic baked default like
- * `uniform float u_radius = 40.0f;` parsed to NaN and the control silently fell
- * back to 0 (a "0 placeholder" the model then had to chase with set_uniforms).
- * The suffix is only stripped from decimal/exponent literals, so hex int literals
- * (which can legitimately end in f, e.g. 0x1f) are left intact for Number(). */
+/** Parse one GLSL numeric literal to a JS number. */
 function glslLiteralToNumber(s: string): number {
 	const t = s.trim();
 	return /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]?$/.test(t) ? Number(t.replace(/[fF]$/, "")) : Number(t);
 }
 
-/** Parse a GLSL initializer expression into component values, or null if it isn't
- * a plain numeric literal / vecN(...) constructor we can evaluate. Single-argument
- * vector constructors splat (vec3(0.5) -> [0.5,0.5,0.5]); too-few args pad with 0. */
+/** Parse a GLSL initializer expression into component values, or null if it isn't a
+ * plain numeric literal / vecN(...) constructor we can evaluate. */
 function parseInitializer(type: UniformType, expr: string | undefined): number[] | null {
 	if (!expr) return null;
 	const n = uniformLength(type);
@@ -88,8 +69,6 @@ function parseInitializer(type: UniformType, expr: string | undefined): number[]
 	return Array.from({ length: n }, (_, i) => nums[i] ?? 0);
 }
 
-/** Round v UP to a "nice" 1/2/5 * 10^k bound (>= 1) so a baked default lands
- * comfortably inside the slider range rather than pinned at the very end. */
 function niceCeil(v: number): number {
 	if (v <= 1) return 1;
 	const pow = Math.pow(10, Math.floor(Math.log10(v)));
@@ -106,9 +85,7 @@ function niceStep(range: number): number {
 	return Number((mult * pow).toPrecision(2));
 }
 
-/** Pick a slider range that contains every component value. Values already inside
- * 0..1 keep the canonical 0..1 / 0.01 range (unchanged from before); a baked
- * default outside it widens the range (symmetric when any component is negative). */
+/** Pick a slider range that contains every component value. */
 export function rangeForValues(values: number[]): { min: number; max: number; step: number } {
 	let lo = 0;
 	let hi = 1;
@@ -146,22 +123,10 @@ function valuesEqual(a: number[], b: number[]): boolean {
 }
 
 /** Reconcile the live control list against the uniforms DECLARED in shader source.
- * `declared` is freshly extracted from the sources (each value/range comes from its
- * `= <default>` initializer, or 0 + the canonical 0..1 range when bare). `previous`
- * is the current control list, whose values may have been moved by a slider drag or
- * a set_uniforms call. `lastDefaults` records, per name, the declared default seen on
- * the LAST reconcile, so a deliberately CHANGED initializer can be told apart from an
- * unchanged one.
- *
- * Per declared uniform:
- *  - not previously present  -> take the declaration as-is (its baked default + range).
- *  - its inline initializer changed since last time -> adopt the new default and refit
- *    the range (the author rewrote the bake; honor it -- this is what makes editing a
- *    `= <default>` actually take effect instead of being silently preserved at the old
- *    value).
- *  - otherwise -> keep the live value/range/label so a slider edit / set_uniforms value
- *    survives an unrelated recompile; only the type + length follow the declaration.
- * A uniform whose declaration was removed from source simply drops out (not in `declared`). */
+ * `previous` is the current control list, whose values may have been moved by a
+ * slider drag or a set_uniforms call. `lastDefaults` records, per name, the declared
+ * default seen on the LAST reconcile, so a deliberately CHANGED initializer can be
+ * told apart from an unchanged one. */
 export function reconcileUniforms(declared: Uniform[], previous: Uniform[], lastDefaults: Record<string, number[]>): Uniform[] {
 	const prevByName = new Map(previous.map((u) => [u.name, u]));
 	return declared.map((decl) => {
@@ -189,17 +154,17 @@ function stripUniformDeclarations(source: string): string {
 	return out + source.slice(at);
 }
 
-/** Format a number as a GLSL float literal: always carries a decimal point and
- * trims float noise (e.g. 0.1 + 0.2). The inverse of parseInitializer's Number(). */
+/** The inverse of parseInitializer's Number(). */
 function formatGlslNumber(v: number): string {
 	if (!Number.isFinite(v)) return "0.0";
 	const s = String(Number(v.toPrecision(6)));
 	return /[.eE]/.test(s) ? s : `${s}.0`;
 }
 
-/** Serialize one uniform as a GLSL declaration with its CURRENT value baked in as
- * an `= <default>` initializer -- exactly the form extractUniformDeclarations reads
- * back, so the output round-trips (a `color` becomes a `vec3`, matching glslType). */
+/** Serialize one uniform as a GLSL declaration with its CURRENT value baked in as an
+ * `= <default>` initializer -- exactly the form extractUniformDeclarations reads
+ * back. Do this so the output round-trips (a `color` becomes a `vec3`, matching
+ * glslType). */
 export function formatUniformDeclaration(u: Uniform): string {
 	const type = glslType(u.type);
 	const n = uniformLength(u.type);
@@ -208,9 +173,8 @@ export function formatUniformDeclaration(u: Uniform): string {
 	return `uniform ${type} ${u.name} = ${init};`;
 }
 
-/** Serialize every uniform as newline-separated GLSL declarations (current values
- * baked in) -- powers the Uniforms tab "Copy" button. Round-trips through
- * extractUniformDeclarations, so the copied text can be pasted straight into a shader. */
+/** Serialize every uniform as newline-separated GLSL declarations (current
+ * values baked in) -- powers the Uniforms tab "Copy" button. */
 export function formatUniformDeclarations(uniforms: Uniform[]): string {
 	return uniforms.map(formatUniformDeclaration).join("\n");
 }
@@ -231,8 +195,6 @@ const BUILTIN_NAMES = new Set([
 
 function header(uniforms: Uniform[], channelCount: number): string {
 	// Dedupe by name: emitting the same `uniform` twice is a GLSL redefinition.
-	// The source-extracted list is already unique, but set_uniforms metadata can
-	// carry a duplicate, so guard here rather than trusting the caller.
 	const seen = new Set<string>();
 	const customDecls = uniforms
 		.filter((u) => {
@@ -242,8 +204,7 @@ function header(uniforms: Uniform[], channelCount: number): string {
 		})
 		.map((u) => `uniform ${glslType(u.type)} ${u.name};`)
 		.join("\n");
-	// Declare exactly the input samplers this pass has (iChannel0..N-1) plus a
-	// matching iChannelResolution[] -- no arbitrary cap, no unused declarations.
+	// Declare exactly the input samplers this pass has (iChannel0..N-1) plus a matching iChannelResolution[] -- no arbitrary cap, no unused declarations.
 	const channelDecls = channelCount > 0 ? Array.from({ length: channelCount }, (_, i) => `uniform sampler2D iChannel${i};`).join("\n") + `\nuniform vec3 iChannelResolution[${channelCount}];\n` : "";
 	return `#version 300 es
 precision highp float;

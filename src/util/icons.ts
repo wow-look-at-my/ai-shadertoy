@@ -1,19 +1,12 @@
-// Icon factory. The actual glyphs (SVG path data) live in the stylesheet
-// (src/styles/app.css) as currentColor-tinted CSS masks: a base `.glyph` plus
-// one `.icon-<name>` per glyph. This file holds only the list of NAMES and
-// builds a <span> wearing the right mask class -- no SVG path data in TypeScript.
-//
-// To add a glyph: add its name here AND a `.icon-<name>` mask rule in app.css
-// (see the existing rules; they are generated from @mdi/js path data, Apache-2.0).
+// Icon factory. The actual glyphs (SVG path data) live in the stylesheet (src/styles/app.css) as currentColor-tinted CSS masks: a base `.glyph` plus one `.icon-<name>` per glyph.
 
-// The available glyph names. Keep in lockstep with the `.icon-<name>` rules in
-// app.css. Order is irrelevant.
+// The available glyph names. Keep in lockstep with the `.icon-<name>` rules in app.css. Order is irrelevant.
 const ICON_NAMES = ["pause", "play", "restart", "download", "camera", "wrench", "check", "close", "refresh", "eye", "eyeOff", "chevronUp", "chevronDown", "mask", "undo", "redo", "pencil", "trash", "compress", "aspectRatio"] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
 
 export interface IconOpts {
-	/** Edge length in px (the glyph is square). Defaults to 18. */
+	/** Edge length in px (the glyph is square). Defaults to a set limit. */
 	size?: number;
 	/** Extra class(es) added alongside `glyph icon-<name>`. */
 	class?: string;

@@ -17,16 +17,10 @@ export interface SettingsModal {
 export function createSettings(store: Store): SettingsModal {
 	const provider = el("select", {}, ...(Object.keys(PROVIDERS) as ProviderId[]).map((id) => el("option", { value: id }, PROVIDERS[id].label)));
 	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
-	// Model id: free-text combobox backed by <datalist>. Autofill/capitalize/
-	// correct/spellcheck off so a model id is never mangled or flagged. The key
-	// fields below are plain text (not type=password), so the browser no longer
-	// mistakes this for a login username and won't pop a credential dropdown here.
+	// Model id: free-text combobox backed by <datalist>. Autofill/capitalize/ correct/spellcheck off so a model id is never mangled or flagged.
 	const model = el("input", { type: "text", attrs: { list: "model-presets", placeholder: "model id", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const modelList = el("datalist", { id: "model-presets" });
-	// API keys are secrets but NOT browser passwords. A type=password field drags
-	// in the whole password-manager apparatus: save prompts, strong-password
-	// suggestions, and the credential dropdown that latched onto the model combobox
-	// above. Plain text inputs with autofill/suggestions off keep the browser out.
+	// API keys are secrets but NOT browser passwords.
 	const apiKey = el("input", { type: "text", placeholder: "sk-... / your API key", attrs: { autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
@@ -54,9 +48,7 @@ export function createSettings(store: Store): SettingsModal {
 		proxyUrl: proxyUrl.value.trim() || DEFAULT_SETTINGS.proxyUrl,
 	});
 
-	// Model combobox. The <datalist> is the native combobox: it suggests
-	// completions as you type while still accepting any free-text value. We seed
-	// it with static presets and merge in whatever the provider's /models lists.
+	// Model combobox.
 	let fetchedModels: string[] = [];
 	const modelRefreshBtn = el("button", { class: "btn icon", type: "button", title: "Fetch available models from the provider" }, icon("refresh"));
 	const modelStatus = el("span", { class: "hint" });
@@ -66,8 +58,7 @@ export function createSettings(store: Store): SettingsModal {
 		const merged = [...new Set([...fetchedModels, ...MODEL_PRESETS[p]])];
 		modelList.replaceChildren(...merged.map((m) => el("option", { value: m })));
 	};
-	// OpenRouter and Ollama Cloud serve their model list unauthenticated, so the
-	// combobox can fill itself before a key is entered.
+	// OpenRouter and Ollama Cloud serve their model list unauthenticated, so the combobox can fill itself before a key is entered.
 	const canFetchModels = () => apiKey.value.trim().length > 0 || (provider.value === "openai" && baseUrl.value.trim().length > 0) || !PROVIDERS[provider.value as ProviderId].needsKeyForModels;
 	const refreshModels = async () => {
 		if (!canFetchModels()) {
@@ -89,14 +80,13 @@ export function createSettings(store: Store): SettingsModal {
 	};
 	const refreshModelsDebounced = debounce(() => void refreshModels(), 700);
 	modelRefreshBtn.addEventListener("click", () => void refreshModels());
-	// `change`, not `input`: a fetch per keystroke would send every prefix of the
-	// key to the provider (401 noise, partial secret on the wire).
+	// `change`, not `input`: a fetch per keystroke would send every prefix of the key to the provider.
 	apiKey.addEventListener("change", refreshModelsDebounced);
 	baseUrl.addEventListener("change", refreshModelsDebounced);
 
 	// A provider whose endpoint sends no CORS headers cannot be called directly
-	// from a page, so picking it ticks the proxy on rather than leaving the user
-	// to find the toggle after a failed request. Ticking the real checkbox (and
+	// from a page. Picking it ticks the proxy on rather than leaving the user to
+	// find the toggle after a failed request. Ticking the real checkbox (and
 	// saying why) keeps it visible and still overridable.
 	const applyProxyRequirement = () => {
 		const info = PROVIDERS[provider.value as ProviderId];
@@ -108,9 +98,7 @@ export function createSettings(store: Store): SettingsModal {
 		const p = provider.value as ProviderId;
 		fetchedModels = []; // provider changed; the previous list no longer applies
 		applyModelOptions();
-		// The old provider's model id is left in the box and would fail on the new
-		// one. Replace it only when it is some provider's preset -- an id the user
-		// typed is theirs and stays put.
+		// The provider's model id is left in the box and would fail on the new one.
 		const current = model.value.trim();
 		const isSomePreset = Object.values(MODEL_PRESETS).some((list) => list.includes(current));
 		if (isSomePreset && !PROVIDERS[p].models.includes(current)) model.value = PROVIDERS[p].models[0];

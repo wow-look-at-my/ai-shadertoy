@@ -1,13 +1,4 @@
 // Unit tests for asset-name sanitization and by-name matching.
-// Run with: node --experimental-strip-types test/assets.test.ts
-//
-// Motivated by a chat session where an uploaded macOS screenshot was named
-// "Screenshot ... 11.04.29<U+202F>PM" -- the narrow no-break space looks like a
-// plain space in list_assets, so the model typed a plain space and connect_pins
-// could never match it, forcing it to dig up the raw asset id. We now sanitize
-// the name at upload AND normalize at match time (for assets stored earlier).
-//
-// Code points are built with String.fromCharCode so this source stays ASCII.
 
 import { sanitizeAssetName } from "../src/util/media.ts";
 import { findAsset, normalizeName } from "../src/ai/tools/connect_pins.ts";

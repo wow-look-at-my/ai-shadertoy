@@ -1,10 +1,5 @@
 // Tool registry entry point. Importing this module registers every tool (each
 // tool file self-registers on import). Import order = registration/offer order.
-//
-// The surface is GENERIC: four verbs (read / create_object / destroy_object /
-// edit_object) that target any layer/pass/shape by explicit ref, plus the kept
-// "good general" tools. The advertised set is byte-stable across a conversation
-// (the only conditional is the stable per-session image-generation gate).
 
 import "./read.ts";
 import "./create_object.ts";

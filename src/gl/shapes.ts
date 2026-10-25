@@ -1,11 +1,4 @@
-// Shape registry: the single list of geometry primitives the editor knows about.
-// Each entry carries a kind id, a display label, and the default parameters used
-// when a shape of that kind is created. The UI pickers and the AI tools both
-// enumerate from here, so a new primitive is one entry in this array.
-//
-// IMPORTANT: the ARRAY ORDER is the integer kind index the geometry shader
-// switches on (see shaders/shape.frag.glsl -- `shapeDistance(kind, ...)`). To add
-// a shape, append here AND add the matching `case` (same index) to that shader.
+// Shape registry: the list of geometry primitives the editor knows about.
 
 import type { Shape, ShapeKind } from "../state/types.ts";
 

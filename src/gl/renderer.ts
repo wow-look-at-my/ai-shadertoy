@@ -1,12 +1,7 @@
-// WebGL2 multi-pass, multi-LAYER renderer. The document is a back-to-front stack
-// of layers; each layer is its own graph of passes (each pass renders to its own
-// ping-ponged offscreen texture, so passes can sample one another and their own
-// previous frame for feedback). Layers render bottom-up: each layer sees the
-// composite of every layer below it as its "under" input and its own rasterized
-// geometry (real instanced quad/circle meshes) as its "geometry" input, and its
-// output pass produces the new composite. The topmost visible layer's composite
-// is blitted to the screen. Also does screenshot capture (for the user and as
-// visual feedback to the AI).
+// WebGL2 multi-pass, multi-LAYER renderer. The document is a back-to-front
+// stack of layers; each layer is its own graph of passes (each pass renders
+// to its own ping-ponged offscreen texture, so passes can sample one another
+// and their own previous frame for feedback).
 
 import type { Channel, Layer, Pass, PassFormat, Shape, Uniform } from "../state/types.ts";
 import { assembleFragment, glslType } from "./wrapper.ts";
@@ -62,8 +57,7 @@ interface ChannelSlot {
 	height: number;
 	/** video/webcam slots: the live source (owns its own texture, updated per frame). */
 	dyn: DynamicTexture | null;
-	/** Identity of the dynamic source (asset id for video, "webcam") so re-applying
-	 * the same binding doesn't reload the clip / re-acquire the camera. */
+	/** Identity of the dynamic source (asset id for video, "webcam") so re-applying the same binding doesn't reload the clip / re-acquire the camera. */
 	dynKey?: string;
 }
 
@@ -127,18 +121,14 @@ export class Renderer {
 	private floatColorBuffer = false;
 	private floatLinear = false;
 	private maxTextureUnits = 16;
-	// One sampler object per (filter, wrap) pair. Sampling state lives on the
-	// texture UNIT, so two slots bound to the same texture keep their own params.
+	// One sampler object per (filter, wrap) pair.
 	private samplers = new Map<string, WebGLSampler>();
-	private dt = 1 / 60; // seconds between the last two loop frames
-	// The presented composite's output target, captured each renderFrame (the
-	// topmost visible layer's output pass) so HDR/EXR export can read it back.
+	private dt = 1 / 60; // seconds between the last loop frames
+	// The presented composite's output target, captured each renderFrame (the topmost visible layer's output pass).
 	private lastFinal: { fbo: WebGLFramebuffer; width: number; height: number; format: PassFormat } | null = null;
 
 	private renderScale = 1;
-	// "Square pixels": report a square iResolution (the short side) to user shaders
-	// so the common `uv = fragCoord/iResolution.xy` has equal x/y scale (circles
-	// stay round). The framebuffer is unchanged, so the image still fills the canvas.
+	// "Square pixels": report a square iResolution (the short side) to user shaders so the common `uv = fragCoord/iResolution.xy` has equal x/y scale.
 	private squarePixels = false;
 	private startTime = performance.now();
 	private pausedAt = 0;
@@ -168,8 +158,7 @@ export class Renderer {
 		// Float render targets (HDR passes) + linear filtering of them, when available.
 		this.floatColorBuffer = !!gl.getExtension("EXT_color_buffer_float");
 		this.floatLinear = !!gl.getExtension("OES_texture_float_linear");
-		// Max input samplers per pass (WebGL2 guarantees >= 16). The data model
-		// also clamps to MAX_INPUTS; this is the hardware ceiling.
+		// Max input samplers per pass (WebGL2 guarantees >= 16).
 		this.maxTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as number;
 
 		this.vao = gl.createVertexArray()!;
@@ -253,7 +242,7 @@ export class Renderer {
 	// ---- document (layers + passes) -----------------------------------------
 
 	/** (Re)build the whole document: reconcile layers and their passes, compile
-	 * every pass, (re)allocate targets + per-layer geometry, and compute each
+	 * every pass, (re)allocate targets + per-layer geometry. It compute each
 	 * layer's topological render order. Returns a per-pass compile result keyed by
 	 * pass id (across all layers). */
 	setDocument(layers: Layer[], uniforms: Uniform[]): Map<string, CompileResult> {
@@ -291,7 +280,7 @@ export class Renderer {
 	}
 
 	/** Reconcile one layer (and its mask, recursively): create/update its
-	 * RenderLayer + RenderPasses, compile, (re)allocate geometry + mask targets,
+
 	 * and compute the topological order. Returns the RenderLayer. */
 	private reconcileLayer(spec: Layer, results: Map<string, CompileResult>): RenderLayer {
 		let rl = this.layersById.get(spec.id);
@@ -327,8 +316,7 @@ export class Renderer {
 		}
 		rl.order = topoOrder(spec.passes).map((id) => rl!.passes.get(id)!).filter(Boolean);
 
-		// Mask layer (rendered standalone). Its output is available to this layer's
-		// graph as kind:"mask"; the graph decides how to apply it.
+		// Mask layer (rendered standalone).
 		rl.mask = spec.mask ? this.reconcileLayer(spec.mask, results) : null;
 		return rl;
 	}
@@ -572,8 +560,8 @@ export class Renderer {
 		this.renderFrame();
 	}
 
-	/** Identity of a slot's live source (asset id for video, "webcam"), or null if
-	 * it isn't currently a dynamic source. Lets the store skip a redundant reload. */
+	/** Identity of a slot's live source (asset id for video, "webcam"), or null
+	 * if it isn't a dynamic source. */
 	dynamicKey(passId: string, index: number): string | null {
 		const s = this.slot(passId, index);
 		return s && s.dyn ? (s.dynKey ?? null) : null;
@@ -604,7 +592,7 @@ export class Renderer {
 	// ---- playback -----------------------------------------------------------
 
 	// A paused renderer draws nothing on its own, so show a clip's newly decoded
-	// frame (first load, or a reset() seek) as soon as it lands.
+	// frame (first load, or a reset() seek) as soon. As it lands.
 	private onDynamicFrame = (): void => {
 		if (this.paused) this.renderFrame();
 	};
@@ -742,7 +730,7 @@ export class Renderer {
 			if (!out) continue; // layer produced nothing this frame
 			finalTex = out.tex;
 			this.lastFinal = { fbo: out.fbo, width: out.width, height: out.height, format: out.format };
-			underTex = out.tex; // becomes the next layer's "under"
+			underTex = out.tex;
 			underFloat = this.isFloatFormat(out.format);
 		}
 
@@ -756,10 +744,7 @@ export class Renderer {
 			gl.clear(gl.COLOR_BUFFER_BIT);
 		}
 
-		// Only a loop frame advances ping-pong. An out-of-loop redraw (a slider
-		// drag, a rebind, a screenshot) re-reads the same `prev` and rewrites the
-		// same `curr`, so a paused simulation stays frozen and a playing one steps
-		// once per tick, not once per edit.
+		// Only a loop frame advances ping-pong.
 		if (fromLoop) for (const p of this.allPasses.values()) if (rendered.has(p.id)) p.cur = (p.cur === 0 ? 1 : 0) as 0 | 1;
 
 		if (fromLoop && this.onStats) this.onStats(this.stats());
@@ -770,7 +755,7 @@ export class Renderer {
 	}
 
 	/** The sampler object for a slot's filter/wrap. Linear filtering of a float
-	 * texture needs OES_texture_float_linear; without it the unit falls back to
+	 * texture needs OES_texture_float_linear. Without it the unit falls back to
 	 * nearest so the texture stays complete instead of sampling black. */
 	private sampler(slot: ChannelSlot, isFloat: boolean): WebGLSampler {
 		const gl = this.gl;
@@ -823,12 +808,7 @@ export class Renderer {
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.curr(p).fbo);
 		gl.viewport(0, 0, p.width, p.height);
 
-		// Square-pixels mode feeds a square iResolution (the short side) so the usual
-		// uv = fragCoord/iResolution.xy is isotropic (circles stay round). To keep the
-		// content CENTERED (not anchored bottom-left) when it tiles past the short
-		// side, we also shift the fragCoord the shader sees by ai_fragOffset =
-		// (target - side)/2, so uv = 0.5 lands at the true canvas centre. iMouse is
-		// shifted by the same offset so it stays consistent with fragCoord.
+		// Square-pixels mode feeds a square iResolution (the short side) so the usual uv = fragCoord/iResolution.xy is isotropic.
 		const resSide = this.squarePixels ? Math.min(p.width, p.height) : 0;
 		const offX = resSide > 0 ? (p.width - resSide) / 2 : 0;
 		const offY = resSide > 0 ? (p.height - resSide) / 2 : 0;
@@ -841,9 +821,7 @@ export class Renderer {
 		this.setInt1(p, "iFrame", this.frame);
 		const mx = this.mouse.x - offX;
 		const my = H - this.mouse.y - offY;
-		// zw carry the click position with the button state in their sign
-		// (Shadertoy convention), so a click left of/below the centred square is
-		// clamped to 0 rather than flipping the sign and reading as "not pressed".
+		// zw carry the click position with the button state in their sign (Shadertoy convention).
 		const dx = Math.max(0, this.mouse.downX - offX);
 		const dy = Math.max(0, H - this.mouse.downY - offY);
 		this.setFloat4(p, "iMouse", mx, my, (this.mouse.pressed ? 1 : -1) * dx, (this.mouse.everDown ? 1 : -1) * dy);
@@ -929,7 +907,7 @@ export class Renderer {
 		gl.bindVertexArray(this.vao);
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, tex);
-		gl.bindSampler(0, null); // a pass's sampler on unit 0 would otherwise win
+		gl.bindSampler(0, null); // a pass's sampler on the first unit would otherwise win
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 		const lt = gl.getUniformLocation(this.presentProgram, "uTex");
@@ -988,9 +966,7 @@ export class Renderer {
 		const ctx = off.getContext("2d")!;
 		ctx.drawImage(this.canvas, 0, 0, w, h);
 		const dataUrl = off.toDataURL(mime, quality);
-		// toDataURL silently falls back to PNG on browsers that can't encode the
-		// requested type, so derive mediaType from the bytes actually produced —
-		// a mediaType/payload mismatch would make the vision API reject the image.
+		// toDataURL silently falls back to PNG on browsers that can't encode the requested type.
 		const mediaType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? mime;
 
 		const img = ctx.getImageData(0, 0, w, h).data;
@@ -1031,9 +1007,7 @@ export class Renderer {
 		if (!f || !this.isFloatFormat(f.format)) return null;
 		const gl = this.gl;
 		const { fbo, width: w, height: h } = f;
-		// RGBA/FLOAT is the one readback pair EXT_color_buffer_float guarantees for
-		// a float attachment; RGBA/HALF_FLOAT is only accepted where it happens to be
-		// the implementation's preferred pair, and a refused read leaves zeros.
+		// RGBA/FLOAT is the readback pair EXT_color_buffer_float guarantees for a float attachment.
 		const raw = new Float32Array(w * h * 4);
 		gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
 		gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, raw);

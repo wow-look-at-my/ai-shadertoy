@@ -1,14 +1,8 @@
-// Automatic layout for the passes render graph. The graph is a DAG: data flows
-// from a dependency to the pass that samples it (kind:"pass" channel), so a pass
-// always sits to the RIGHT of the passes it reads (a pass sampling its own output
-// is feedback -- a self-edge we ignore for layout). Node positions are DERIVED
-// from this structure every render; passes carry no stored coordinates and the
-// user cannot drag nodes around. DOM-free and pure so it can be unit-tested.
+// Automatic layout for the passes render graph.
 
 export interface GraphNode {
 	id: string;
-	/** Ids of passes this node samples (kind:"pass"). Self-edges/unknown ids are
-	 * tolerated -- they're filtered out here. */
+	/** Ids of passes this node samples (kind:"pass"). Self-edges/unknown ids are tolerated -- they're filtered out here. */
 	deps: string[];
 	/** Rendered node height in px (varies with the input-pin count). */
 	height: number;
@@ -29,16 +23,11 @@ export interface LayoutOpts {
 export interface LayoutResult {
 	/** Real node id -> top-left position. */
 	pos: Map<string, NodePos>;
-	/** For an edge that spans MORE THAN ONE column, the ordered routing waypoints
-	 * the wire should thread so it doesn't cross the nodes in between -- TWO per
-	 * skipped column (the column's left and right edge, at a clear lane height), so
-	 * the wire runs flat across each spanned column and bends only in the gaps.
-	 * Keyed `${from}>${to}`. Single-column (adjacent) edges get no entry. */
+	/** For an edge that spans MORE THAN ONE column, the ordered routing waypoints the wire should thread so it doesn't cross the nodes in between. */
 	routes: Map<string, NodePos[]>;
 }
 
-/** Vertical lane reserved in a column for one edge routed THROUGH it (a "dummy
- * node" in layered-graph terms). Small so routing lanes stay compact. */
+/** Vertical lane reserved in a column for one edge routed THROUGH it (a "dummy node" in layered-graph terms). */
 const LANE_H = 12;
 
 function push<K, V>(m: Map<K, V[]>, k: K, v: V): void {
@@ -49,9 +38,9 @@ function push<K, V>(m: Map<K, V[]>, k: K, v: V): void {
 
 /** Lay the DAG out left-to-right in dependency layers (columns). Returns each real
  * node's top-left position plus routing waypoints for any edge that spans more
- * than one column. Columns are longest-path depth from a root; edges spanning >1
+ * than one column. Columns are longest-path depth from a root. Edges spanning >1
  * column are broken by per-column lane "dummies" so they (a) reserve vertical
- * space and (b) get ordered alongside the real nodes -- the barycenter pass then
+ * space and (b) get ordered alongside the real nodes. The barycenter pass then
  * keeps both real nodes and routed edges from crossing. */
 export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult {
 	const { nodeWidth, hGap, vGap, margin } = opts;
@@ -61,10 +50,7 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 
 	const ids = new Set(nodes.map((n) => n.id));
 	const order = new Map(nodes.map((n, i) => [n.id, i] as const)); // stable original index
-	// Keep only real, existing, non-self dependencies, then drop the back-edges
-	// of any cycle (mutual feedback) so the graph is a DAG: a cycle would
-	// otherwise ratchet its members' columns up on every relaxation round and
-	// leave empty columns on the left.
+	// Keep only real, existing, non-self dependencies, then drop the back-edges of any cycle (mutual feedback) so the graph is a DAG.
 	const deps = new Map(nodes.map((n) => [n.id, n.deps.filter((d) => d !== n.id && ids.has(d))] as const));
 	dropBackEdges(nodes, deps);
 
@@ -84,9 +70,8 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 	}
 	const maxCol = Math.max(...nodes.map((n) => col.get(n.id)!));
 
-	// --- augment with lane "dummies": an edge crossing intermediate columns
-	// becomes a chain of adjacent-column links, one lane node per skipped column.
-	// Real nodes and lanes are ordered and stacked together. ---
+	// augment with lane "dummies": an edge crossing intermediate columns becomes
+	// a chain of adjacent-column links, one lane node per skipped column.
 	interface Slot {
 		id: string;
 		col: number;
@@ -132,8 +117,7 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 	for (const s of slots) columns[s.col].push(s);
 	for (const c of columns) c.sort((a, b) => a.order - b.order);
 
-	// --- order within columns: barycenter sweeps (alternating direction) over the
-	// augmented adjacency, to reduce crossings of both real edges and routed lanes. ---
+	// order within columns: barycenter sweeps (alternating direction) over the augmented adjacency.
 	const indexMap = (column: Slot[]): Map<string, number> => new Map(column.map((s, i) => [s.id, i] as const));
 	const sortCol = (column: Slot[], adj: Map<string, string[]>, adjIdx: Map<string, number>): void => {
 		const key = new Map<string, number>();
@@ -154,11 +138,7 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 		}
 	}
 
-	// --- coordinates: stack each column, centering shorter columns vertically.
-	// Real slots yield a top-left. A lane slot yields TWO waypoints -- one at each
-	// side of the column -- so the wire runs HORIZONTALLY across the column at the
-	// (node-free) lane height and only bends in the gaps between columns, never
-	// clipping the node it routes past. ---
+	// coordinates: stack each column, centering shorter columns vertically. Real slots yield a top-left.
 	const colHeight = columns.map((c) => c.reduce((s, sl) => s + sl.height, 0) + Math.max(0, c.length - 1) * vGap);
 	const tallest = Math.max(0, ...colHeight);
 	const laneAt = new Map<string, [NodePos, NodePos]>();
@@ -181,10 +161,10 @@ export function layoutGraph(nodes: GraphNode[], opts: LayoutOpts): LayoutResult 
 
 /** Remove the back-edges of every cycle in `deps` (in place). A depth-first walk
  * in stable node order marks an edge as "back" when it points at a node still on
- * the current path; those edges read the previous frame at draw time, so the
+ * the current path. Those edges read the previous frame at draw time, so the
  * layout treats them as non-edges. */
 function dropBackEdges(nodes: GraphNode[], deps: Map<string, readonly string[]>): void {
-	const state = new Map<string, 1 | 2>(); // 1 = on the path, 2 = finished
+	const state = new Map<string, 1 | 2>();
 	const visit = (id: string): void => {
 		state.set(id, 1);
 		const kept: string[] = [];

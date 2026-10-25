@@ -1,6 +1,4 @@
-// Minimal hyperscript-style DOM helpers. No framework: just typed wrappers
-// around document.createElement so the UI code stays declarative without a
-// virtual DOM or a runtime dependency.
+// Minimal hyperscript-style DOM helpers.
 
 export type Child = Node | string | number | null | undefined | false;
 

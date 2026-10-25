@@ -1,8 +1,4 @@
-// Unit test for the set_uniforms tool's PATCH (merge) semantics. The tool used to
-// replace the whole uniform list, so naming one uniform wiped every other one back
-// to its bare default (0) -- a black-screen footgun. It must now update only the
-// named uniforms and leave the rest untouched. DOM-free:
-//   node --experimental-strip-types test/set_uniforms.test.ts
+// Unit test for the set_uniforms tool's PATCH (merge) semantics.
 
 import "../src/ai/tools/set_uniforms.ts"; // self-registers the tool
 import { getTool } from "../src/ai/tools/registry.ts";
@@ -37,7 +33,6 @@ function fakeCtx(uniforms: Uniform[]): { ctx: ToolContext; captured: () => Unifo
 	return { ctx, captured: () => last };
 }
 
-// ---- GOTCHA 1: naming one uniform must NOT reset the others -----------------
 {
 	const current: Uniform[] = [
 		{ name: "u_a", type: "float", value: [0.5], min: 0, max: 1, step: 0.01 },
@@ -63,7 +58,7 @@ function fakeCtx(uniforms: Uniform[]): { ctx: ToolContext; captured: () => Unifo
 	near(val(merged, "u_new")[0], 0.9, "the newly named uniform is included");
 }
 
-// ---- value length is normalized to the type (vec3 needs three components) ---
+// ---- value length is normalized to the type (vec3 needs components) ---
 {
 	const { ctx, captured } = fakeCtx([]);
 	tool!.execute(ctx, { uniforms: [{ name: "u_t", type: "vec3", value: [0.5] }] });

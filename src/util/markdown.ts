@@ -1,16 +1,10 @@
-// A deliberately tiny Markdown renderer. It is NOT a full CommonMark
-// implementation -- just enough to make assistant chat messages readable:
-// fenced code blocks, headings, lists, inline code, bold/italic and safe
-// links. All raw text is HTML-escaped first, so model output can never inject
-// markup. Code blocks are emitted as <pre data-lang="..."> so the chat view
-// can attach "Copy"/"Apply" buttons to them. `markdownToHtml` is pure (no DOM)
-// so the parser is unit-testable; `renderMarkdown` wraps it in an element.
+// A deliberately tiny Markdown renderer. All raw text is HTML-escaped first,
+// so model output can never inject markup.
 
 import { escapeHtml } from "./misc.ts";
 import { el } from "./dom.ts";
 
 // Placeholders keep already-rendered spans (code, links) out of later passes.
-// U+0000 never occurs in model output, so it cannot collide with text.
 const HOLD = "\u0000";
 
 function inline(text: string): string {
@@ -22,8 +16,7 @@ function inline(text: string): string {
 	let s = escapeHtml(text);
 	// Inline code first so its contents are not further transformed.
 	s = s.replace(/`([^`]+)`/g, (_, c: string) => hold(`<code>${c}</code>`));
-	// Explicit links before autolinks, so the autolink pass cannot swallow the
-	// `)` that closes a markdown link.
+	// Explicit links before autolinks, so the autolink pass cannot swallow the `)` that closes a markdown link.
 	s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label: string, url: string) => hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`));
 	s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre: string, url: string) => pre + hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`));
 	s = s.replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>");
@@ -85,8 +78,7 @@ export function markdownToHtml(text: string): string {
 			continue;
 		}
 
-		// Paragraph: consume until a blank line or a block start. The first line is
-		// always taken, so the loop makes progress on every input.
+		// Paragraph: consume until a blank line or a block start.
 		const para: string[] = [line];
 		i++;
 		while (i < lines.length && lines[i].trim() !== "" && !FENCE.test(lines[i]) && !HEADING.test(lines[i]) && !BULLET.test(lines[i]) && !NUMBERED.test(lines[i])) {

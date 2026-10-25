@@ -1,4 +1,4 @@
-// Chat panel. Renders the conversation and drives the agent loop: a user
+// Chat panel. Renders the conversation and drives the agent loop. A user
 // message kicks off runAgent, whose streamed text, tool calls, and tool results
 // (including screenshots) are rendered here as they arrive.
 
@@ -56,16 +56,13 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	stopBtn.hidden = true;
 
 	let abort: AbortController | null = null;
-	// True only while an agent turn is running (runTurn) — i.e. there is a tool loop
-	// to steer. Compaction also goes busy but can't be steered, so we don't queue
-	// into it.
+	// True only while an agent turn is running (runTurn) — i.e. there is a tool loop to steer.
 	let steerable = false;
-	// Messages the user queued while the agent was busy (steering). Each keeps its
-	// already-rendered DOM node so Stop can remove the ones not yet picked up.
+	// Messages the user queued while the agent was busy (steering).
 	let steerQueue: Array<{ msg: Message; node: HTMLElement }> = [];
 
-	// Hand the queued steering messages to the running agent (it splices them into
-	// the conversation). They are already rendered, so this just transfers ownership.
+	// Hand the queued steering messages to the running agent (it splices them
+	// into the conversation).
 	function takeSteering(): Message[] {
 		if (!steerQueue.length) return [];
 		const msgs = steerQueue.map((s) => s.msg);
@@ -73,8 +70,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		return msgs;
 	}
 
-	// Stop: abort the current turn and drop any steering the agent hasn't picked up
-	// yet (removing its un-sent bubbles), so "Stop" really means stop.
+	// Stop: abort the current turn and drop any steering the agent hasn't picked
+	// up yet (removing its un-sent bubbles), so "Stop" means stop.
 	function stopRun(): void {
 		for (const { node } of steerQueue) node.remove();
 		steerQueue = [];
@@ -83,20 +80,16 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let streamingText: HTMLElement | null = null;
 	let thinkingEl: HTMLElement | null = null; // live extended-thinking block for the turn
 	let pending = ""; // assistant text received but not yet painted
-	let pumpId = 0; // rAF id for the typewriter pump (0 = idle)
+	let pumpId = 0;
 	let shownProjectId = store.project.id;
 
-	// usage / cost indicator: tokens/sec + context % (every model), and cost this
-	// turn + this session (when the model's pricing is known). Fed by onUsage.
+	// usage / cost indicator: tokens/sec + context % (every model), and cost this turn + this session.
 	const statsBar = el("div", { class: "chat-stats", hidden: true });
 	let costTotal = 0;
 	let costTurn = 0;
 	let lastTps = 0;
 	let lastCtxPct = 0;
-	// Cached share of the last request's input prompt, ONLY from the server-reported
-	// cache count: a number (incl. 0) is a real server figure; `undefined` means the
-	// endpoint didn't report cache info, so we show "n/a" rather than a guess. Never
-	// estimated.
+	// Cached share of the last request's input prompt, ONLY from the server-reported cache count: a number (incl.
 	let lastCachePct: number | undefined;
 	let haveStats = false;
 
@@ -116,7 +109,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), item(ctxLabel, "Share of the model's context window used (last request)")];
 		// Tri-state: undefined => the endpoint reported no cache count, so we hide
 		// the indicator entirely (never a guessed value). A real number — including
-		// an explicit server-reported 0 — is shown verbatim.
+		// an explicit the first server-reported — is shown verbatim.
 		if (lastCachePct !== undefined) {
 			const cacheLabel = `${lastCachePct < 10 ? lastCachePct.toFixed(1) : lastCachePct.toFixed(0)}% cached`;
 			parts.push(sep(), item(cacheLabel, "Share of the input prompt served from the prompt cache (last request)"));
@@ -140,10 +133,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		// `steerable` is set before setBusy(true) in runTurn, so it's accurate here.
 		const steer = !!b && steerable;
 		stopBtn.hidden = !b;
-		// During an agent turn the input stays live so the user can STEER: a message
-		// sent mid-turn is queued and folded into the conversation on the agent's
-		// next step (see send()). The Send button reads "Steer" to signal this.
-		// Compaction also goes busy but can't be steered, so we lock the input then.
+		// During an agent turn the input stays live so the user can STEER.
 		sendBtn.textContent = steer ? "Steer" : "Send";
 		input.placeholder = steer ? busyPlaceholder : idlePlaceholder;
 		input.disabled = !!b && !steerable;
@@ -151,8 +141,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	});
 
 	// Only rebuild the whole conversation when the project itself changes
-	// (switch / new / import). Mid-conversation shader edits also emit "project"
-	// but must not wipe streaming bubbles or appended tool rows.
+	// (switch / new / import).
 	store.on("project", () => {
 		if (store.project.id !== shownProjectId) {
 			shownProjectId = store.project.id;
@@ -175,8 +164,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		scroll();
 	}
 
-	// Auto-scroll follows new content only while the view is already at the
-	// bottom; a reader who scrolled up to an earlier reply is left there.
+	// Auto-scroll follows new content only while the view is already at the bottom.
 	let stickToBottom = true;
 	list.addEventListener("scroll", () => {
 		stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
@@ -189,12 +177,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		});
 	}
 
-	// Anthropic streams text in coarse chunks (~2-5 deltas/sec for Opus), so
-	// painting each chunk on arrival looks choppy. Buffer incoming text and drain
-	// a slice per animation frame, typing each chunk in smoothly. The /12 divisor
-	// keeps what's shown within ~200ms of what's arrived; appending a text node
-	// (vs reassigning textContent) keeps it O(n). onMessage renders the full
-	// markdown at the end, so any text still in the buffer is never lost.
+	// Buffer incoming text and drain a slice per animation frame, typing each
+	// chunk in smoothly.
 	function pumpStream(): void {
 		pumpId = 0;
 		if (!streamingText || !pending) return;
@@ -363,10 +347,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 		const userMsg: Message = { id: uid("m_"), role: "user", ts: Date.now(), blocks };
 
-		// Mid-turn? Queue it as a steering message: render it now and let the running
-		// agent fold it into the conversation on its next step. It does NOT start a
-		// new turn (that would run a second agent loop concurrently). Only an agent
-		// turn is steerable; while compacting we leave the text for the user to resend.
+		// Mid-turn? Queue it as a steering message: render it now and let the
+		// running agent fold it into the conversation on its next step.
 		if (store.busy) {
 			if (!steerable) return;
 			const node = renderMessage(userMsg);
@@ -392,10 +374,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		steerable = true; // this turn has a tool loop the user can steer
 		store.setBusy(true);
 		costTurn = 0; // start a fresh per-turn cost tally
-		// Collapse every edit this turn makes into a single undo step, so one
-		// Ctrl+Z reverts "what the AI just did" rather than each tool call. Label it
-		// with the prompt that drove the turn (the latest real user message — works
-		// for both a fresh send and the edit-and-resend flow).
+		// Collapse every edit this turn makes into a single undo step, so one.
 		store.beginHistoryGroup(`AI: ${turnPromptSummary(store.project.messages)}`);
 		try {
 			await runAgent(
@@ -407,8 +386,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 				(name, inp) => store.applyTool(name, inp),
 				{
 					signal: abort.signal,
-					// Per-conversation key for OpenAI prompt-cache routing (a project is
-					// one conversation thread); namespaced so it can't collide across apps.
+					// Per-conversation key for OpenAI prompt-cache routing (a project is one conversation thread); namespaced.
 					cacheKey: `shadertoy-${store.project.id}`,
 					requestPermission,
 					takeSteering,
@@ -420,10 +398,6 @@ export function createChat(deps: ChatDeps): HTMLElement {
 							costTotal += c;
 						}
 						// Cache counts are tri-state: undefined => server didn't report.
-						// Coalesce to 0 only for the context-window total (we still know
-						// the uncached input). The cache % comes from the pure `cachePct`
-						// helper, which stays undefined ("n/a") unless the server gave a
-						// cache-read count — never estimated.
 						const totalIn = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
 						const ctx = modelContextWindow(model);
 						if (ctx > 0) lastCtxPct = (totalIn / ctx) * 100;
@@ -463,8 +437,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 					onMessage: (msg) => {
 						void store.saveProjectNow();
 						if (msg.role === "assistant" && streamingText) {
-							// Swap the bare streaming bubble for a fully rendered one (so it
-							// gains its edit/delete actions and final markdown).
+							// Swap the bare streaming bubble for a fully rendered one (so it gains its edit/delete actions and final markdown).
 							const bubble = streamingText.parentElement;
 							endStream();
 							const final = renderMessage(msg);
@@ -493,10 +466,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			await store.saveProjectNow();
 			scroll();
 		}
-		// The agent picks up steering at each step and before it stops. The only gap
-		// is a message queued during the very last iteration (e.g. the model hit the
-		// tool-iteration cap) — fold those already-rendered bubbles into the history
-		// and run a fresh turn so the steering is never silently dropped.
+		// The agent picks up steering at each step and before it stops.
 		if (steerQueue.length) {
 			for (const { msg } of steerQueue) store.project.messages.push(msg);
 			steerQueue = [];
@@ -577,8 +547,7 @@ function messageEl(m: Message): HTMLElement {
 		);
 	}
 	if (m.role === "user") {
-		// text-tools mode feeds tool results back as a user message -- render it
-		// as a results row, not a user bubble.
+		// text-tools mode feeds tool results back as a user message -- render it as a results row, not a user bubble.
 		return m.toolOutput ? toolOutputEl(m) : el("div", { class: "msg user" }, ...m.blocks.map(blockEl));
 	}
 	if (m.role === "assistant") {

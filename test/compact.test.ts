@@ -1,8 +1,5 @@
-// Unit tests for conversation compaction. Run with:
-//   node --experimental-strip-types test/compact.test.ts
-// Pure + DOM-free: the gate (shouldCompact), the replacement round
-// (buildCompactedMessages), and that the result serializes to a valid
-// user/assistant alternation for the providers.
+// Unit tests for conversation compaction. Run with: node --experimental-strip-types test/compact.test.ts Pure + DOM-free. This is the gate (shouldCompact), the replacement round (buildCompactedMessages), and that the result serializes to a valid user/assistant alternation for the
+// providers.
 
 import { buildCompactedMessages, COMPACT_REQUEST_TEXT, hasCompactionSummary, shouldCompact } from "../src/ai/compact.ts";
 import { deletionRange, isDeletable, isTurnStart } from "../src/util/conversation.ts";

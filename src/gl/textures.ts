@@ -1,5 +1,4 @@
-// Procedural built-in textures. These give the AI usable iChannel inputs
-// (noise, checker, gradients) without the user having to upload an image.
+// Procedural built-in textures.
 
 import type { BuiltinTexture } from "../state/types.ts";
 
@@ -44,8 +43,7 @@ export function builtinPixels(kind: BuiltinTexture, size = 256): PixelData {
 				}
 			break;
 		case "blue": {
-			// cheap approximate blue noise: per-pixel value pushed toward the
-			// local average so low frequencies are suppressed.
+			// cheap approximate blue noise: per-pixel value pushed toward the local average so low frequencies are suppressed.
 			const tmp = new Float32Array(size * size);
 			for (let i = 0; i < tmp.length; i++) tmp[i] = rnd();
 			for (let y = 0; y < size; y++)

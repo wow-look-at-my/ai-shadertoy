@@ -1,10 +1,5 @@
 // Canonical tool names, referenced by the tool modules, the store dispatcher,
 // the text-tools prompt/parser, and the UI.
-//
-// The surface is GENERIC and parameterized: a handful of verbs (read /
-// create_object / destroy_object / edit_object) that target any layer / pass /
-// shape by an EXPLICIT ref in the call, plus the kept "good general" tools. There
-// is no "active" object the model must track or select first.
 
 export const TOOL_NAMES = {
 	// generic verbs

@@ -1,11 +1,4 @@
-// Unit tests for the CORS-proxy URL template. Run with:
-//   node --experimental-strip-types test/proxy.test.ts
-// The setting names where the target goes: {{.url}} percent-encoded (what
-// proxy.pazer.ai's ?url= parameter needs) or {{.rawurl}} verbatim (what a
-// path-prefix proxy needs). Getting proxy.pazer.ai's shape wrong is silent --
-// it answers 200 with its usage text, which the caller reads as a success --
-// so these pin both forms, and the token-less fallback that keeps an older
-// saved setting working.
+// Unit tests for the CORS-proxy URL template.
 
 import { proxied, hasProxyToken } from "../src/util/misc.ts";
 import { migrateProxyTemplate } from "../src/state/defaults.ts";
@@ -30,9 +23,9 @@ eq(
 eq(proxied(ANTHROPIC, "proxy.pazer.ai/?url={{.url}}"), proxied(ANTHROPIC, QUERY), "a template without a scheme gets https://");
 eq(proxied(ANTHROPIC, "https://proxy.pazer.ai/?url={{ .url }}"), proxied(ANTHROPIC, QUERY), "whitespace inside the braces is allowed");
 
-// The target's own query string is the case an unencoded substitution breaks:
-// listModels asks for ?limit=1000, which would otherwise become a parameter of
-// the PROXY rather than part of the target.
+// The target's own query string is the case an unencoded substitution breaks.
+// It listModels asks for ?limit=1000, which would otherwise become a parameter
+// of the PROXY rather than part of the target.
 {
 	const url = proxied("https://api.anthropic.com/v1/models?limit=1000", QUERY);
 	eq(new URL(url).searchParams.get("url"), "https://api.anthropic.com/v1/models?limit=1000", "the worker reads the target back intact");
@@ -65,7 +58,7 @@ eq(hasProxyToken("https://cors.example.com/"), false, "a bare base URL has no to
 
 // ---- migration: a setting saved before templates existed -------------------
 
-// The pazer default spoke ?url=, so it must keep speaking ?url= -- not silently
+// The pazer default spoke ?url=. It must keep speaking ?url= -- not silently
 // flip to the prefix form the token-less fallback would otherwise give it.
 eq(migrateProxyTemplate("https://proxy.pazer.ai/"), "https://proxy.pazer.ai/?url={{.url}}", "the old pazer default migrates to the query template");
 eq(proxied(ANTHROPIC, migrateProxyTemplate("https://proxy.pazer.ai/")), proxied(ANTHROPIC, QUERY), "and builds the same request it used to");

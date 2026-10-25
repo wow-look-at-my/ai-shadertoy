@@ -1,8 +1,4 @@
-// Unit tests for the provider registry and the endpoint it composes. Run with:
-//   node --experimental-strip-types test/providers.test.ts
-// The property worth pinning is that picking a provider is enough: its base URL
-// and, where the endpoint refuses browser calls, the CORS proxy come from the
-// registry rather than from the user finding a toggle.
+// Unit tests for the provider registry and the endpoint it composes.
 
 import { PROVIDERS, DEFAULT_SETTINGS, providerBaseUrl } from "../src/state/defaults.ts";
 import { anthropicBody, chatEndpoint, openaiAuthHeaders, openaiBody } from "../src/ai/providers.ts";
@@ -45,13 +41,12 @@ for (const id of ["openai", "openrouter", "ollama-cloud"] as ProviderId[]) {
 	eq(PROVIDERS[id].wire, "openai", `${id} speaks OpenAI Chat Completions`);
 }
 
-// ---- base URL: the override wins, the default fills in ----------------------
+// ---- base URL: the override wins. ----------------------
 
 eq(providerBaseUrl("openrouter", ""), "https://openrouter.ai/api/v1", "a blank override falls back to the provider default");
 eq(providerBaseUrl("openrouter", "  "), "https://openrouter.ai/api/v1", "a whitespace override is still blank");
 eq(providerBaseUrl("openrouter", "https://my.gateway/v1"), "https://my.gateway/v1", "an override replaces the default");
 
-// ---- the endpoint a chat request goes to ------------------------------------
 
 eq(chatEndpoint(settingsFor("anthropic")), "https://api.anthropic.com/v1/messages", "Anthropic posts to /v1/messages, unproxied");
 eq(chatEndpoint(settingsFor("openai")), "https://api.openai.com/v1/chat/completions", "OpenAI posts to /chat/completions, unproxied");
@@ -109,7 +104,6 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 	ok(!("x-bf-vk" in hosted), "hosted providers get no x-bf-vk");
 }
 
-// ---- request body gates: never a field the model rejects with a 400 ---------
 
 const HISTORY: Message[] = [{ id: "m1", role: "user", ts: 0, blocks: [{ type: "text", text: "hi" }] }];
 const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "object", properties: {} } };
@@ -136,8 +130,7 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 		ok(!("output_config" in b), `${m}: no effort (rejected with a 400)`);
 	}
 	eq((body("claude-opus-4-5")["output_config"] as { effort: string })?.effort, "medium", "Opus 4.5 accepts effort");
-	// The history holds tool blocks after a turn, so tools must stay defined even
-	// when the model may not call any (compaction).
+	// The history holds tool blocks after a turn, so tools must stay defined even when the model may not call any.
 	const none = anthropicBody(DEFAULT_SETTINGS.chat, "sys", "", HISTORY, [TOOL], { toolChoice: "none" });
 	ok(Array.isArray(none["tools"]), "tools stay defined with tool_choice none");
 	eq((none["tool_choice"] as { type: string })?.type, "none", "tool_choice none is sent");

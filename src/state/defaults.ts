@@ -8,30 +8,22 @@ import { hasProxyToken, uid } from "../util/misc.ts";
 
 export interface ProviderInfo {
 	label: string;
-	/** Which request/response translation providers.ts uses. Everything except
-	 * Anthropic speaks OpenAI Chat Completions. */
+	/** Which request/response translation providers.ts uses. Everything except Anthropic speaks OpenAI Chat Completions. */
 	wire: "anthropic" | "openai";
 	/** Used when the user leaves the base-URL override blank. */
 	baseUrl: string;
-	/** The endpoint sends no `access-control-allow-origin`, so a browser cannot
-	 * read its reply and the CORS proxy has to carry the request. Measured
-	 * against the live endpoints, not assumed -- see README. */
+	/** The endpoint sends no `access-control-allow-origin`. */
 	needsProxy: boolean;
-	/** Convenient picks for the model combobox; free text is still accepted, and
-	 * the refresh button replaces these with the provider's own list. */
+	/** Convenient picks for the model combobox. */
 	models: string[];
-	/** The models endpoint rejects an unauthenticated request, so the combobox
-	 * cannot fill itself until a key is entered. OpenRouter and Ollama Cloud
-	 * both serve their catalogue openly. */
+	/** The models endpoint rejects an unauthenticated request, so the combobox cannot fill itself until a key is entered. */
 	needsKeyForModels: boolean;
-	/** Chat requires an API key. Only the generic OpenAI-compatible provider can
-	 * legitimately run keyless, against a local server. */
+	/** Chat requires an API key. */
 	needsKey: boolean;
 }
 
-// Anthropic defaults to Opus 5 (the most capable Opus-tier model, at Opus 4.8's
-// price). The Fable tier is left out of the presets for its cost; any id still
-// works when typed, and providers.ts gates the request shape per model.
+// The Fable tier is left out of the presets for its cost. Any id still works
+// when typed, and providers.ts gates the request shape per model.
 export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 	anthropic: {
 		label: "Anthropic (Claude)",
@@ -111,11 +103,9 @@ export const DEFAULT_SETTINGS: Settings = {
 	persistRequested: false,
 };
 
-/** A proxy setting saved before templates existed is a bare base URL, and which
- * rule it meant depended on the version that saved it: the pazer proxy reads a
- * `?url=` parameter, everything else was joined as a prefix. Rewrite it into the
- * template that reproduces exactly that, so the Settings field states the rule
- * instead of leaving it implicit. */
+/** A proxy setting saved before templates existed is a bare base URL, and
+ * which rule it meant depended on the version that saved it. The pazer proxy
+ * reads a `?url=` parameter. Everything else was joined as a prefix. */
 export function migrateProxyTemplate(value: string): string {
 	const v = value.trim();
 	if (!v) return DEFAULT_SETTINGS.proxyUrl;
@@ -161,7 +151,7 @@ interface LegacyProject {
 	id?: string;
 	name?: string;
 	shaderSource?: string; // very old: a single shader
-	channels?: unknown; // very old: that shader's four channels
+	channels?: unknown; // very old: that shader's channels
 	uniforms?: Uniform[];
 	messages?: Project["messages"];
 	createdAt?: number;
@@ -177,8 +167,7 @@ function clampNum(v: unknown, lo: number, hi: number, d: number): number {
 }
 
 function normalizeChannels(raw: unknown, source = ""): Channel[] {
-	// Variable-length input list (0..MAX_INPUTS). Explicit legacy arrays are
-	// preserved; missing arrays are inferred from the shader's iChannel references.
+	// Variable-length input list (0..MAX_INPUTS).
 	if (!Array.isArray(raw)) return channelsForSource(source).slice(0, MAX_INPUTS);
 	const n = Math.min(raw.length, MAX_INPUTS);
 	const out: Channel[] = [];
@@ -191,8 +180,7 @@ function normalizeChannels(raw: unknown, source = ""): Channel[] {
 
 function normalizePass(raw: unknown, i: number): Pass {
 	const r = (raw ?? {}) as Partial<Pass>;
-	// Legacy `x`/`y` graph-editor coordinates (if present) are dropped: the Passes
-	// view now auto-lays the DAG out from its edges (see ui/graphlayout.ts).
+	// Legacy `x`/`y` graph-editor coordinates (if present) are dropped: the Passes view now auto-lays the DAG out from its edges.
 	const fallback = makePass(r.name ?? `Pass ${i + 1}`, r.source ?? "", normalizeChannels(r.channels, r.source ?? ""));
 	const pass: Pass = {
 		id: typeof r.id === "string" && r.id ? r.id : fallback.id,
@@ -242,8 +230,7 @@ function normalizeLayer(raw: unknown, i: number): Layer {
 	};
 	if (r.mask && typeof r.mask === "object") {
 		layer.mask = normalizeLayer(r.mask, 0);
-		// A wrapper saved before `role` existed is recognised by its wiring, so an
-		// edited or renamed wrapper is not wrapped again on every load.
+		// A wrapper saved before `role` existed is recognised by its wiring, so an edited or renamed wrapper is not wrapped again on every load.
 		const out = layer.passes.find((p) => p.id === layer.outputPassId);
 		if (out && !out.role && hasMaskCompositeWiring(out)) out.role = "maskComposite";
 		ensureMaskCompositePass(layer);
@@ -263,9 +250,9 @@ function normalizeUniform(raw: unknown): Uniform | null {
 	return u;
 }
 
-/** Coerce a persisted/imported record into a current-shape Project. Three eras:
- * `layers` (current) pass through normalized; a flat `passes`/`outputPassId`
- * graph becomes one "Base" layer; the oldest single `shaderSource` becomes one
+/** Coerce a persisted/imported record into a current-shape Project. Eras:
+ * `layers` (current) pass through normalized. A flat `passes`/`outputPassId`
+ * graph becomes one "Base" layer. The oldest single `shaderSource` becomes one
  * "Base" layer with one "Image" pass. */
 export function normalizeProject(raw: unknown): Project {
 	const r = (raw ?? {}) as LegacyProject;

@@ -1,6 +1,5 @@
-// Shared helpers for the geometry tools: parse AI-supplied shape fields into a
-// Shape patch (degrees -> radians, colour arrays, clamping) and describe shapes
-// for tool output. Not a tool itself -- imported by create_object / edit_object / read.
+// Shared helpers for the geometry tools: parse AI-supplied shape fields into a Shape patch (degrees -> radians, colour
+// arrays, clamping) and describe shapes for tool output.
 
 import type { Shape } from "../../state/types.ts";
 import { SHAPE_LABELS } from "../../gl/shapes.ts";
@@ -10,7 +9,6 @@ function num(v: unknown): number | undefined {
 	return Number.isFinite(n) ? n : undefined;
 }
 
-/** Parse an RGBA colour from an array of 0..1 numbers (alpha defaults to 1). */
 export function parseColor(v: unknown): [number, number, number, number] | undefined {
 	if (!Array.isArray(v) || v.length < 3) return undefined;
 	const c = v.map((x) => Math.min(1, Math.max(0, Number(x) || 0)));

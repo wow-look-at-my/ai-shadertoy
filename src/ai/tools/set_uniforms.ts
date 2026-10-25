@@ -63,8 +63,7 @@ registerTool({
 			let value = Array.isArray(item["value"]) ? (item["value"] as unknown[]).map(Number) : [];
 			if (value.length < need) value = value.concat(new Array(need - value.length).fill(0));
 			value = value.slice(0, need);
-			// PATCH within the record too: a field the call omits keeps the control's
-			// current range/step/label (a widened slider must survive a value-only patch).
+			// PATCH within the record too: a field the call omits keeps the control's current range/step/label.
 			const prev = current.get(name);
 			const keepRange = prev !== undefined && prev.type === type;
 			const range = keepRange ? { min: prev.min, max: prev.max, step: prev.step } : rangeForValues(value);
@@ -78,9 +77,7 @@ registerTool({
 				label: item["label"] ? String(item["label"]) : prev?.label,
 			});
 		}
-		// PATCH semantics: merge the named uniforms over the current list so omitting
-		// a uniform never wipes it back to 0. Update-in-place by name; append any
-		// genuinely new ones (the renderer sync then drops any not declared in source).
+		// PATCH semantics: merge the named uniforms over the current list so omitting a uniform never wipes it back to a set limit.
 		const incoming = new Map(uniforms.map((u) => [u.name, u]));
 		const merged = ctx.project.uniforms.map((u) => incoming.get(u.name) ?? u);
 		for (const u of uniforms) if (!merged.some((m) => m.name === u.name)) merged.push(u);

@@ -1,5 +1,4 @@
-// Unit tests for the chat markdown renderer's pure HTML pass. DOM-free:
-//   node --experimental-strip-types test/markdown.test.ts
+// Unit tests for the chat markdown renderer's pure HTML pass.
 
 import { markdownToHtml } from "../src/util/markdown.ts";
 

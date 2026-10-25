@@ -1,14 +1,11 @@
-// Media helpers for channel inputs: reading uploaded files, probing image/video
-// dimensions, and acquiring the webcam. Keeps the store and UI free of the
-// FileReader / <video> / getUserMedia plumbing.
+// Media helpers for channel inputs: reading uploaded files, probing image/video dimensions, and acquiring the webcam.
 
-/** Uploaded videos are stored inline (data URL) like images, so keep them small;
- * short low-resolution loops are the intended use. */
+/** Uploaded videos are stored inline (data URL) like images, so keep them small. */
 export const MAX_VIDEO_BYTES = 32 * 1024 * 1024;
 
 // Code-point ranges dropped from asset names: C0/C1 control characters plus
 // zero-width and bidirectional format marks (ZWSP..RLM, the bidi embeddings,
-// word joiner, BOM). These are invisible and unreproducible by the model.
+// word joiner, BOM).
 const STRIP_RANGES: ReadonlyArray<readonly [number, number]> = [
 	[0x00, 0x1f],
 	[0x7f, 0x9f],
@@ -19,12 +16,9 @@ const STRIP_RANGES: ReadonlyArray<readonly [number, number]> = [
 ];
 
 /** Clean an uploaded asset's display name so it can be referenced by name.
- * Filenames -- macOS screenshots especially -- carry characters that look like a
- * plain space but aren't (U+202F narrow no-break space), plus zero-width and
- * bidi format marks. The model only ever sees/types the plain-looking name, so
- * if we stored the exotic original an exact-name lookup could never match. Fold
- * every run of whitespace (incl. U+202F / U+00A0) to a single ASCII space, drop
- * control and zero-width/format characters, and trim. Pure + DOM-free. */
+ * Filenames -- macOS screenshots especially -- carry characters that look
+ * like a plain space but aren't (U+202F narrow no-break space), plus
+ * zero-width and bidi format marks. */
 export function sanitizeAssetName(name: string): string {
 	let out = "";
 	for (const ch of name) {
@@ -36,8 +30,8 @@ export function sanitizeAssetName(name: string): string {
 }
 
 /** A name no asset in `assets` already carries (case-insensitive): `base`, else
- * `base 2`, `base 3`, ... The AI addresses assets by name, so two assets must
- * never share one. Pure + DOM-free. */
+ * `base 2`, `base 3`, ... The AI addresses assets by name, so assets must never
+ * share one. Pure + DOM-free. */
 export function uniqueAssetName(assets: ReadonlyArray<{ name: string }>, base: string): string {
 	const want = base.trim() || "asset";
 	const taken = new Set(assets.map((a) => a.name.toLowerCase()));

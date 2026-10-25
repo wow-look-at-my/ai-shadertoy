@@ -1,23 +1,8 @@
-// Generic undo/redo history over immutable state snapshots. Deliberately
-// DOM-free and dependency-free so it can be unit-tested with plain Node
-// (`node --experimental-strip-types`).
-//
-// Model: `present` always mirrors the last committed state. Each undoable
-// mutation calls commit() with the new live state; commit pushes the PREVIOUS
-// `present` onto the undo stack (so undoing returns to it) and adopts a clone of
-// the new state as `present`. Undo/redo move snapshots between the two stacks.
-//
-// Two features make this feel "really good" rather than mechanical:
-//   - Coalescing: rapid edits of the same kind (e.g. each keystroke-debounce
-//     while typing in one pass, or a slider drag) merge into a single entry
-//     instead of flooding the stack, so one Ctrl+Z reverts the whole gesture.
-//   - Grouping: an entire agent turn can be wrapped in begin/endGroup so all of
-//     its tool edits collapse into one undo step the user can revert at once.
+// Generic undo/redo history over immutable state snapshots.
 
 export interface HistoryEntry<S> {
 	snapshot: S;
-	/** Human-readable description of the action between the two states
-	 * (e.g. "Edit Image code"); shown in the Undo/Redo tooltips. */
+	/** Human-readable description of the action between both states (e.g. "Edit Image code"); shown in the Undo/Redo tooltips. */
 	label: string;
 }
 
@@ -35,8 +20,7 @@ export class History<S> {
 	private lastTag: string | null = null;
 	private lastTime = 0;
 
-	// Grouping state: while groupDepth > 0, commits advance `present` but defer
-	// pushing a single combined entry until the outermost endGroup().
+	// Grouping state.
 	private groupDepth = 0;
 	private groupBaseline: S | null = null;
 	private groupLabel = "";
@@ -83,8 +67,7 @@ export class History<S> {
 
 		const now = Date.now();
 		if (coalesce && this.undoStack.length > 0 && this.lastTag === tag && now - this.lastTime < this.opts.coalesceMs) {
-			// Same gesture continuing: keep the existing baseline entry, just move
-			// `present` forward so a later undo returns to before the gesture began.
+			// Same gesture continuing: keep the existing baseline entry, move `present` forward.
 			this.present = this.clone(current);
 			this.lastTime = now;
 			this.emit();

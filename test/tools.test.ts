@@ -1,10 +1,5 @@
-// Unit tests for the redesigned generic tool surface:
-//   - ref resolution (layer by name / id / stack index; pass by name; shape by index)
-//   - create_object / destroy_object / edit_object round-trips via the tools' execute
-//   - tool-set byte-stability (the advertised set is identical regardless of project
-//     state, before vs after authoring, with the only conditional being imageGen)
-// DOM-free, so plain Node can exercise it:
-//   node --experimental-strip-types test/tools.test.ts
+// Unit tests for the redesigned generic tool surface: - ref resolution (layer
+// by name / id / stack index.
 
 import { getTool, toolDefs } from "../src/ai/tools/index.ts";
 import "../src/ai/tools/index.ts"; // register every tool
@@ -287,7 +282,7 @@ function run(ctx: ToolContext, name: string, input: Record<string, unknown>): To
 	run(ctx, "edit_object", { type: "layer", ref: "Top", name: "Renamed" });
 	check(!!ctx.resolveLayer("Renamed"), "layer renamed via edit_object");
 
-	// reorder: move Renamed (top, index 1) to the bottom
+	// reorder: move Renamed (top, one index) to the bottom
 	run(ctx, "edit_object", { type: "layer", ref: "Renamed", move: "bottom" });
 	eq(project.layers[0].name, "Renamed", "layer moved to the bottom");
 

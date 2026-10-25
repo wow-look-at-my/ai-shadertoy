@@ -1,14 +1,5 @@
 // On-canvas shape gizmo: click a shape in the ACTIVE layer to select it, then
-// drag the body to move, the corner handles to resize, or the top handle to
-// rotate. All edits flow through store.updateShape with coalesce=true, so a whole
-// drag is one undo step and the Layers panel isn't rebuilt mid-gesture.
-//
-// The overlay only captures pointer events when the active layer has geometry
-// (edit mode); on a pure-shader layer it is pointer-events:none, so the shader's
-// iMouse keeps working. Coordinates: shapes are normalized 0..1 with y UP (origin
-// bottom-left, matching fragCoord); the canvas fills .canvas-wrap 1:1, so screen
-// CSS pixels map directly. Rotation is rigid in pixel space; the CSS box rotates
-// by -rotation (CSS y is flipped vs the shader's y-up).
+// drag the body to move, the corner handles to resize.
 
 import { el } from "../util/dom.ts";
 import type { Shape } from "../state/types.ts";
@@ -160,7 +151,7 @@ export function createShapeGizmo(store: Store, canvas: HTMLCanvasElement): HTMLE
 		};
 		window.addEventListener("pointermove", move);
 		window.addEventListener("pointerup", up);
-		window.addEventListener("pointercancel", up); // a touch gesture the browser takes over
+		window.addEventListener("pointercancel", up);
 	}
 
 	overlay.addEventListener("pointerdown", (e) => {
@@ -203,7 +194,7 @@ export function createShapeGizmo(store: Store, canvas: HTMLCanvasElement): HTMLE
 	store.on("selectedShape", rebuild);
 	store.on("restore", rebuild);
 	// Keep the box glued to the shape even when it changes from elsewhere (field
-	// edits, AI, canvas resize). Cheap: just restyles a few existing nodes.
+	// edits, AI, canvas resize). Cheap: restyles a few existing nodes.
 	store.on("stats", () => {
 		if (!dragging && currentShape()) reposition();
 	});

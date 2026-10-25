@@ -1,7 +1,4 @@
-// Text-tools mode parsing. Models without native tool calling emit XML tags in
-// their reply (see textToolInstructions in system-prompt.ts); we parse them
-// here into the same ToolCall shape the native path produces. Forgiving by
-// design: tolerant of attributes, stray whitespace, and code fences.
+// Text-tools mode parsing.
 
 import type { ToolCall } from "./types.ts";
 import { TOOL_NAMES } from "./tools/names.ts";

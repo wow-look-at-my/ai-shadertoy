@@ -1,5 +1,5 @@
-// edit_shader -- the primary way to change an existing shader: replace an exact
-// snippet instead of retyping the whole thing. Forgiving about stray whitespace.
+// edit_shader -- the primary way to change an existing shader: replace an
+// exact snippet instead of retyping the whole thing.
 
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";

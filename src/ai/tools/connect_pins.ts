@@ -7,10 +7,7 @@ import { TOOL_NAMES } from "./names.ts";
 import { registerTool } from "./registry.ts";
 import { text } from "./types.ts";
 
-// Match an asset by id or by name. New uploads are sanitized at import time, but
-// match through the same cleaner so assets stored before that fix -- carrying
-// exotic spaces like U+202F (narrow no-break space) that the model can't
-// reproduce from the plain-looking name it sees in list_assets -- still resolve.
+// Match an asset by id or by name.
 export function normalizeName(s: string): string {
 	return sanitizeAssetName(s).toLowerCase();
 }

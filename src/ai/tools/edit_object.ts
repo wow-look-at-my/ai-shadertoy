@@ -1,9 +1,5 @@
-// edit_object -- the single "change a thing's properties" tool (NOT shader source;
-// that's edit_shader). `type` selects what to edit: a layer (name/visible/opacity/
-// order/move/output_pass), a pass (format), a shape (transform/colour/style, by
-// index), or the project (name -- permission-gated, like the old rename_shader).
-// Only the fields you pass change. Replaces set_layer / reorder_layer /
-// set_output_pass / edit_shape / rename_shader. Targets are explicit refs.
+// edit_object -- the single "change a thing's properties" tool (NOT shader
+// source; that's edit_shader).
 
 import { registerTool } from "./registry.ts";
 import { TOOL_NAMES } from "./names.ts";
@@ -23,8 +19,7 @@ function cleanProjectName(input: Record<string, unknown>): string {
 }
 
 function editLayer(ctx: ToolContext, input: Record<string, unknown>) {
-	// `ref` is the documented field; `layer` is what every other tool calls it,
-	// so accept both rather than silently editing the top layer.
+	// `ref` is the documented field.
 	const ref = input["ref"] ?? input["layer"];
 	const layer = ctx.resolveLayer(ref !== undefined ? String(ref) : undefined);
 	if (!layer) return { content: [text(`No layer "${String(ref)}". read what:layers to list them.`)], isError: true };

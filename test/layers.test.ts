@@ -56,7 +56,7 @@ function near(a: number, b: number, msg: string): void {
 	eq((assembled.match(/uniform vec3 u_tint;/g) ?? []).length, 1, "vec3 custom uniform declared once in assembled shader");
 }
 
-// ---- migration: very old single shaderSource -> Base layer ------------------
+// migration: old single shaderSource -> Base layer
 {
 	const legacy = { id: "p1", name: "Old", shaderSource: "void mainImage(out vec4 c, in vec2 f){ c = vec4(0.5); }", channels: [{ kind: "builtin", builtin: "checker" }] };
 	const p = normalizeProject(legacy);
@@ -203,8 +203,7 @@ function near(a: number, b: number, msg: string): void {
 	eq(p.layers[0].mask!.shapes.length, 1, "mask shape preserved");
 	near(p.layers[0].mask!.shapes[0].falloff, 1, "mask shape falloff preserved");
 
-	// An EDITED wrapper (source and name changed, saved without `role`) is still
-	// the wrapper: reloading must not wrap it again, load after load.
+	// An EDITED wrapper (source and name changed, saved without `role`) is still the wrapper: reloading must not wrap it again.
 	const edited = structuredClone(raw) as { layers: Array<{ passes: Array<Record<string, unknown>>; outputPassId: string }> };
 	edited.layers[0].passes.push({ id: "w", name: "My blend", source: "// tweaked", channels: [{ kind: "under" }, { kind: "pass", passId: "p" }, { kind: "mask" }] });
 	edited.layers[0].outputPassId = "w";

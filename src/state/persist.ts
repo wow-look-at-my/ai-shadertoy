@@ -1,7 +1,4 @@
-// Persistence. Projects and image assets live in IndexedDB (they can be large
-// -- conversations carry screenshots, assets carry full images). Settings and
-// the current-project pointer live in localStorage for synchronous startup.
-// Everything is exportable/importable as a single JSON bundle.
+// Persistence.
 
 import type { ExportBundle, ImageAsset, Project, Settings } from "./types.ts";
 import { normalizeProject } from "./defaults.ts";
@@ -69,8 +66,7 @@ function getAll<T>(store: string): Promise<T[]> {
 
 export const db = {
 	saveProject: (p: Project) => tx(STORE_PROJECTS, "readwrite", (t) => t.objectStore(STORE_PROJECTS).put(p)),
-	// Normalize on read so legacy single-pass records (and any partial/imported
-	// shapes) become current-shape Projects before the app touches them.
+	// Normalize on read so legacy single-pass records.
 	loadProjects: () => getAll<unknown>(STORE_PROJECTS).then((rows) => rows.map(normalizeProject)),
 	deleteProject: (id: string) => tx(STORE_PROJECTS, "readwrite", (t) => t.objectStore(STORE_PROJECTS).delete(id)),
 	saveAsset: (a: ImageAsset) => tx(STORE_ASSETS, "readwrite", (t) => t.objectStore(STORE_ASSETS).put(a)),
@@ -93,7 +89,6 @@ export function saveSettings(s: Settings): void {
 	try {
 		localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
 	} catch {
-		/* quota or disabled storage: ignore */
 	}
 }
 
@@ -108,7 +103,6 @@ export function setCurrentProjectId(id: string): void {
 	try {
 		localStorage.setItem(LS_CURRENT, id);
 	} catch {
-		/* ignore */
 	}
 }
 
@@ -121,7 +115,6 @@ export async function requestPersistence(): Promise<boolean> {
 			return await navigator.storage.persist();
 		}
 	} catch {
-		/* ignore */
 	}
 	return false;
 }
@@ -133,7 +126,6 @@ export async function estimateStorage(): Promise<{ usage: number; quota: number 
 			return { usage: e.usage ?? 0, quota: e.quota ?? 0 };
 		}
 	} catch {
-		/* ignore */
 	}
 	return null;
 }

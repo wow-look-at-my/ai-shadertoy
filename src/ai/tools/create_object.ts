@@ -35,9 +35,10 @@ function createPass(ctx: ToolContext, input: Record<string, unknown>) {
 	const name = input["name"] ? String(input["name"]).trim() : "";
 	const source = input["source"] ? String(input["source"]) : "";
 
-	// No name = seed the layer's OUTPUT pass in place (the old init_shader: author
-	// the visible pass). Refuse if that pass has already been authored, so we never
-	// silently overwrite real work -- point the model at edit_shader instead.
+	// No name = seed the layer's OUTPUT pass in place (the init_shader: author
+	// the visible pass). Refuse if that pass has already been authored, so we
+	// never silently overwrite real work -- point the model at edit_shader
+	// instead.
 	if (!name) {
 		if (!source.trim()) return { content: [text("create_object type:pass needs either a `name` (to add a new pass) or a non-empty `source` (to author the layer's output pass).")], isError: true };
 		const out = ctx.resolvePass(layer);

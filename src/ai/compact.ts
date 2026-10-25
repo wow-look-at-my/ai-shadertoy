@@ -1,17 +1,6 @@
 // Conversation compaction. A long chat accumulates user prompts, assistant
 // turns, tool calls, and (heavy) base64 screenshots, steadily filling the
-// context window the chat meters. Compaction does what you'd do by hand: ask
-// the model to "summarize this entire conversation in detail for a future
-// instance of yourself to pick up", then start a fresh chat that BEGINS with
-// that summary -- the long history is replaced by the recap.
-//
-// The result is stored as a normal two-message round: a user request ("summarize
-// ...") and the assistant's summary reply. That keeps the conversation a valid
-// user -> assistant sequence (ends on assistant, so the next real prompt
-// continues cleanly) and reads naturally as prior history on the next turn. The
-// live project state (current layers/passes/shapes/uniforms) is always sent
-// fresh by the editor, so the summary only needs the CONVERSATIONAL context --
-// intent, decisions, what was tried, and what's left -- not the shader code.
+// context window the chat meters.
 
 import type { Message, Settings } from "../state/types.ts";
 import type { ToolDef, Usage } from "./types.ts";
@@ -30,11 +19,7 @@ The agent ALWAYS receives the live project state separately (current layers, pas
 
 Write it as a briefing to yourself (the future agent), detailed but without filler. Output ONLY the summary -- no preamble, no sign-off.`;
 
-// The instruction the user "sends" to trigger the summary. It rides as the
-// trailing message of the summarize request (the same slot the editor uses for
-// project state -- conversation ends on an assistant turn at rest, so appending
-// one user message is the app's normal, already-proven pattern), and it is also
-// the text of the stored request message so the compacted round reads naturally.
+// The instruction the user "sends" to trigger the summary.
 export const COMPACT_REQUEST_TEXT = "Summarize this entire conversation in detail for a future instance of yourself to pick up. Output only the summary.";
 
 export interface CompactOptions {
@@ -42,14 +27,13 @@ export interface CompactOptions {
 }
 
 /** Worth compacting? Needs at least a couple of rounds of real history; below
- * that there's nothing to save. Pure + DOM-free so the UI gate is testable. */
+ * that there's nothing to save. */
 export function shouldCompact(messages: Message[]): boolean {
 	return messages.filter((m) => !m.compaction).length >= 4;
 }
 
 /** Whether `messages` already contains a compaction summary (history was
- * compacted at least once). Used to keep shader-edit gating stable across a
- * compaction -- after a recap, the shader has effectively been authored. */
+ * compacted at least once). */
 export function hasCompactionSummary(messages: Message[]): boolean {
 	return messages.some((m) => m.compaction === "summary");
 }
@@ -66,13 +50,8 @@ export function buildCompactedMessages(summary: string): Message[] {
 	];
 }
 
-/** Ask the model to summarize the conversation for a self-handoff. Sends the
- * current history with the summarize instruction as the trailing message and
- * returns the recap text (+ token usage). `tools` must be the set the
- * conversation used: a history holding tool_use/tool_result blocks is rejected
- * without a matching `tools` field, so they stay defined with tool_choice
- * "none" and the model can only write. Throws ProviderError on a network/API
- * failure or an empty summary. */
+/** Ask the model to summarize the conversation for a self-handoff. Sends the current history with the summarize instruction as the trailing message and returns the recap text (+ token usage). `tools` must be the set the conversation used: a history holding tool_use/tool_result blocks is rejected without a matching `tools` field. They stay defined with tool_choice "none" and the model can only write. Throws ProviderError on
+ * a network/API failure or an empty summary. */
 export async function summarizeConversation(settings: Settings, messages: Message[], tools: ToolDef[], opts: CompactOptions = {}): Promise<{ summary: string; usage: Usage }> {
 	const turn = await streamChat(settings, COMPACT_SYSTEM, COMPACT_REQUEST_TEXT, messages, tools, { signal: opts.signal, toolChoice: "none" });
 	const summary = turn.text.trim();

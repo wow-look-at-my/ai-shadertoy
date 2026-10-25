@@ -1,6 +1,4 @@
-// Provider-neutral conversation + project/state types. The conversation model
-// mirrors Anthropic's content-block shape (it is the richest of the two
-// providers we target); the OpenAI serializer down-converts it.
+// Provider-neutral conversation + project/state types.
 
 export type Role = "user" | "assistant" | "tool";
 
@@ -43,8 +41,7 @@ export interface Message {
 	textTools?: string[];
 	/** text-tools mode: this user message carries tool results (render as a results row) */
 	toolOutput?: boolean;
-	/** Conversation-compaction artifact: "request" = the synthetic summarize prompt,
-	 * "summary" = the AI-written recap that replaces the older history (see ai/compact.ts). */
+	/** Conversation-compaction artifact: "request" = the synthetic summarize prompt, "summary" = the AI-written recap that replaces the older history. */
 	compaction?: "request" | "summary";
 }
 
@@ -53,7 +50,7 @@ export type UniformType = "float" | "vec2" | "vec3" | "vec4" | "color";
 export interface Uniform {
 	name: string;
 	type: UniformType;
-	value: number[]; // length 1 (float), 2, 3, 4; color is rgb 0..1
+	value: number[];
 	min: number;
 	max: number;
 	step: number;
@@ -61,12 +58,8 @@ export interface Uniform {
 }
 
 // "video"/"webcam" are DYNAMIC: a live video element whose current frame is
-// uploaded to the channel texture every render tick (see gl/dynamictexture.ts).
-// "under"/"geometry"/"mask" are LAYER-AMBIENT inputs the renderer provides per layer:
-// "under" = the composite of every layer below this one (transparent for the
-// bottom layer); "geometry" = this layer's shapes rasterized (premultiplied
-// rgba); "mask" = this layer's optional mask layer output. None need an
-// asset/builtin/pass reference.
+// uploaded to the channel texture every render tick (see
+// gl/dynamictexture.ts).
 export type ChannelKind = "none" | "image" | "builtin" | "pass" | "video" | "webcam" | "under" | "geometry" | "mask";
 export type BuiltinTexture = "rgbaNoise" | "grayNoise" | "checker" | "gradient" | "blue";
 export type TexFilter = "linear" | "nearest";
@@ -81,88 +74,60 @@ export interface Channel {
 	wrap: TexWrap;
 }
 
-// Render-target pixel format for a pass. rgba8 is universal; rgba16f keeps HDR
-// values (needed for bloom/blur of bright sources) when the GPU supports
-// EXT_color_buffer_float, falling back to rgba8 otherwise.
+// Render-target pixel format for a pass.
 export type PassFormat = "rgba8" | "rgba16f";
 
-/** Upper bound on inputs per pass. WebGL2 guarantees at least 16 fragment
- * texture units (MAX_TEXTURE_IMAGE_UNITS); the renderer clamps to the actual
- * device limit, which is >= this. (Shadertoy's fixed 4 is not a limit we keep.) */
+/** Upper bound on inputs per pass. */
 export const MAX_INPUTS = 16;
 
 /** One node in the render graph: a fragment shader that renders to its own
- * offscreen texture, with a variable-length list of input channels that can
- * each sample a built-in texture, an image asset, or the output of ANOTHER pass
- * (the graph edges) -- including this pass's own previous frame (feedback).
- * Inputs are addressed as iChannel0..iChannel{N-1} in the shader. A layer's
- * `outputPassId` pass is that layer's composite. */
+ * offscreen texture. */
 export interface Pass {
 	id: string;
 	name: string;
-	source: string; // GLSL ES 3.00 body defining mainImage()
+	source: string;
 	channels: Channel[]; // 0..MAX_INPUTS; named iChannel0..iChannel{N-1}
 	format: PassFormat;
-	/** "maskComposite": the pass add_mask generated to apply the layer's mask.
-	 * Identified by this flag, never by name or source, so a user edit to the
-	 * wrapper's shader does not make reload wrap it a second time. */
+	/** "maskComposite": the pass add_mask generated to apply the layer's mask. */
 	role?: "maskComposite";
 }
 
 // ---- layers + geometry -----------------------------------------------------
 
-/** Geometry primitive kind. This is a plain string union so a new shape is one
- * entry here plus one entry in the shape registry (gl/shapes.ts) -- the geometry
- * shader, the UI pickers, and the AI tools all enumerate from that registry. */
+/** Geometry primitive kind. */
 export type ShapeKind = "quad" | "circle";
 
 /** One drawable primitive in a layer, rasterized as a real instanced mesh (a
- * unit quad shaded by the kind's signed-distance function). Coordinates are
- * normalized to the canvas: center (x,y) in 0..1 (x right, y UP -- origin
- * bottom-left, matching fragCoord), size (w,h) as a fraction of canvas width and
- * height. Rotation is rigid (applied in pixel space so aspect never shears it).
- * Shapes within a layer paint back-to-front in array order. */
+ * unit quad shaded by the kind's signed-distance function). */
 export interface Shape {
 	id: string;
 	kind: ShapeKind;
-	x: number; // center X, 0..1 of width
-	y: number; // center Y, 0..1 of height (origin bottom-left)
+	x: number;
+	y: number;
 	w: number; // full width, fraction of canvas width
 	h: number; // full height, fraction of canvas height
 	rotation: number; // radians
-	color: [number, number, number, number]; // RGBA 0..1 (straight; rasterized premultiplied)
-	cornerRadius: number; // 0..1 of the smaller half-extent (rounded corners; quad)
+	color: [number, number, number, number];
+	cornerRadius: number;
 	feather: number; // edge softness in pixels (>= 0; on top of 1px AA)
-	/** Radial falloff, 0..1. 0 = solid fill (crisp/feathered edge). >0 ramps alpha
-	 * from 1 at the centre to 0 at the edge over this fraction of the half-extent
-	 * (1 = full centre->edge gradient) -- turns the shape into a radial-gradient mask. */
 	falloff: number;
 }
 
-/** One layer in the document's back-to-front stack. A layer is its own node
- * graph (`passes` + `outputPassId`, exactly like the old top-level project) plus
- * a list of geometry `shapes`. Its passes can wire layer-ambient inputs:
- * kind:"under" (the composite of the layers below) and kind:"geometry" (this
- * layer's rasterized shapes), plus kind:"mask" when the layer has a mask. The
- * layer's output pass produces the new
- * composite. Blending is therefore whatever the graph computes. */
+/** One layer in the document's back-to-front stack. */
 export interface Layer {
 	id: string;
 	name: string;
 	visible: boolean;
-	opacity: number; // 0..1, scales this layer's geometry contribution
+	opacity: number;
 	passes: Pass[]; // the layer's render graph
 	outputPassId: string; // the pass whose output is this layer's composite
 	shapes: Shape[];
-	/** Optional layer MASK: another layer (rendered standalone, no `under`) whose
-	 * output ALPHA is available to this layer's graph as kind:"mask". The standard
-	 * masked-composite graph computes mix(under, thisComposite, mask.a). */
+	/** Optional layer MASK: another layer. */
 	mask?: Layer;
 }
 
-// A bindable media asset: a still image or (kind === "video") a clip sampled per
-// frame. Both are stored inline as a data URL so they persist/export with the
-// project. The webcam is a live channel with no asset.
+// A bindable media asset: a still image or (kind === "video") a clip sampled per frame. Both are stored inline as a data URL so they persist/export with the project. The
+// webcam is a live channel with no asset.
 export interface ImageAsset {
 	id: string;
 	name: string;
@@ -179,10 +144,7 @@ export interface ImageAsset {
 export interface Project {
 	id: string;
 	name: string;
-	/** The document: an ordered stack of layers drawn BACK TO FRONT. layers[0] is
-	 * the bottom layer (drawn first); the last entry is on top. Each layer is its
-	 * own render graph; the previous layers' composite feeds the next as "under".
-	 * The topmost visible layer's composite is shown on screen. */
+	/** The document: an ordered stack of layers drawn BACK TO FRONT. */
 	layers: Layer[];
 	/** Custom uniforms are shared across every pass in every layer. */
 	uniforms: Uniform[];
@@ -203,8 +165,7 @@ export interface ChatConfig {
 	maxTokens: number;
 	temperature: number;
 	useProxy: boolean;
-	/** "native" = function/tool calling via the API; "text" = forgiving XML tags
-	 * in the response text, for models/endpoints without tool-calling support. */
+	/** "native" = function/tool calling via the API. */
 	toolMode: ToolMode;
 }
 
@@ -220,11 +181,9 @@ export interface ImageGenConfig {
 export interface Settings {
 	chat: ChatConfig;
 	imageGen: ImageGenConfig;
-	/** CORS proxy TEMPLATE. `{{.url}}` is replaced with the percent-encoded
-	 * target, `{{.rawurl}}` with the target verbatim; a template with neither
-	 * token has the target appended (the pre-template prefix form). */
+	/** CORS proxy TEMPLATE. */
 	proxyUrl: string;
-	renderScale: number; // 0.25 .. 1
+	renderScale: number;
 	squarePixels: boolean; // report iResolution as the short side so UVs are isotropic (circles stay round)
 	autoScreenshot: boolean; // attach a render to the model after each shader change
 	screenshotMaxDim: number; // longest edge fed to the model
@@ -338,9 +297,8 @@ export function makeCompositeLayer(name: string, shapes: Shape[] = []): Layer {
 	return makeLayer(name, [pass], pass.id, shapes);
 }
 
-// A mask layer's default graph: output its own geometry directly (so the mask's
-// alpha = the shapes' coverage / radial gradient). It's a full layer, so it can
-// be edited or made procedural like any other; it just doesn't sample `under`.
+// A mask layer's default graph: output its own geometry directly (so the
+// mask's alpha = the shapes' coverage / radial gradient).
 export const MASK_SOURCE = `// Mask: output this layer's geometry; its alpha is the mask coverage.
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 	fragColor = texture(iChannel0, fragCoord / iResolution.xy);
@@ -367,8 +325,7 @@ export function makeMaskLayer(shapes: Shape[] = []): Layer {
 }
 
 /** The wiring add_mask generates: iChannel0=under, iChannel1=the unmasked
- * output, iChannel2=mask. Used to recognise a wrapper saved before `role`
- * existed (source and name may have been edited since). */
+ * output, iChannel2=mask. */
 export function hasMaskCompositeWiring(pass: Pass): boolean {
 	return pass.channels[0]?.kind === "under" && pass.channels[1]?.kind === "pass" && pass.channels[2]?.kind === "mask";
 }

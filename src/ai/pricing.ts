@@ -1,13 +1,4 @@
-// Per-model pricing + context windows for the chat usage indicator (cost and
-// context-window %). Anthropic rates are authoritative (Claude API pricing); a
-// few common OpenAI models are included as a convenience. Unknown models report
-// no cost (the indicator then shows only tokens/sec + context %) and fall back to
-// a default context window.
-//
-// Rates are USD per 1,000,000 tokens. cacheRead / cacheWrite are the prompt-cache
-// read and (5-minute ephemeral) write rates; Anthropic bills these at 0.1x and
-// 1.25x the base input rate respectively. OpenAI does not bill cache writes, so
-// cacheWrite is unused for those models (we report 0 cache-write tokens there).
+// Per-model pricing + context windows for the chat usage indicator (cost and context-window %).
 
 import type { Usage } from "./types.ts";
 
@@ -60,10 +51,9 @@ export function hasPricing(model: string): boolean {
 }
 
 /** Cost in USD for one request's usage, or null when the model's pricing is
- * unknown. Computed purely from the server-reported token counts: base input at
- * the full rate, cache-read tokens at the read discount, cache-write tokens at the
- * write premium, output at the output rate. Cache counts the server didn't report
- * (`undefined`) contribute 0 — we never estimate/infer cached tokens to feed this. */
+ * unknown. Computed purely from the server-reported token counts: base input
+ * at the full rate, cache-read tokens at the read discount. This also covers
+ * cache-write tokens at the write premium, output at the output rate. */
 export function messageCost(model: string, u: Usage): number | null {
 	const rate = lookup(model).rate;
 	if (!rate) return null;
@@ -72,13 +62,6 @@ export function messageCost(model: string, u: Usage): number | null {
 	return (u.inputTokens * rate.in + u.outputTokens * rate.out + cacheRead * rate.cacheRead + cacheWrite * rate.cacheWrite) / PER_M;
 }
 
-/** Share (0..100) of the input prompt served from the prompt cache, computed
- * ONLY from the server-reported cache-read count — never estimated/inferred.
- * Returns `undefined` when the endpoint reported no cache-read count (the UI then
- * shows "n/a"/hides the indicator); a real number — including an explicit 0 when
- * the server reported 0 cached tokens — otherwise. The denominator is the full
- * prompt (uncached input + cache-read + cache-write), so the value reflects the
- * true cache-hit rate of the request. */
 export function cachePct(u: Usage): number | undefined {
 	if (u.cacheReadTokens === undefined) return undefined;
 	const totalIn = u.inputTokens + u.cacheReadTokens + (u.cacheWriteTokens ?? 0);
