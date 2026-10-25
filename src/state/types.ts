@@ -191,7 +191,7 @@ export interface Project {
 	updatedAt: number;
 }
 
-export type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama-cloud" | "bifrost";
+export type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama-cloud";
 
 export type ToolMode = "native" | "text";
 

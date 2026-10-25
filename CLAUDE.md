@@ -329,16 +329,16 @@ pnpm run build        # ts0 build -> dist/index.html
 - **Providers** are a registry, `PROVIDERS` in `state/defaults.ts`: `label`,
   `wire` (`anthropic` | `openai` — everything but Anthropic speaks Chat
   Completions), `baseUrl`, `needsProxy`, `needsKey`, `needsKeyForModels`,
-  `models`, and an optional `hint` shown under the provider select. Adding one is
-  an entry plus a `ProviderId` member; the dropdown, the base-URL fallback, the
-  key guard and the model combobox all read it. Shipped:
-  anthropic, openai (generic/self-hosted), openrouter, ollama-cloud, bifrost.
-- **Bifrost** is a self-hosted gateway on the OpenAI wire (default
-  `http://localhost:8080/v1`); its model ids name the routed provider
-  (`<provider>/<model>`). The API key is its **virtual key**, sent in `x-bf-vk`
-  and as a bearer token by `openaiAuthHeaders`; a 401 with no recognized
-  credential is Bifrost's `virtual key is required` refusal. A direct browser
-  call needs `x-bf-vk` in the gateway's `allowed_headers`; the CORS hint says so.
+  `models`. Adding one is an entry plus a `ProviderId` member; the dropdown, the
+  base-URL fallback, the key guard and the model combobox all read it. Shipped:
+  anthropic, openai (generic/self-hosted), openrouter, ollama-cloud.
+- **Bifrost** is OpenAI-compatible, so it uses the generic `openai` provider
+  (base URL `http://localhost:8080/v1`) and has no registry entry of its own. Its
+  model ids name the routed provider (`<provider>/<model>`), and its API key is a
+  **virtual key**. `openaiAuthHeaders` sends the generic provider's key in both
+  `x-bf-vk` (read verbatim, so no `sk-bf-` prefix is required) and
+  `Authorization: Bearer`; hosted providers get bearer only. A direct browser
+  call needs `x-bf-vk` in Bifrost's `allowed_headers`.
 - **`needsProxy` forces the proxy on regardless of the toggle** (`chatUsesProxy`),
   because Ollama Cloud answers with no `access-control-allow-origin` and a
   browser cannot read a direct reply. Settings ticks the visible box and says

@@ -19,7 +19,7 @@ function ok(cond: boolean, msg: string): void {
 	passed++;
 }
 
-const IDS: ProviderId[] = ["anthropic", "openai", "openrouter", "ollama-cloud", "bifrost"];
+const IDS: ProviderId[] = ["anthropic", "openai", "openrouter", "ollama-cloud"];
 
 function settingsFor(provider: ProviderId, over: Partial<Settings["chat"]> = {}): Settings {
 	return { ...structuredClone(DEFAULT_SETTINGS), chat: { ...DEFAULT_SETTINGS.chat, provider, ...over } };
@@ -34,18 +34,14 @@ for (const id of IDS) {
 	const info = PROVIDERS[id];
 	ok(!!info, `${id} has a registry entry`);
 	ok(info.label.trim().length > 0, `${id} has a label for the dropdown`);
-	ok(/^https?:\/\//.test(info.baseUrl), `${id} has an absolute base URL`);
+	ok(/^https:\/\//.test(info.baseUrl), `${id} has an absolute https base URL`);
 	ok(info.models.length > 0, `${id} offers at least one model preset`);
-}
-eq(PROVIDERS.bifrost.baseUrl, "http://localhost:8080/v1", "Bifrost defaults to its local gateway");
-for (const id of ["anthropic", "openai", "openrouter", "ollama-cloud"] as ProviderId[]) {
-	ok(/^https:\/\//.test(PROVIDERS[id].baseUrl), `${id} has an https base URL`);
 }
 
 // ---- wire format ------------------------------------------------------------
 
 eq(PROVIDERS.anthropic.wire, "anthropic", "Anthropic uses the Messages wire format");
-for (const id of ["openai", "openrouter", "ollama-cloud", "bifrost"] as ProviderId[]) {
+for (const id of ["openai", "openrouter", "ollama-cloud"] as ProviderId[]) {
 	eq(PROVIDERS[id].wire, "openai", `${id} speaks OpenAI Chat Completions`);
 }
 
@@ -60,7 +56,6 @@ eq(providerBaseUrl("openrouter", "https://my.gateway/v1"), "https://my.gateway/v
 eq(chatEndpoint(settingsFor("anthropic")), "https://api.anthropic.com/v1/messages", "Anthropic posts to /v1/messages, unproxied");
 eq(chatEndpoint(settingsFor("openai")), "https://api.openai.com/v1/chat/completions", "OpenAI posts to /chat/completions, unproxied");
 eq(chatEndpoint(settingsFor("openrouter")), "https://openrouter.ai/api/v1/chat/completions", "OpenRouter sends CORS headers, so it is called directly");
-eq(chatEndpoint(settingsFor("bifrost")), "http://localhost:8080/v1/chat/completions", "Bifrost posts to its OpenAI-compatible route, unproxied");
 
 // Ollama Cloud answers with no access-control-allow-origin, so a direct browser
 // call cannot be read. Picking it has to route through the proxy on its own --
@@ -91,7 +86,7 @@ eq(
 // Only the generic OpenAI-compatible provider may run keyless (a local server);
 // every hosted one is blocked before the request with a useful message instead.
 eq(PROVIDERS.openai.needsKey, false, "OpenAI-compatible can be keyless for a local server");
-for (const id of ["anthropic", "openrouter", "ollama-cloud", "bifrost"] as ProviderId[]) {
+for (const id of ["anthropic", "openrouter", "ollama-cloud"] as ProviderId[]) {
 	eq(PROVIDERS[id].needsKey, true, `${id} needs an API key to chat`);
 }
 // Both new providers serve their catalogue openly, so the model combobox fills
@@ -101,17 +96,17 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 
 // ---- credential header ------------------------------------------------------
 
-// Bifrost takes the virtual key from `x-bf-vk` verbatim, so a key without the
-// `sk-bf-` prefix works. The bearer form goes out beside it so either header
-// authenticates.
+// Bifrost is OpenAI-compatible and reads its virtual key from `x-bf-vk`
+// verbatim, so a key without the `sk-bf-` prefix works there. The generic
+// provider sends the key both ways; hosted providers get only the bearer form.
 {
-	const bifrost = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "bifrost", apiKey: " vk-abc " });
-	eq(bifrost["x-bf-vk"], "vk-abc", "Bifrost gets the trimmed virtual key in x-bf-vk");
-	eq(bifrost["authorization"], "Bearer vk-abc", "Bifrost also gets the bearer form");
-	eq(openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "bifrost", apiKey: " " })["x-bf-vk"], undefined, "a blank virtual key sends no header");
-	const openai = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: "sk-x" });
-	eq(openai["authorization"], "Bearer sk-x", "every other provider keeps the bearer token");
-	ok(!("x-bf-vk" in openai), "x-bf-vk is Bifrost's alone");
+	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " vk-abc " });
+	eq(generic["x-bf-vk"], "vk-abc", "the OpenAI-compatible provider sends the trimmed key in x-bf-vk");
+	eq(generic["authorization"], "Bearer vk-abc", "and it also sends the bearer form");
+	eq(openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " " })["x-bf-vk"], undefined, "a blank key sends no header");
+	const hosted = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openrouter", apiKey: "sk-x" });
+	eq(hosted["authorization"], "Bearer sk-x", "hosted providers keep the bearer token");
+	ok(!("x-bf-vk" in hosted), "hosted providers get no x-bf-vk");
 }
 
 // ---- request body gates: never a field the model rejects with a 400 ---------
@@ -165,9 +160,6 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	ok("max_tokens" in local, "a self-hosted server keeps max_tokens whatever the model id");
 	eq(local["cache_prompt"], true, "a self-hosted server gets cache_prompt");
 	ok(!("cache_prompt" in classic), "hosted OpenAI never gets cache_prompt");
-	// Bifrost is a gateway in front of every provider, so llama.cpp's field would
-	// be passed on where it does not belong.
-	ok(!("cache_prompt" in openaiBody({ ...settingsFor("bifrost", { model: "openai/gpt-5" }).chat }, "sys", "", HISTORY, [TOOL])), "Bifrost gets no cache_prompt");
 	eq(body({ model: "gpt-4.1" }, { toolChoice: "none" })["tool_choice"], "none", "tool_choice none on the OpenAI wire");
 }
 

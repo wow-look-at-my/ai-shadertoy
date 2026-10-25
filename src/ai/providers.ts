@@ -46,15 +46,15 @@ export function chatEndpoint(settings: Settings): string {
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
-/** The credential headers for an OpenAI-wire request. Bifrost reads its virtual
- * key from `x-bf-vk` (taken verbatim, so a key without the `sk-bf-` prefix
- * works); the bearer form goes alongside it so either path authenticates. Every
- * other endpoint sends only `Authorization: Bearer`. Exported so the header
- * choice can be asserted without a request. */
+/** The credential headers for an OpenAI-wire request. Bifrost is
+ * OpenAI-compatible but reads its virtual key from `x-bf-vk` (verbatim, so a key
+ * without the `sk-bf-` prefix works), so the generic provider sends the key both
+ * ways and either form authenticates. Hosted providers get only the bearer form.
+ * Exported so the header choice can be asserted without a request. */
 export function openaiAuthHeaders(cfg: ChatConfig): Record<string, string> {
 	const key = cfg.apiKey.trim();
 	if (!key) return {};
-	if (cfg.provider === "bifrost") return { "x-bf-vk": key, authorization: `Bearer ${key}` };
+	if (cfg.provider === "openai") return { authorization: `Bearer ${key}`, "x-bf-vk": key };
 	return { authorization: `Bearer ${key}` };
 }
 
@@ -224,7 +224,7 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 	} catch (e) {
 		throw corsHint(e, cfg);
 	}
-	if (!res.ok) throw await httpError(res, cfg);
+	if (!res.ok) throw await httpError(res);
 
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "end_turn", thinking: [], usage: emptyUsage(), durationMs: 0 };
 	const blocks: Record<number, { type: string; id?: string; name?: string; json: string; thinking: string; signature: string }> = {};
@@ -418,7 +418,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 	} catch (e) {
 		throw corsHint(e, cfg);
 	}
-	if (!res.ok) throw await httpError(res, cfg);
+	if (!res.ok) throw await httpError(res);
 
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: emptyUsage(), durationMs: 0 };
 	const calls: Array<{ id: string; name: string; args: string; started: boolean }> = [];
@@ -539,7 +539,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 		return { ok: false, message: `${pe.message}${pe.hint ? ` ${pe.hint}` : ""}${keyNote}` };
 	}
 	if (!res.ok) {
-		const err = await httpError(res, cfg);
+		const err = await httpError(res);
 		return { ok: false, message: `${err.message}${err.hint ? ` ${err.hint}` : ""}${keyNote}` };
 	}
 
@@ -582,7 +582,7 @@ export async function listModels(settings: Settings): Promise<string[]> {
 	} catch (e) {
 		throw corsHint(e, cfg);
 	}
-	if (!res.ok) throw await httpError(res, cfg);
+	if (!res.ok) throw await httpError(res);
 	const json = (await res.json()) as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
 	const items = json.data ?? json.models ?? [];
 	const ids = items.map((m) => m.id ?? m.name ?? "").filter((s) => s.length > 0);
@@ -608,7 +608,7 @@ function safeJson(s: string): unknown {
 	}
 }
 
-async function httpError(res: Response, cfg?: ChatConfig): Promise<ProviderError> {
+async function httpError(res: Response): Promise<ProviderError> {
 	let detail = "";
 	try {
 		const text = await res.text();
@@ -622,19 +622,14 @@ async function httpError(res: Response, cfg?: ChatConfig): Promise<ProviderError
 	} catch {
 		/* ignore */
 	}
-	const hint =
-		res.status === 401
-			? cfg?.provider === "bifrost"
-				? "Paste your Bifrost virtual key in Settings (sent as x-bf-vk)."
-				: "Check your API key in Settings."
-			: undefined;
+	const hint = res.status === 401 ? "Check your API key in Settings." : undefined;
 	return new ProviderError(`HTTP ${res.status}: ${detail || res.statusText}`, res.status, hint);
 }
 
 function corsHint(e: unknown, cfg: ChatConfig): ProviderError {
 	const msg = e instanceof Error ? e.message : String(e);
 	if (e instanceof DOMException && e.name === "AbortError") return new ProviderError("Request cancelled.");
-	const hint = ollamaCorsHint(cfg) ?? bifrostCorsHint(cfg) ?? (chatUsesProxy(cfg) ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
+	const hint = ollamaCorsHint(cfg) ?? (chatUsesProxy(cfg) ? "The CORS proxy may be unreachable; check the proxy URL in Settings." : "This is likely a CORS/network error. Try enabling 'Route through CORS proxy' in Settings.");
 	return new ProviderError(`Network error: ${msg}`, undefined, hint);
 }
 
@@ -673,12 +668,4 @@ function openaiExtraHeaders(cfg: ChatConfig): Record<string, string> {
 function ollamaCorsHint(cfg: ChatConfig): string | undefined {
 	if (!isOllamaEndpoint(cfg)) return undefined;
 	return "Ollama blocks browser requests unless you allow this origin. Restart Ollama with OLLAMA_ORIGINS set: run `OLLAMA_ORIGINS='*' ollama serve`; or (macOS app) `launchctl setenv OLLAMA_ORIGINS '*'` then restart Ollama; or (Linux systemd) `systemctl edit ollama`, add `Environment=\"OLLAMA_ORIGINS=*\"`, then `systemctl restart ollama`. Then try again.";
-}
-
-// Bifrost allows localhost origins out of the box but only lets a browser send
-// the headers named in its `allowed_headers` config, so the `x-bf-vk` preflight
-// fails until the gateway lists that header.
-function bifrostCorsHint(cfg: ChatConfig): string | undefined {
-	if (cfg.provider !== "bifrost") return undefined;
-	return "Bifrost must allow the x-bf-vk header for browser calls: add \"x-bf-vk\" to allowed_headers in its client config, or route through the CORS proxy.";
 }
