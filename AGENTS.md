@@ -132,7 +132,7 @@ just build        # ts0 build -> dist/index.html
 
 ## CI / deploy
 
-`.github/workflows/ci.yml` is the only workflow. It holds **three actions and no `run:` steps**: `actions/checkout`, `wow-look-at-my/ts0@master`, then `buildhost/.github/actions/buildhost-publish-site@master` publishing `dist/` as a **public** per-branch site (`public: "true"`) via GHA OIDC.
+`.github/workflows/ci.yml` is the only workflow. It holds **three actions and no `run:` steps**: `wow-look-at-my/actions@parallel-checkout#latest` (the org's parallel checkout. Submodules follow the same-named branch at the run's locked commit), `wow-look-at-my/ts0@master`. Then `buildhost/.github/actions/buildhost-publish-site@master` publishing `dist/` as a **public** per-branch site (`public: "true"`) via GHA OIDC.
 
 The ts0 action takes **no command input**: one step always type-checks, tests and builds, in that order. A caller cannot pick a cheaper subset. A green check means the whole thing ran. Passing `args:` fails the step.
 

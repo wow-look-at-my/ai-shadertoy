@@ -22,7 +22,10 @@ jobs:
   build:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: wow-look-at-my/actions@parallel-checkout#latest
+        with:
+          submodule-branch: ${{ github.ref_name }}
+          submodule-branch-lock: https://pazer.build
       # One step type-checks, tests and builds: the action takes no command input, so a workflow cannot pick a cheaper subset. ts0.cjs carries its own TypeScript compiler and this project is browser-target with no runtime dependencies, so nothing has to install node_modules first.
       - uses: wow-look-at-my/ts0@lkgb
       # github.ref_name goes in as-is: buildhost resolves a slash-named branch (claude/foo) by longest match against its own site rows. It needs no slug and the site is addressed by the branch's real name.
