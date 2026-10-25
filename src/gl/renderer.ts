@@ -1019,6 +1019,7 @@ export class Renderer {
 
 	/** Read one pass's current output target as RGBA bytes. */
 	readPass(passId: string): PixelReadout | null {
+		this.renderFrame();
 		const p = this.allPasses.get(passId);
 		if (!p || !p.a || !p.b) return null;
 		return this.readTarget(this.curr(p).fbo, p.width, p.height, p.format);
