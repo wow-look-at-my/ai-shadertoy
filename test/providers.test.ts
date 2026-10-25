@@ -117,6 +117,9 @@ eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists model
 {
 	eq(reasoningDelta({ reasoning: "r1" })?.text, "r1", "the reasoning field is captured");
 	eq(reasoningDelta({ reasoning_content: "r2" })?.text, "r2", "the reasoning_content field is captured");
+	eq(reasoningDelta({ reasoning: "We", reasoning_content: "We", reasoning_details: [{ format: "text", text: "We" }] })?.text, "We", "details win over duplicate spellings");
+	eq(reasoningDelta({ reasoning_details: [{ format: "text", text: "We" }] })?.text, "We", "an untyped detail still carries text");
+	eq(reasoningDelta({ reasoning: "We", reasoning_content: "We" })?.text, "We", "identical string spellings count once");
 	const detail = reasoningDelta({ reasoning_details: [{ type: "reasoning.text", text: "r3", signature: "s3" }] });
 	eq(detail?.text, "r3", "a reasoning.text detail is captured");
 	eq(detail?.signature, "s3", "its signature is kept");
@@ -220,6 +223,36 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	eq(seen[0]["x-bf-vk"], "vk", "the OpenAI chat carries x-bf-vk");
 	eq(seen[1]["x-api-key"], "vk", "the Anthropic chat carries x-api-key");
 	eq(seen[1]["x-bf-vk"], "vk", "the Anthropic chat carries x-bf-vk");
+}
+
+// ---- reasoning through the shipped stream path ------------------------------
+{
+	const original = globalThis.fetch;
+	const events: string[] = [];
+	const delta = { reasoning: "We", reasoning_content: "We", reasoning_details: [{ format: "text", text: "We" }] };
+	const stream = `data: ${JSON.stringify({ choices: [{ delta, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
+	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
+	try {
+		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+		eq(turn.thinking.length, 1, "the combined delta makes one thinking block");
+		eq(turn.thinking[0].thinking, "We", "the combined delta is not duplicated");
+		eq(events.join(""), "We", "the combined delta emits one thinking delta");
+	} finally {
+		globalThis.fetch = original;
+	}
+}
+{
+	const original = globalThis.fetch;
+	const events: string[] = [];
+	const stream = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_details: [{ format: "text", text: "We" }] }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
+	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
+	try {
+		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+		eq(turn.thinking[0].thinking, "We", "an untyped detail reaches the thinking block");
+		eq(events.join(""), "We", "an untyped detail emits a thinking delta");
+	} finally {
+		globalThis.fetch = original;
+	}
 }
 
 // Anthropic: adaptive thinking on current models, a token budget on 4.5-era ones,

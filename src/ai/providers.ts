@@ -391,28 +391,31 @@ export interface ReasoningPiece {
 	signature: string;
 }
 
-/** Read reasoning text from one streamed OpenAI delta. Providers spell it
- * `reasoning`, `reasoning_content`, or typed `reasoning_details` entries. */
+/** Read reasoning text from one streamed OpenAI delta. A `reasoning_details`
+ * entry with text wins, then `reasoning` or `reasoning_content`. */
 export function reasoningDelta(delta: Record<string, unknown> | undefined): ReasoningPiece | null {
 	if (!delta) return null;
-	const parts: string[] = [];
+	let detailText = "";
 	let signature = "";
-	for (const field of ["reasoning", "reasoning_content"]) {
-		const value = delta[field];
-		if (typeof value === "string" && value) parts.push(value);
-	}
 	const details = delta["reasoning_details"];
 	if (Array.isArray(details)) {
 		for (const entry of details) {
 			if (!entry || typeof entry !== "object") continue;
 			const detail = entry as Record<string, unknown>;
-			if (detail["type"] !== "reasoning.text") continue;
-			if (typeof detail["text"] === "string" && detail["text"]) parts.push(detail["text"]);
+			const text = detail["text"];
+			if (typeof text === "string" && text) detailText += text;
 			if (typeof detail["signature"] === "string" && detail["signature"]) signature = detail["signature"];
 		}
 	}
-	if (!parts.length && !signature) return null;
-	return { text: parts.join(""), signature };
+	if (detailText) return { text: detailText, signature };
+	const parts: string[] = [];
+	for (const field of ["reasoning", "reasoning_content"]) {
+		const value = delta[field];
+		if (typeof value === "string" && value && !parts.includes(value)) parts.push(value);
+	}
+	const text = parts.join("");
+	if (!text && !signature) return null;
+	return { text, signature };
 }
 
 /** Append one reasoning piece to the turn's thinking blocks. A signed block is
