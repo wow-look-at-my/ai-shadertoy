@@ -232,11 +232,7 @@ function header(uniforms: Uniform[], channelCount: number): string {
 		.map((u) => `uniform ${glslType(u.type)} ${u.name};`)
 		.join("\n");
 	// Declare exactly the input samplers this pass has (iChannel0..N-1) plus a matching iChannelResolution[] -- no arbitrary cap, no unused declarations.
-<<<<<<< HEAD
 	const channelDecls = channelCount > 0 ? Array.from({ length: channelCount }, (_, i) => `uniform sampler2D iChannel${i};`).join("\n") + `\nuniform vec3 iChannelResolution[${channelCount}];\n` + channelRemapDecls(channelCount) : "";
-=======
-	const channelDecls = channelCount > 0 ? Array.from({ length: channelCount }, (_, i) => `uniform sampler2D iChannel${i};`).join("\n") + `\nuniform vec3 iChannelResolution[${channelCount}];\n` : "";
->>>>>>> origin/master
 	return `#version 300 es
 precision highp float;
 precision highp int;

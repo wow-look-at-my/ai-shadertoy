@@ -91,11 +91,7 @@ export async function runAgent(
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : toolCalls;
 
 		// Thinking blocks ride at the front of the assistant turn.
-<<<<<<< HEAD
 		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, ...t }));
-=======
-		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
->>>>>>> origin/master
 		const textBlocks: TextBlock[] = turn.text.trim() ? [{ type: "text", text: turn.text }] : [];
 		const assistantMsg: Message = {
 			id: uid("m_"),

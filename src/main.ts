@@ -4,11 +4,7 @@ import { Renderer } from "./gl/renderer.ts";
 import { Store } from "./state/store.ts";
 import { MODEL_PRESETS } from "./state/defaults.ts";
 import { createApp } from "./ui/app.ts";
-<<<<<<< HEAD
 import { completeOpenRouterSignIn, mergeSettingsDraft, OPENROUTER_DRAFT_KEY, OPENROUTER_VERIFIER_KEY, readSettingsDraft } from "./ai/openrouter.ts";
-=======
-import { completeOpenRouterSignIn, OPENROUTER_VERIFIER_KEY } from "./ai/openrouter.ts";
->>>>>>> origin/master
 import { el } from "./util/dom.ts";
 
 async function loadText(relPath: string): Promise<string> {
@@ -48,7 +44,6 @@ async function boot(): Promise<void> {
 	const store = new Store();
 	await store.init(renderer, defaultShader);
 
-<<<<<<< HEAD
 	const app = createApp(store, canvas, () => defaultShader);
 	mount.appendChild(app.root);
 	await finishOpenRouterSignIn(store, mount, app.openSettings);
@@ -78,26 +73,6 @@ async function finishOpenRouterSignIn(store: Store, mount: HTMLElement, openSett
 	}
 	store.updateSettings({ chat });
 	openSettings();
-=======
-	mount.appendChild(createApp(store, canvas, () => defaultShader));
-	await finishOpenRouterSignIn(store, mount);
-}
-
-/** Complete an OpenRouter sign-in that returned to this page. */
-async function finishOpenRouterSignIn(store: Store, mount: HTMLElement): Promise<void> {
-	const result = await completeOpenRouterSignIn(location.href, sessionStorage.getItem(OPENROUTER_VERIFIER_KEY));
-	if (!result) return;
-	sessionStorage.removeItem(OPENROUTER_VERIFIER_KEY);
-	history.replaceState(null, "", result.url);
-	if (!result.key) {
-		mount.appendChild(el("div", { class: "banner error", attrs: { role: "status" } }, `OpenRouter sign-in failed: ${result.error ?? "unknown error"}`));
-		return;
-	}
-	const chat = store.settings.chat;
-	const isPreset = Object.values(MODEL_PRESETS).some((list) => list.includes(chat.model));
-	const model = isPreset && !MODEL_PRESETS.openrouter.includes(chat.model) ? MODEL_PRESETS.openrouter[0] : chat.model;
-	store.updateSettings({ chat: { ...chat, provider: "openrouter", apiKey: result.key, model } });
->>>>>>> origin/master
 }
 
 boot().catch((e) => {

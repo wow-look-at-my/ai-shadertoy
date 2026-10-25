@@ -1,11 +1,7 @@
 // Unit tests for the OpenRouter PKCE sign-in helpers.
 
-<<<<<<< HEAD
 import { DEFAULT_SETTINGS } from "../src/state/defaults.ts";
 import { base64url, completeOpenRouterSignIn, createPkcePair, draftSettings, exchangeOpenRouterCode, mergeSettingsDraft, openRouterAuthUrl, openRouterExchangeRequest, OPENROUTER_KEYS_URL, pkceChallenge, readSettingsDraft, takeCallbackCode } from "../src/ai/openrouter.ts";
-=======
-import { base64url, completeOpenRouterSignIn, createPkcePair, exchangeOpenRouterCode, openRouterAuthUrl, openRouterExchangeRequest, OPENROUTER_KEYS_URL, pkceChallenge, takeCallbackCode } from "../src/ai/openrouter.ts";
->>>>>>> origin/master
 
 let passed = 0;
 function eq(a: unknown, b: unknown, msg: string): void {
@@ -44,10 +40,7 @@ eq(auth.origin + auth.pathname, "https://openrouter.ai/auth", "the authorize end
 eq(auth.searchParams.get("callback_url"), "https://example.com/app/", "the callback drops the query and hash");
 eq(auth.searchParams.get("code_challenge"), "chal", "the challenge is passed");
 eq(auth.searchParams.get("code_challenge_method"), "S256", "the challenge method is S256");
-<<<<<<< HEAD
 eq(auth.searchParams.get("key_label"), "AI Shadertoy", "the key label names the app");
-=======
->>>>>>> origin/master
 let threw = false;
 try {
 	openRouterAuthUrl("file:///tmp/app.html", "chal");
@@ -111,7 +104,6 @@ eq(failed?.url, "https://example.com/app", "a failure still cleans the URL");
 
 eq(await completeOpenRouterSignIn("https://example.com/app", "ver"), null, "no code means nothing to do");
 
-<<<<<<< HEAD
 // ---- settings draft ---------------------------------------------------------
 
 {
@@ -135,6 +127,4 @@ eq(await completeOpenRouterSignIn("https://example.com/app", "ver"), null, "no c
 	eq(readSettingsDraft("[]"), null, "an array is not a draft");
 }
 
-=======
->>>>>>> origin/master
 console.log(`ok - ${passed} assertions passed`);

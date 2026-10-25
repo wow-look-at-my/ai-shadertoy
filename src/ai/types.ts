@@ -45,15 +45,10 @@ export interface AssistantTurn {
 	text: string;
 	toolCalls: ToolCall[];
 	stopReason: string;
-<<<<<<< HEAD
 	/** Captured thinking blocks, in order. */
 	thinking: Array<Omit<ThinkingBlock, "type">>;
 	/** Something about the response the user should see on the message. */
 	note?: string;
-=======
-	/** Captured thinking blocks (Anthropic extended thinking), in order. */
-	thinking: Array<{ thinking: string; signature: string }>;
->>>>>>> origin/master
 	usage: Usage;
 	durationMs: number; // generation wall-clock (first token -> done), for tokens/sec
 }
