@@ -73,8 +73,8 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 	},
 	// Bifrost is a self-hosted LLM gateway: its model ids are the providers it
 	// routes to (`<provider>/<model>`), so the presets are examples and the
-	// refresh button lists the deployment's own catalogue. The virtual key goes in
-	// `x-bf-vk` (see providers.ts), not a bearer token.
+	// refresh button lists the deployment's own catalogue. Its API key is a
+	// virtual key, sent in `x-bf-vk` and as a bearer token (see providers.ts).
 	bifrost: {
 		label: "Bifrost",
 		wire: "openai",
