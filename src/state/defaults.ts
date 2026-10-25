@@ -1,6 +1,6 @@
 // Default settings and project factories.
 
-import type { Channel, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform, UniformType } from "./types.ts";
+import type { Channel, ChatConfig, Layer, Pass, ProviderId, Project, Settings, Shape, ShapeKind, Uniform, UniformType } from "./types.ts";
 import { channelsForSource, emptyChannel, ensureMaskCompositePass, hasMaskCompositeWiring, makeLayer, makePass, makeShape, MAX_INPUTS } from "./types.ts";
 import { isShapeKind } from "../gl/shapes.ts";
 import { uniformLength } from "../gl/wrapper.ts";
@@ -80,7 +80,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	chat: {
 		provider: "anthropic",
 		baseUrl: "",
-		apiKey: "",
+		apiKeys: {},
 		model: "claude-opus-5",
 		maxTokens: 16384,
 		temperature: 0.7,
@@ -117,10 +117,16 @@ export function migrateProxyTemplate(value: string): string {
 
 export function mergeSettings(partial: Partial<Settings> | null): Settings {
 	if (!partial) return structuredClone(DEFAULT_SETTINGS);
+	const chatPartial = { ...(partial.chat ?? {}) } as Partial<ChatConfig> & { apiKey?: unknown };
+	const legacyKey = typeof chatPartial.apiKey === "string" ? chatPartial.apiKey : "";
+	delete chatPartial.apiKey;
+	const apiKeys = { ...(chatPartial.apiKeys ?? {}) };
+	const provider = chatPartial.provider ?? DEFAULT_SETTINGS.chat.provider;
+	if (legacyKey && !apiKeys[provider]) apiKeys[provider] = legacyKey;
 	const merged: Settings = {
 		...DEFAULT_SETTINGS,
 		...partial,
-		chat: { ...DEFAULT_SETTINGS.chat, ...(partial.chat ?? {}) },
+		chat: { ...DEFAULT_SETTINGS.chat, ...chatPartial, apiKeys },
 		imageGen: { ...DEFAULT_SETTINGS.imageGen, ...(partial.imageGen ?? {}) },
 	};
 	merged.proxyUrl = migrateProxyTemplate(merged.proxyUrl);

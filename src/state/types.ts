@@ -155,12 +155,15 @@ export interface Project {
 
 export type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama-cloud";
 
+/** Chat keys by provider, so switching providers keeps each one's key. */
+export type ApiKeys = Partial<Record<ProviderId, string>>;
+
 export type ToolMode = "native" | "text";
 
 export interface ChatConfig {
 	provider: ProviderId;
 	baseUrl: string; // override endpoint (OpenAI-compatible) or anthropic base
-	apiKey: string;
+	apiKeys: ApiKeys;
 	model: string;
 	maxTokens: number;
 	temperature: number;

@@ -4,7 +4,7 @@ import { Renderer } from "./gl/renderer.ts";
 import { Store } from "./state/store.ts";
 import { MODEL_PRESETS } from "./state/defaults.ts";
 import { createApp } from "./ui/app.ts";
-import { completeOpenRouterSignIn, OPENROUTER_VERIFIER_KEY } from "./ai/openrouter.ts";
+import { completeOpenRouterSignIn, mergeSettingsDraft, OPENROUTER_DRAFT_KEY, OPENROUTER_VERIFIER_KEY, readSettingsDraft } from "./ai/openrouter.ts";
 import { el } from "./util/dom.ts";
 
 async function loadText(relPath: string): Promise<string> {
@@ -44,24 +44,35 @@ async function boot(): Promise<void> {
 	const store = new Store();
 	await store.init(renderer, defaultShader);
 
-	mount.appendChild(createApp(store, canvas, () => defaultShader));
-	await finishOpenRouterSignIn(store, mount);
+	const app = createApp(store, canvas, () => defaultShader);
+	mount.appendChild(app.root);
+	await finishOpenRouterSignIn(store, mount, app.openSettings);
 }
 
-/** Complete an OpenRouter sign-in that returned to this page. */
-async function finishOpenRouterSignIn(store: Store, mount: HTMLElement): Promise<void> {
+/** Restore the settings draft and complete a returning OpenRouter sign-in. */
+async function finishOpenRouterSignIn(store: Store, mount: HTMLElement, openSettings: () => void): Promise<void> {
+	const draft = readSettingsDraft(sessionStorage.getItem(OPENROUTER_DRAFT_KEY));
 	const result = await completeOpenRouterSignIn(location.href, sessionStorage.getItem(OPENROUTER_VERIFIER_KEY));
-	if (!result) return;
-	sessionStorage.removeItem(OPENROUTER_VERIFIER_KEY);
-	history.replaceState(null, "", result.url);
-	if (!result.key) {
-		mount.appendChild(el("div", { class: "banner error", attrs: { role: "status" } }, `OpenRouter sign-in failed: ${result.error ?? "unknown error"}`));
-		return;
+	if (!result && !draft) return;
+	let chat = mergeSettingsDraft(store.settings.chat, draft);
+	sessionStorage.removeItem(OPENROUTER_DRAFT_KEY);
+	if (result) {
+		sessionStorage.removeItem(OPENROUTER_VERIFIER_KEY);
+		history.replaceState(null, "", result.url);
 	}
-	const chat = store.settings.chat;
-	const isPreset = Object.values(MODEL_PRESETS).some((list) => list.includes(chat.model));
-	const model = isPreset && !MODEL_PRESETS.openrouter.includes(chat.model) ? MODEL_PRESETS.openrouter[0] : chat.model;
-	store.updateSettings({ chat: { ...chat, provider: "openrouter", apiKey: result.key, model } });
+	if (result?.key) {
+		const isPreset = Object.values(MODEL_PRESETS).some((list) => list.includes(chat.model));
+		chat = {
+			...chat,
+			provider: "openrouter",
+			model: isPreset && !MODEL_PRESETS.openrouter.includes(chat.model) ? MODEL_PRESETS.openrouter[0] : chat.model,
+			apiKeys: { ...chat.apiKeys, openrouter: result.key },
+		};
+	} else if (result?.error) {
+		mount.appendChild(el("div", { class: "banner error", attrs: { role: "status" } }, `OpenRouter sign-in failed: ${result.error}`));
+	}
+	store.updateSettings({ chat });
+	openSettings();
 }
 
 boot().catch((e) => {

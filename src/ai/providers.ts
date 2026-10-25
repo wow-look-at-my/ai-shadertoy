@@ -51,15 +51,20 @@ export function modelsEndpoint(settings: Settings): string {
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
+/** The active provider's key. */
+export function chatApiKey(cfg: ChatConfig): string {
+	return (cfg.apiKeys[cfg.provider] ?? "").trim();
+}
+
 /** The Anthropic-wire credential headers. A base-URL override is a gateway, so
  * the key also goes in `x-bf-vk`. The hosted default keeps its own headers. */
 export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
+	const key = chatApiKey(cfg);
 	const headers: Record<string, string> = {
-		"x-api-key": cfg.apiKey,
+		"x-api-key": key,
 		"anthropic-version": "2023-06-01",
 		"anthropic-dangerous-direct-browser-access": "true",
 	};
-	const key = cfg.apiKey.trim();
 	if (key && cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
 	return headers;
 }
@@ -68,7 +73,7 @@ export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
  * gateway, so the key also goes in `x-bf-vk` (Bifrost reads it verbatim). The
  * hosted default keeps the bearer token alone. */
 export function openaiAuthHeaders(cfg: ChatConfig): Record<string, string> {
-	const key = cfg.apiKey.trim();
+	const key = chatApiKey(cfg);
 	if (!key) return {};
 	const headers: Record<string, string> = { authorization: `Bearer ${key}` };
 	if (cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
@@ -546,7 +551,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	const prompt = 'Respond with one word: "Hi"';
 	const isAnthropic = PROVIDERS[cfg.provider].wire === "anthropic";
 	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a likely cause when the request fails.
-	const keyNote = cfg.apiKey.trim() ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
+	const keyNote = chatApiKey(cfg) ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {

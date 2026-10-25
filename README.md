@@ -101,13 +101,13 @@ Open the app, click **Settings**, and add:
 
 - **Provider** - Anthropic (Claude), OpenRouter, Ollama Cloud, or any OpenAI-compatible endpoint. Each brings its own base URL, model presets and CORS handling, so picking one and pasting a key is enough.
 - **Model** - defaults to `claude-opus-5`. Presets are provided. Any model id is allowed. OpenRouter and Ollama Cloud publish their catalogues without a key, so the model list fills itself before you paste one.
-- **API key** - stored only in your browser's `localStorage`.
+- **API key** - stored only in your browser's `localStorage`. Each provider keeps its own key, so switching providers does not overwrite the others.
 
 Use **Test connection** to run a tiny real inference (it prompts the model for a one-word reply and shows it), confirming the key, model, base URL, and (CORS) connectivity all work before you start chatting.
 
 **Bifrost.** Bifrost speaks both wire formats. For OpenAI models pick **OpenAI-compatible** and set the base URL to `http://localhost:8080/v1`. For Anthropic models pick **Anthropic** and set it to `http://localhost:8080/anthropic`. Any base-URL override sends the virtual key in `x-bf-vk` beside the normal credential header. Model ids name the provider Bifrost routes to (`<provider>/<model>`) on the OpenAI wire. A direct browser connection needs `x-bf-vk` in Bifrost's `allowed_headers`.
 
-**OpenRouter sign-in.** Settings offers **Sign in with OpenRouter**. It opens OpenRouter's authorize page and returns with a code. The app exchanges that code for an API key labeled AI Shadertoy, selects OpenRouter, and stores the key. The page must be served over http(s).
+**OpenRouter sign-in.** Settings offers **Sign in with OpenRouter**. It opens OpenRouter's authorize page and returns with a code. The app exchanges that code for an API key labeled AI Shadertoy, selects OpenRouter, and stores the key. The open Settings form is restored after the redirect. The page must be served over http(s).
 
 If CORS blocks direct browser calls, tick **Route chat through CORS proxy**. Ollama Cloud sends no CORS headers at all, so choosing it ticks the box for you and says why. You can still untick it.
 

@@ -1,7 +1,7 @@
 // Unit tests for the provider registry and the endpoint it composes.
 
-import { PROVIDERS, DEFAULT_SETTINGS, providerBaseUrl } from "../src/state/defaults.ts";
-import { anthropicBody, anthropicHeaders, appendThinking, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
+import { PROVIDERS, DEFAULT_SETTINGS, mergeSettings, providerBaseUrl } from "../src/state/defaults.ts";
+import { anthropicBody, anthropicHeaders, appendThinking, chatApiKey, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
 import type { Message, ProviderId, Settings } from "../src/state/types.ts";
 import type { AssistantTurn, ToolDef } from "../src/ai/types.ts";
 
@@ -94,21 +94,31 @@ for (const id of ["anthropic", "openrouter", "ollama-cloud"] as ProviderId[]) {
 eq(PROVIDERS.openrouter.needsKeyForModels, false, "OpenRouter lists models unauthenticated");
 eq(PROVIDERS["ollama-cloud"].needsKeyForModels, false, "Ollama Cloud lists models unauthenticated");
 
+// ---- per-provider keys ------------------------------------------------------
+{
+	const migrated = mergeSettings({ chat: { provider: "openrouter", apiKey: "sk-or-legacy" } } as unknown as Partial<Settings>);
+	eq(migrated.chat.apiKeys.openrouter, "sk-or-legacy", "a legacy single key moves to its provider");
+	eq(migrated.chat.apiKeys.anthropic, undefined, "other providers start without a key");
+	const keys = mergeSettings({ chat: { provider: "anthropic", apiKeys: { anthropic: "a", openrouter: "o" } } } as unknown as Partial<Settings>);
+	eq(chatApiKey(keys.chat), "a", "the active provider's key is read");
+	eq(chatApiKey({ ...keys.chat, provider: "openrouter" }), "o", "another provider's key is still there");
+}
+
 // ---- credential header ------------------------------------------------------
 
 // A base-URL override is a gateway, so its virtual key rides in x-bf-vk as well.
 {
-	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " vk-abc ", baseUrl: "http://localhost:8080/v1" });
+	const generic = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKeys: { openai: " vk-abc " }, baseUrl: "http://localhost:8080/v1" });
 	eq(generic["x-bf-vk"], "vk-abc", "the OpenAI-compatible gateway gets the trimmed key in x-bf-vk");
 	eq(generic["authorization"], "Bearer vk-abc", "and it also gets the bearer form");
-	eq(openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKey: " " })["x-bf-vk"], undefined, "a blank key sends no header");
-	const hosted = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openrouter", apiKey: "sk-x" });
+	eq(openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openai", apiKeys: { openai: " " } })["x-bf-vk"], undefined, "a blank key sends no header");
+	const hosted = openaiAuthHeaders({ ...DEFAULT_SETTINGS.chat, provider: "openrouter", apiKeys: { openrouter: "sk-x" } });
 	eq(hosted["authorization"], "Bearer sk-x", "the hosted default keeps the bearer token");
 	ok(!("x-bf-vk" in hosted), "the hosted default gets no x-bf-vk");
-	const anthropic = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKey: "sk-ant" });
+	const anthropic = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKeys: { anthropic: "sk-ant" } });
 	eq(anthropic["x-api-key"], "sk-ant", "the default Anthropic headers carry x-api-key");
 	ok(!("x-bf-vk" in anthropic), "the default Anthropic endpoint gets no x-bf-vk");
-	const bifrost = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKey: "vk", baseUrl: "http://localhost:8080/anthropic" });
+	const bifrost = anthropicHeaders({ ...DEFAULT_SETTINGS.chat, provider: "anthropic", apiKeys: { anthropic: "vk" }, baseUrl: "http://localhost:8080/anthropic" });
 	eq(bifrost["x-api-key"], "vk", "the Anthropic gateway keeps x-api-key");
 	eq(bifrost["x-bf-vk"], "vk", "the Anthropic gateway also gets x-bf-vk");
 }
@@ -186,10 +196,10 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 		return { ok: true, status: 200, json: async () => json } as Response;
 	}) as typeof fetch;
 	try {
-		await listModels(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }));
-		await listModels(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }));
-		await testConnection(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }));
-		await testConnection(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }));
+		await listModels(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }));
+		await listModels(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKeys: { anthropic: "vk" } }));
+		await testConnection(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }));
+		await testConnection(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKeys: { anthropic: "vk" } }));
 	} finally {
 		globalThis.fetch = original;
 	}
@@ -214,8 +224,8 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 		return { ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(body)); c.close(); } }) } as Response;
 	}) as typeof fetch;
 	try {
-		await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, []);
-		await streamChat(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }), "sys", "", HISTORY, []);
+		await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }), "sys", "", HISTORY, []);
+		await streamChat(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKeys: { anthropic: "vk" } }), "sys", "", HISTORY, []);
 	} finally {
 		globalThis.fetch = original;
 	}
@@ -233,7 +243,7 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	const stream = `data: ${JSON.stringify({ choices: [{ delta, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
 	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
 	try {
-		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
 		eq(turn.thinking.length, 1, "the combined delta makes one thinking block");
 		eq(turn.thinking[0].thinking, "We", "the combined delta is not duplicated");
 		eq(events.join(""), "We", "the combined delta emits one thinking delta");
@@ -247,7 +257,7 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	const stream = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_details: [{ format: "text", text: "We" }] }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
 	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
 	try {
-		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
+		const turn = await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKeys: { openai: "vk" } }), "sys", "", HISTORY, [], { onEvent: (ev) => { if (ev.type === "thinking") events.push(ev.delta); } });
 		eq(turn.thinking[0].thinking, "We", "an untyped detail reaches the thinking block");
 		eq(events.join(""), "We", "an untyped detail emits a thinking delta");
 	} finally {

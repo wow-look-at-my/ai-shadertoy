@@ -11,7 +11,12 @@ import { createRightPanel } from "./rightpanel.ts";
 import { createSettings } from "./settings.ts";
 import type { Store } from "../state/store.ts";
 
-export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader: () => string): HTMLElement {
+export interface App {
+	root: HTMLElement;
+	openSettings: () => void;
+}
+
+export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader: () => string): App {
 	const settings = createSettings(store);
 	const openSettings = () => settings.open();
 
@@ -53,7 +58,7 @@ export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader
 		else store.redo();
 	});
 
-	return root;
+	return { root, openSettings };
 }
 
 // True for elements with meaningful native text undo, where we must not hijack

@@ -1,6 +1,7 @@
 // Unit tests for the OpenRouter PKCE sign-in helpers.
 
-import { base64url, completeOpenRouterSignIn, createPkcePair, exchangeOpenRouterCode, openRouterAuthUrl, openRouterExchangeRequest, OPENROUTER_KEYS_URL, pkceChallenge, takeCallbackCode } from "../src/ai/openrouter.ts";
+import { DEFAULT_SETTINGS } from "../src/state/defaults.ts";
+import { base64url, completeOpenRouterSignIn, createPkcePair, draftSettings, exchangeOpenRouterCode, mergeSettingsDraft, openRouterAuthUrl, openRouterExchangeRequest, OPENROUTER_KEYS_URL, pkceChallenge, readSettingsDraft, takeCallbackCode } from "../src/ai/openrouter.ts";
 
 let passed = 0;
 function eq(a: unknown, b: unknown, msg: string): void {
@@ -102,5 +103,28 @@ ok(!!failed?.error, "a failed exchange reports the reason");
 eq(failed?.url, "https://example.com/app", "a failure still cleans the URL");
 
 eq(await completeOpenRouterSignIn("https://example.com/app", "ver"), null, "no code means nothing to do");
+
+// ---- settings draft ---------------------------------------------------------
+
+{
+	const live = { ...DEFAULT_SETTINGS.chat, provider: "openai" as const, model: "gpt-5", baseUrl: "http://localhost:8080/v1", apiKeys: { anthropic: "a", openai: "o" } };
+	const draft = readSettingsDraft(draftSettings(live));
+	eq(draft?.provider, "openai", "the draft keeps the provider");
+	eq(draft?.model, "gpt-5", "the draft keeps the model");
+	eq(draft?.baseUrl, "http://localhost:8080/v1", "the draft keeps the base URL");
+	eq(draft?.apiKeys?.anthropic, "a", "the draft keeps every provider key");
+
+	const stored = { ...DEFAULT_SETTINGS.chat, apiKeys: { "ollama-cloud": "c" } };
+	const merged = mergeSettingsDraft(stored, draft);
+	eq(merged.provider, "openai", "the draft replaces the stored provider");
+	eq(merged.apiKeys.openai, "o", "the draft per-provider keys merge in");
+	eq(merged.apiKeys["ollama-cloud"], "c", "a stored key outside the draft survives");
+
+	const kept = mergeSettingsDraft(stored, null);
+	eq(kept.apiKeys["ollama-cloud"], "c", "no draft leaves the stored keys alone");
+	eq(readSettingsDraft(null), null, "no raw draft is null");
+	eq(readSettingsDraft("not json"), null, "a malformed draft is ignored");
+	eq(readSettingsDraft("[]"), null, "an array is not a draft");
+}
 
 console.log(`ok - ${passed} assertions passed`);

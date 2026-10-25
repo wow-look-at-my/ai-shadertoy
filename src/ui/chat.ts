@@ -241,7 +241,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	// Every hosted provider needs a key; only the generic OpenAI-compatible one
 	// may be keyless (e.g. a local Ollama server), so don't block that.
 	function ensureReady(): boolean {
-		if (PROVIDERS[store.settings.chat.provider].needsKey && !store.settings.chat.apiKey) {
+		if (PROVIDERS[store.settings.chat.provider].needsKey && !store.settings.chat.apiKeys[store.settings.chat.provider]) {
 			alert("Add your API key in Settings first.");
 			deps.openSettings();
 			return false;

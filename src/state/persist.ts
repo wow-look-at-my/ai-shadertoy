@@ -1,7 +1,7 @@
 // Persistence.
 
-import type { ExportBundle, ImageAsset, Project, Settings } from "./types.ts";
-import { normalizeProject } from "./defaults.ts";
+import type { ChatConfig, ExportBundle, ImageAsset, Project, Settings } from "./types.ts";
+import { mergeSettings, normalizeProject } from "./defaults.ts";
 
 const DB_NAME = "ai-shadertoy";
 const DB_VERSION = 1;
@@ -134,7 +134,8 @@ export async function estimateStorage(): Promise<{ usage: number; quota: number 
 
 function stripKeys(settings: Settings): Settings {
 	const clone = structuredClone(settings);
-	clone.chat.apiKey = "";
+	clone.chat.apiKeys = {};
+	delete (clone.chat as ChatConfig & { apiKey?: unknown }).apiKey;
 	clone.imageGen.apiKey = "";
 	return clone;
 }
@@ -145,7 +146,10 @@ export async function buildExport(opts: { includeSettings: boolean; includeKeys:
 	const bundle: ExportBundle = { kind: "ai-shadertoy-export", version: 1, exportedAt: Date.now(), projects, assets };
 	if (opts.includeSettings) {
 		const raw = loadSettingsRaw();
-		if (raw) bundle.settings = opts.includeKeys ? (raw as Settings) : stripKeys(raw as Settings);
+		if (raw) {
+			const settings = mergeSettings(raw);
+			bundle.settings = opts.includeKeys ? settings : stripKeys(settings);
+		}
 	}
 	return bundle;
 }

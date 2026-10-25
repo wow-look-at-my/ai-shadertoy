@@ -6,8 +6,8 @@ import { icon } from "../util/icons.ts";
 import { debounce } from "../util/misc.ts";
 import { DEFAULT_SETTINGS, MODEL_PRESETS, PROVIDERS } from "../state/defaults.ts";
 import { listModels, testConnection } from "../ai/providers.ts";
-import { createPkcePair, openRouterAuthUrl, OPENROUTER_VERIFIER_KEY } from "../ai/openrouter.ts";
-import type { ProviderId, Settings, ToolMode } from "../state/types.ts";
+import { createPkcePair, draftSettings, openRouterAuthUrl, OPENROUTER_DRAFT_KEY, OPENROUTER_VERIFIER_KEY } from "../ai/openrouter.ts";
+import type { ApiKeys, ProviderId, Settings, ToolMode } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
 
 export interface SettingsModal {
@@ -29,6 +29,8 @@ export function createSettings(store: Store): SettingsModal {
 	const applySignInVisibility = () => {
 		signInRow.hidden = provider.value !== "openrouter";
 	};
+	let draftKeys: ApiKeys = {};
+	let activeProvider: ProviderId = DEFAULT_SETTINGS.chat.provider;
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -51,7 +53,7 @@ export function createSettings(store: Store): SettingsModal {
 	// button and the model fetch.
 	const currentProbe = (): Settings => ({
 		...store.settings,
-		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKey: apiKey.value.trim(), useProxy: useProxy.checked, toolMode: toolMode.value as ToolMode },
+		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKeys: { ...draftKeys, [provider.value]: apiKey.value.trim() }, useProxy: useProxy.checked, toolMode: toolMode.value as ToolMode },
 		proxyUrl: proxyUrl.value.trim() || DEFAULT_SETTINGS.proxyUrl,
 	});
 
@@ -97,6 +99,7 @@ export function createSettings(store: Store): SettingsModal {
 		try {
 			const pair = await createPkcePair();
 			sessionStorage.setItem(OPENROUTER_VERIFIER_KEY, pair.verifier);
+			sessionStorage.setItem(OPENROUTER_DRAFT_KEY, draftSettings(currentProbe().chat));
 			location.assign(openRouterAuthUrl(location.href, pair.challenge));
 		} catch (e) {
 			signInStatus.textContent = e instanceof Error ? e.message : String(e);
@@ -128,6 +131,10 @@ export function createSettings(store: Store): SettingsModal {
 		modelStatus.textContent = "";
 	};
 	provider.addEventListener("change", () => {
+		const p = provider.value as ProviderId;
+		draftKeys[activeProvider] = apiKey.value.trim();
+		activeProvider = p;
+		apiKey.value = draftKeys[p] ?? "";
 		refreshModelList();
 		applyProxyRequirement();
 		void refreshModels();
@@ -226,10 +233,12 @@ export function createSettings(store: Store): SettingsModal {
 	function open(): void {
 		const s = store.settings;
 		provider.value = s.chat.provider;
+		draftKeys = { ...s.chat.apiKeys };
+		activeProvider = s.chat.provider;
 		toolMode.value = s.chat.toolMode;
 		refreshModelList();
 		model.value = s.chat.model;
-		apiKey.value = s.chat.apiKey;
+		apiKey.value = draftKeys[s.chat.provider] ?? "";
 		baseUrl.value = s.chat.baseUrl;
 		maxTokens.value = String(s.chat.maxTokens);
 		temperature.value = String(s.chat.temperature);
@@ -256,11 +265,13 @@ export function createSettings(store: Store): SettingsModal {
 		overlay.hidden = true;
 	}
 	function save(): void {
+		const p = provider.value as ProviderId;
+		draftKeys[p] = apiKey.value.trim();
 		store.updateSettings({
 			chat: {
-				provider: provider.value as ProviderId,
+				provider: p,
 				model: model.value.trim(),
-				apiKey: apiKey.value.trim(),
+				apiKeys: { ...draftKeys },
 				baseUrl: baseUrl.value.trim(),
 				maxTokens: clampNum(maxTokens.value, 256, 128000, 16384),
 				temperature: clampNum(temperature.value, 0, 2, 0.7),

@@ -1,9 +1,11 @@
-// OpenRouter PKCE sign-in. Pure helpers for the authorize URL and the code
-// exchange. The UI supplies the browser APIs.
+// OpenRouter PKCE sign-in helpers.
+
+import type { ChatConfig } from "../state/types.ts";
 
 export const OPENROUTER_AUTH_URL = "https://openrouter.ai/auth";
 export const OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/auth/keys";
 export const OPENROUTER_VERIFIER_KEY = "openrouter-code-verifier";
+export const OPENROUTER_DRAFT_KEY = "openrouter-settings-draft";
 
 export function base64url(bytes: Uint8Array): string {
 	let binary = "";
@@ -84,6 +86,28 @@ export interface SignInCallback {
 	key?: string;
 	url: string;
 	error?: string;
+}
+
+/** Serialize the live form into the session draft for the redirect. */
+export function draftSettings(chat: ChatConfig): string {
+	return JSON.stringify(chat);
+}
+
+/** Read a settings draft, or null when there is none. */
+export function readSettingsDraft(raw: string | null): Partial<ChatConfig> | null {
+	if (!raw) return null;
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Partial<ChatConfig>) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Lay a draft over the stored chat, merging per-provider keys. */
+export function mergeSettingsDraft(chat: ChatConfig, draft: Partial<ChatConfig> | null): ChatConfig {
+	if (!draft) return chat;
+	return { ...chat, ...draft, apiKeys: { ...chat.apiKeys, ...(draft.apiKeys ?? {}) } };
 }
 
 /** Exchange a callback code when the page URL carries one. A failure keeps the

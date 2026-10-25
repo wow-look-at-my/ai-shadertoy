@@ -20,7 +20,7 @@ function parseSize(size: string): { w: number; h: number } {
 
 export async function generateImage(settings: Settings, prompt: string): Promise<GeneratedImage> {
 	const cfg = settings.imageGen;
-	const key = cfg.apiKey || settings.chat.apiKey;
+	const key = cfg.apiKey || settings.chat.apiKeys[settings.chat.provider] || "";
 	if (!key) throw new ProviderError("No API key configured for image generation.");
 	const base = withScheme(cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
 	let url = `${base}/images/generations`;
