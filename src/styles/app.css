@@ -1536,6 +1536,20 @@ textarea.code {
 	font-size: 13px;
 }
 
+.histogram-canvas {
+	display: block;
+	width: 100%;
+	height: auto;
+	margin-top: 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--bg-2);
+}
+.histogram-meta {
+	display: block;
+	margin-top: 8px;
+}
+
 /* ---- scrollbars ---- */
 ::-webkit-scrollbar {
 	width: 10px;

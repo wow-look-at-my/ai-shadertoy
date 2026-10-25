@@ -8,7 +8,7 @@ import { createShapeGizmo } from "./shapegizmo.ts";
 import type { Store } from "../state/store.ts";
 import type { RenderStats } from "../gl/renderer.ts";
 
-export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElement {
+export function createPreview(store: Store, canvas: HTMLCanvasElement, openHistogram: () => void): HTMLElement {
 	const playBtn = el("button", { class: "btn icon", title: "Play / Pause (space)" });
 	const updatePlay = () => render(playBtn, icon(store.renderer.isPaused() ? "play" : "pause"));
 	playBtn.addEventListener("click", () => store.togglePlay());
@@ -58,6 +58,7 @@ export function createPreview(store: Store, canvas: HTMLCanvasElement): HTMLElem
 		playBtn,
 		el("button", { class: "btn icon", title: "Restart time", on: { click: () => store.renderer.reset() } }, icon("restart")),
 		createDownloadMenu(store),
+		el("button", { class: "btn", type: "button", title: "Histogram of the viewport or a pass", on: { click: openHistogram } }, "Histogram"),
 		errBadge,
 		el("span", { class: "spacer" }),
 		squareBtn,

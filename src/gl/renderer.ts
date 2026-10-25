@@ -42,6 +42,14 @@ export interface RenderStats {
 	layers: number;
 }
 
+/** RGBA bytes read back from a render target, top-down. Float targets are
+ * clamped to the byte range. */
+export interface PixelReadout {
+	width: number;
+	height: number;
+	data: Uint8Array;
+}
+
 interface Target {
 	tex: WebGLTexture;
 	fbo: WebGLFramebuffer;
@@ -999,6 +1007,41 @@ export class Renderer {
 			avgColor: avg,
 			nonBlack: avg[0] + avg[1] + avg[2] > 6,
 		};
+	}
+
+	/** Read the presented composite as RGBA bytes. Null when nothing is presented. */
+	readViewport(): PixelReadout | null {
+		this.renderFrame();
+		const f = this.lastFinal;
+		if (!f) return null;
+		return this.readTarget(f.fbo, f.width, f.height, f.format);
+	}
+
+	/** Read one pass's current output target as RGBA bytes. */
+	readPass(passId: string): PixelReadout | null {
+		const p = this.allPasses.get(passId);
+		if (!p || !p.a || !p.b) return null;
+		return this.readTarget(this.curr(p).fbo, p.width, p.height, p.format);
+	}
+
+	private readTarget(fbo: WebGLFramebuffer, width: number, height: number, format: PassFormat): PixelReadout | null {
+		const gl = this.gl;
+		const data = new Uint8Array(width * height * 4);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+		if (this.isFloatFormat(format)) {
+			const raw = new Float32Array(width * height * 4);
+			gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, raw);
+			for (let i = 0; i < raw.length; i++) data[i] = Math.max(0, Math.min(255, Math.round(raw[i] * 255)));
+		} else {
+			gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+		}
+		const err = gl.getError();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		if (err !== gl.NO_ERROR) {
+			console.error(`readTarget: readPixels failed (GL error 0x${err.toString(16)})`);
+			return null;
+		}
+		return { width, height, data };
 	}
 
 	/** True when the presented composite is backed by a real HDR (rgba16f) target,

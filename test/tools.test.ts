@@ -68,7 +68,13 @@ function makeCtx(project: Project): ToolContext {
 		return layer.passes.find((p) => p.id === ref) ?? layer.passes.find((p) => p.name.toLowerCase() === ref.toLowerCase()) ?? passById(ref) ?? null;
 	};
 
-	const renderer = { maxInputs: () => 16, supportsFloat: () => true, stats: () => ({ time: 0, width: 4, height: 4, layers: project.layers.length, passes: project.layers.reduce((n, l) => n + l.passes.length, 0) }) } as unknown as ToolContext["renderer"];
+	const renderer = {
+		maxInputs: () => 16,
+		supportsFloat: () => true,
+		stats: () => ({ time: 0, width: 4, height: 4, layers: project.layers.length, passes: project.layers.reduce((n, l) => n + l.passes.length, 0) }),
+		readViewport: () => ({ width: 2, height: 1, data: Uint8Array.from([255, 255, 255, 255, 0, 0, 0, 0]) }),
+		readPass: () => ({ width: 1, height: 1, data: Uint8Array.from([0, 255, 0, 255]) }),
+	} as unknown as ToolContext["renderer"];
 
 	return {
 		settings: { imageGen: { enabled: false }, autoScreenshot: false } as unknown as ToolContext["settings"],
@@ -335,9 +341,9 @@ async function runAsync(ctx: ToolContext, name: string, input: Record<string, un
 	eq(a, b, "advertised set is deterministic");
 
 	const names = toolDefs({ imageGen: false }).map((t) => t.name);
-	eq(names.length, 8, "8 tools without image gen");
+	eq(names.length, 9, "9 tools without image gen");
 	const withGen = toolDefs({ imageGen: true }).map((t) => t.name);
-	eq(withGen.length, 9, "9 tools with image gen (generate_texture added)");
+	eq(withGen.length, 10, "10 tools with image gen (generate_texture added)");
 	check(!names.includes("generate_texture"), "generate_texture is the only gated tool");
 	check(withGen.includes("generate_texture"), "generate_texture appears when imageGen on");
 
@@ -345,8 +351,8 @@ async function runAsync(ctx: ToolContext, name: string, input: Record<string, un
 	eq(JSON.stringify(names), JSON.stringify(withGen.filter((n) => n !== "generate_texture")), "only generate_texture differs by gate");
 
 	// No per-conversation / per-state gating: identical before vs after authoring.
-	const expected = ["read", "create_object", "destroy_object", "edit_object", "edit_shader", "connect_pins", "set_uniforms", "capture_screenshot"];
-	eq(JSON.stringify(names), JSON.stringify(expected), "exactly the 8 generic + kept tools, in order");
+	const expected = ["read", "create_object", "destroy_object", "edit_object", "edit_shader", "connect_pins", "set_uniforms", "capture_screenshot", "histogram"];
+	eq(JSON.stringify(names), JSON.stringify(expected), "exactly the 9 generic + kept tools, in order");
 }
 
 // ---- screenshot barrier -----------------------------------------------------
@@ -358,6 +364,24 @@ async function runAsync(ctx: ToolContext, name: string, input: Record<string, un
 	const image = shot.content.find((b) => b.type === "image");
 	check(image?.type === "image" && image.data.includes("vec4(1.0, 0.0, 0.0, 1.0)"), "a screenshot after an edit reads the post-edit frame");
 	check(image?.type === "image" && !image.data.includes("vec4(0.0)"), "the pre-edit source is gone");
+}
+
+// ---- histogram tool ---------------------------------------------------------
+{
+	const project = makeProject("T", DEFAULT_SRC);
+	const ctx = makeCtx(project);
+	const tool = getTool("histogram");
+	check(!!tool && tool.def.name === "histogram", "the histogram tool is registered");
+	check(JSON.stringify(tool?.def.parameters).includes("\"channel\""), "the histogram schema exposes the channel");
+
+	const view = txt(run(ctx, "histogram", { channel: "luma" }));
+	check(view.includes("viewport | luma | 1 px"), "the viewport histogram reports its target and samples");
+	check(view.includes("luma mean 255.0 peak 255 (1)"), "a white pixel peaks at the top bin");
+	check(view.includes("255:1"), "the populated bins are listed");
+
+	const pass = txt(run(ctx, "histogram", { target: "Image", channel: "g" }));
+	check(pass.includes("Base / Image | g"), "a pass target reports its layer and pass");
+	check(pass.includes("g mean 255.0"), "a pass target reads its own buffer");
 }
 
 console.log(`tools.test.ts: ${passed} checks passed`);

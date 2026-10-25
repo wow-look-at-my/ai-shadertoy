@@ -7,6 +7,7 @@ A single-page, **client-side** sandbox where an AI builds 2D WebGL2 fragment sha
 - **Multi-pass render graph.** Within a layer (and the classic single-layer case), build a *graph* of passes, each rendering to its own texture. Sampling the output of others — e.g. effect → blur X → blur Y → composite — with per-pass feedback (a pass reading its own previous frame). Each pass has as many inputs as the GPU allows (≥16), not a hard-wired four.
 - **Single file.** The whole app builds to one self-contained `index.html` (no external requests) via [`ts0`](https://github.com/wow-look-at-my/ts0).
 - **Export the render.** Consider the preview's download button. That button offers lossless **PNG** and lossless **WebP**, plus lossless **EXR** (16-bit float) when the output pass is an HDR (`rgba16f`) target. So HDR renders leave the browser without clipping.
+- **Inspect a render.** The preview's **Histogram** button charts the viewport or any pass buffer. It offers luma, saturation, value, R, G, B, and additive RGB modes.
 - **Bring your own model.** Works with Anthropic (Claude) or any OpenAI-compatible chat API, with vision + tool use.
 - **Cheap to run.** Prompt caching is on by default, and a small live indicator shows tokens/sec, context use, and cost per turn + per session.
 - **Undo everything.** One unified history covers every change — your manual edits *and* the AI's — so a single undo reverts a whole AI turn.
@@ -26,7 +27,7 @@ The AI works through a small set of **generic, parameterized tools** — there i
 - `edit_shader` — targeted snippet replacements (the usual way it changes a shader, so it does not retype the whole thing).
 - `connect_pins` — wire a shader-declared input to `under`, `geometry`, `mask`, a built-in texture, an asset, the webcam, or another pass's output.
 - `set_uniforms` — live slider parameters, shared across all passes.
-- `capture_screenshot`, and (optional) `generate_texture`.
+- `capture_screenshot`, `histogram` (the viewport or a pass buffer, by channel), and (optional) `generate_texture`.
 
 ### Layers (node-graph compositing)
 

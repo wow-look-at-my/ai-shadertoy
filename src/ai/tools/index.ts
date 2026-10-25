@@ -9,6 +9,7 @@ import "./edit_shader.ts";
 import "./connect_pins.ts";
 import "./set_uniforms.ts";
 import "./capture_screenshot.ts";
+import "./histogram.ts";
 import "./generate_texture.ts";
 
 export { TOOL_NAMES } from "./names.ts";
