@@ -102,7 +102,10 @@ export async function runAgent(
 				: [...thinkingBlocks, ...textBlocks, ...toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
 			...(textMode ? { textTools: calls.map((c) => c.name) } : {}),
 		};
-		if (truncated) assistantMsg.note = `Cut off at ${settings.chat.maxTokens} output tokens${toolCalls.length < turn.toolCalls.length ? "; an incomplete tool call was dropped" : ""}. Raise "Max tokens" in Settings, or ask for a smaller step.`;
+		if (truncated) {
+			const limit = settings.chat.maxTokens === undefined ? "the output token limit" : `${settings.chat.maxTokens} output tokens`;
+			assistantMsg.note = `Cut off at ${limit}${toolCalls.length < turn.toolCalls.length ? "; an incomplete tool call was dropped" : ""}. Raise "Max tokens" in Settings, or ask for a smaller step.`;
+		}
 		else if (refused) assistantMsg.note = "The model declined this request (safety refusal).";
 		// An assistant turn must carry content; the API rejects an empty one.
 		if (assistantMsg.blocks.length === 0) assistantMsg.blocks.push({ type: "text", text: refused ? "(declined)" : "(no response)" });

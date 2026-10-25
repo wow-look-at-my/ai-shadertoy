@@ -82,8 +82,6 @@ export const DEFAULT_SETTINGS: Settings = {
 		baseUrl: "",
 		apiKeys: {},
 		model: "claude-opus-5",
-		maxTokens: 16384,
-		temperature: 0.7,
 		useProxy: false,
 		toolMode: "native",
 	},

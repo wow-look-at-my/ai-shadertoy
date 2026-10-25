@@ -103,6 +103,7 @@ Open the app, click **Settings**, and add:
 - **Provider** - Anthropic (Claude), OpenRouter, Ollama Cloud, or any OpenAI-compatible endpoint. Each brings its own base URL, model presets and CORS handling, so picking one and pasting a key is enough.
 - **Model** - defaults to `claude-opus-5`. Presets are provided. Any model id is allowed. OpenRouter and Ollama Cloud publish their catalogues without a key, so the model list fills itself before you paste one.
 - **API key** - stored only in your browser's `localStorage`. Each provider keeps its own key, so switching providers does not overwrite the others.
+- **Max tokens / Temperature** - leave blank to use the provider's defaults. A value caps the output or pins the sampling.
 
 Use **Test connection** to run a tiny real inference (it prompts the model for a one-word reply and shows it), confirming the key, model, base URL, and (CORS) connectivity all work before you start chatting.
 

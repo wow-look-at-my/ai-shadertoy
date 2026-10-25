@@ -269,7 +269,7 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 // and temperature only where sampling is still accepted. An id this code has
 // never seen is treated as new (adaptive, no temperature).
 {
-	const body = (model: string) => anthropicBody({ ...DEFAULT_SETTINGS.chat, model }, "sys", "", HISTORY, [TOOL]);
+	const body = (model: string, over: Partial<Settings["chat"]> = {}) => anthropicBody({ ...DEFAULT_SETTINGS.chat, model, ...over }, "sys", "", HISTORY, [TOOL]);
 	for (const m of ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5-1", "claude-opus-6"]) {
 		const b = body(m);
 		eq((b["thinking"] as { type: string })?.type, "adaptive", `${m}: adaptive thinking`);
@@ -283,10 +283,19 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	}
 	for (const m of ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]) {
 		const b = body(m);
-		eq((b["thinking"] as { type: string })?.type, "enabled", `${m}: budget thinking`);
+		ok(!("thinking" in b), `${m}: no thinking without an output limit`);
 		ok(!("output_config" in b), `${m}: no effort (rejected with a 400)`);
+		const limited = body(m, { maxTokens: 8192 });
+		eq((limited["thinking"] as { type: string })?.type, "enabled", `${m}: budget thinking with a limit`);
+		eq(limited["max_tokens"], 8192, `${m}: max_tokens passes through`);
 	}
 	eq((body("claude-opus-4-5")["output_config"] as { effort: string })?.effort, "medium", "Opus 4.5 accepts effort");
+	const blank = body("claude-opus-5");
+	ok(!("max_tokens" in blank), "a blank max tokens is omitted");
+	ok(!("temperature" in blank), "a blank temperature is omitted");
+	const sampled = body("claude-sonnet-4-5", { temperature: 0.3 });
+	eq(sampled["temperature"], 0.3, "an explicit temperature passes through when no thinking is sent");
+	ok(!("max_tokens" in sampled), "an omitted max tokens stays omitted");
 	// The history holds tool blocks after a turn, so tools must stay defined even when the model may not call any.
 	const none = anthropicBody(DEFAULT_SETTINGS.chat, "sys", "", HISTORY, [TOOL], { toolChoice: "none" });
 	ok(Array.isArray(none["tools"]), "tools stay defined with tool_choice none");
@@ -299,15 +308,20 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 {
 	const body = (over: Partial<Settings["chat"]>, opts = {}) => openaiBody({ ...settingsFor("openai", over).chat }, "sys", "", HISTORY, [TOOL], opts);
 	for (const model of ["gpt-5", "gpt-5-mini", "o4-mini"]) {
-		const b = body({ model });
-		eq(b["max_completion_tokens"], DEFAULT_SETTINGS.chat.maxTokens, `${model}: max_completion_tokens`);
+		const b = body({ model, maxTokens: 2048, temperature: 0.4 });
+		eq(b["max_completion_tokens"], 2048, `${model}: max_completion_tokens`);
 		ok(!("max_tokens" in b) && !("temperature" in b), `${model}: no max_tokens/temperature`);
+		const blank = body({ model });
+		ok(!("max_completion_tokens" in blank) && !("max_tokens" in blank) && !("temperature" in blank), `${model}: blank fields are omitted`);
 	}
-	const classic = body({ model: "gpt-4.1" });
-	eq(classic["max_tokens"], DEFAULT_SETTINGS.chat.maxTokens, "gpt-4.1 keeps max_tokens");
-	eq(classic["temperature"], DEFAULT_SETTINGS.chat.temperature, "gpt-4.1 keeps temperature");
-	const local = body({ model: "gpt-5-something", baseUrl: "http://localhost:11434/v1" });
-	ok("max_tokens" in local, "a self-hosted server keeps max_tokens whatever the model id");
+	const classic = body({ model: "gpt-4.1", maxTokens: 4096, temperature: 0.4 });
+	eq(classic["max_tokens"], 4096, "gpt-4.1 keeps max_tokens");
+	eq(classic["temperature"], 0.4, "gpt-4.1 keeps temperature");
+	const blank = body({ model: "gpt-4.1" });
+	ok(!("max_tokens" in blank) && !("temperature" in blank), "a blank classic request omits both fields");
+	const local = body({ model: "gpt-5-something", baseUrl: "http://localhost:11434/v1", maxTokens: 1234, temperature: 0.2 });
+	eq(local["max_tokens"], 1234, "a self-hosted server keeps max_tokens whatever the model id");
+	eq(local["temperature"], 0.2, "a self-hosted server keeps temperature");
 	eq(local["cache_prompt"], true, "a self-hosted server gets cache_prompt");
 	ok(!("cache_prompt" in classic), "hosted OpenAI never gets cache_prompt");
 	eq(body({ model: "gpt-4.1" }, { toolChoice: "none" })["tool_choice"], "none", "tool_choice none on the OpenAI wire");

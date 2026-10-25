@@ -171,8 +171,9 @@ function anthropicAcceptsTemperature(model: string): boolean {
 
 // Extended thinking. Thinking and temperature are mutually exclusive in our
 // request — see the body assembly below.
-function anthropicThinking(model: string, maxTokens: number): Record<string, unknown> | undefined {
+function anthropicThinking(model: string, maxTokens?: number): Record<string, unknown> | undefined {
 	if (ANTHROPIC_BUDGET_MODELS.test(model)) {
+		if (maxTokens === undefined) return undefined; // a budget needs a limit
 		const budget = Math.max(1024, Math.min(8192, Math.floor(maxTokens / 2)));
 		return budget < maxTokens ? { type: "enabled", budget_tokens: budget } : undefined;
 	}
@@ -188,12 +189,12 @@ function anthropicEffort(model: string): string | undefined {
 export function anthropicBody(cfg: ChatConfig, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: cfg.model,
-		max_tokens: cfg.maxTokens,
 		// Cache the (stable) system prompt. Tools render before it, so this breakpoint covers tools + system.
 		system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
 		stream: true,
 		messages: toAnthropicMessages(messages, state),
 	};
+	if (cfg.maxTokens !== undefined) body["max_tokens"] = cfg.maxTokens;
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
 		// A history that carries tool_use/tool_result blocks must define tools.
@@ -201,7 +202,7 @@ export function anthropicBody(cfg: ChatConfig, system: string, state: string, me
 	}
 	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
 	if (thinking) body["thinking"] = thinking;
-	else if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
+	else if (cfg.temperature !== undefined && anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
 	const effort = anthropicEffort(cfg.model);
 	if (effort) body["output_config"] = { effort };
 	return body;
@@ -375,10 +376,10 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 		messages: toOpenAIMessages(system, messages, state),
 	};
 	if (isOpenAIReasoningModel(cfg)) {
-		body["max_completion_tokens"] = cfg.maxTokens;
+		if (cfg.maxTokens !== undefined) body["max_completion_tokens"] = cfg.maxTokens;
 	} else {
-		body["max_tokens"] = cfg.maxTokens;
-		body["temperature"] = cfg.temperature;
+		if (cfg.maxTokens !== undefined) body["max_tokens"] = cfg.maxTokens;
+		if (cfg.temperature !== undefined) body["temperature"] = cfg.temperature;
 	}
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));

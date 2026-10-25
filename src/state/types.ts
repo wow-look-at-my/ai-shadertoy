@@ -165,8 +165,10 @@ export interface ChatConfig {
 	baseUrl: string; // override endpoint (OpenAI-compatible) or anthropic base
 	apiKeys: ApiKeys;
 	model: string;
-	maxTokens: number;
-	temperature: number;
+	/** Undefined means the provider's default. */
+	maxTokens?: number;
+	/** Undefined means the provider's default. */
+	temperature?: number;
 	useProxy: boolean;
 	/** "native" = function/tool calling via the API. */
 	toolMode: ToolMode;

@@ -32,8 +32,8 @@ export function createSettings(store: Store): SettingsModal {
 	let draftKeys: ApiKeys = {};
 	let activeProvider: ProviderId = DEFAULT_SETTINGS.chat.provider;
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
-	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
-	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
+	const maxTokens = el("input", { type: "number", placeholder: "provider default", attrs: { min: "256", max: "128000", step: "256" } });
+	const temperature = el("input", { type: "number", placeholder: "provider default", attrs: { min: "0", max: "2", step: "0.05" } });
 	const useProxy = el("input", { type: "checkbox" });
 	const proxyUrl = el("input", { type: "text", placeholder: "https://proxy.pazer.ai/?url={{.url}}" });
 	const proxyHint = el("span", { class: "hint" });
@@ -53,7 +53,7 @@ export function createSettings(store: Store): SettingsModal {
 	// button and the model fetch.
 	const currentProbe = (): Settings => ({
 		...store.settings,
-		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKeys: { ...draftKeys, [provider.value]: apiKey.value.trim() }, useProxy: useProxy.checked, toolMode: toolMode.value as ToolMode },
+		chat: { ...store.settings.chat, provider: provider.value as ProviderId, model: model.value.trim(), baseUrl: baseUrl.value.trim(), apiKeys: { ...draftKeys, [provider.value]: apiKey.value.trim() }, maxTokens: optionalNum(maxTokens.value, 256, 128000), temperature: optionalNum(temperature.value, 0, 2), useProxy: useProxy.checked, toolMode: toolMode.value as ToolMode },
 		proxyUrl: proxyUrl.value.trim() || DEFAULT_SETTINGS.proxyUrl,
 	});
 
@@ -240,8 +240,8 @@ export function createSettings(store: Store): SettingsModal {
 		model.value = s.chat.model;
 		apiKey.value = draftKeys[s.chat.provider] ?? "";
 		baseUrl.value = s.chat.baseUrl;
-		maxTokens.value = String(s.chat.maxTokens);
-		temperature.value = String(s.chat.temperature);
+		maxTokens.value = s.chat.maxTokens === undefined ? "" : String(s.chat.maxTokens);
+		temperature.value = s.chat.temperature === undefined ? "" : String(s.chat.temperature);
 		useProxy.checked = s.chat.useProxy;
 		proxyUrl.value = s.proxyUrl;
 		applyProxyRequirement();
@@ -273,8 +273,8 @@ export function createSettings(store: Store): SettingsModal {
 				model: model.value.trim(),
 				apiKeys: { ...draftKeys },
 				baseUrl: baseUrl.value.trim(),
-				maxTokens: clampNum(maxTokens.value, 256, 128000, 16384),
-				temperature: clampNum(temperature.value, 0, 2, 0.7),
+				maxTokens: optionalNum(maxTokens.value, 256, 128000),
+				temperature: optionalNum(temperature.value, 0, 2),
 				useProxy: useProxy.checked,
 				toolMode: toolMode.value as ToolMode,
 			},
@@ -300,5 +300,14 @@ export function createSettings(store: Store): SettingsModal {
 function clampNum(raw: string, lo: number, hi: number, fallback: number): number {
 	const n = Number(raw);
 	if (!Number.isFinite(n)) return fallback;
+	return Math.max(lo, Math.min(hi, n));
+}
+
+/** A blank or invalid field means "use the provider's default". */
+function optionalNum(raw: string, lo: number, hi: number): number | undefined {
+	const text = raw.trim();
+	if (!text) return undefined;
+	const n = Number(text);
+	if (!Number.isFinite(n)) return undefined;
 	return Math.max(lo, Math.min(hi, n));
 }
