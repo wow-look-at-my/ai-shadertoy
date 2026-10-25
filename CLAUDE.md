@@ -329,9 +329,16 @@ pnpm run build        # ts0 build -> dist/index.html
 - **Providers** are a registry, `PROVIDERS` in `state/defaults.ts`: `label`,
   `wire` (`anthropic` | `openai` — everything but Anthropic speaks Chat
   Completions), `baseUrl`, `needsProxy`, `needsKey`, `needsKeyForModels`,
-  `models`. Adding one is an entry plus a `ProviderId` member; the dropdown, the
-  base-URL fallback, the key guard and the model combobox all read it. Shipped:
-  anthropic, openai (generic/self-hosted), openrouter, ollama-cloud.
+  `models`, and an optional `hint` shown under the provider select. Adding one is
+  an entry plus a `ProviderId` member; the dropdown, the base-URL fallback, the
+  key guard and the model combobox all read it. Shipped:
+  anthropic, openai (generic/self-hosted), openrouter, ollama-cloud, bifrost.
+- **Bifrost** is a self-hosted gateway on the OpenAI wire (default
+  `http://localhost:8080/v1`); its model ids name the routed provider
+  (`<provider>/<model>`). The API key is its **virtual key**, sent in `x-bf-vk`
+  and as a bearer token by `openaiAuthHeaders`; a 401 with no recognized
+  credential is Bifrost's `virtual key is required` refusal. A direct browser
+  call needs `x-bf-vk` in the gateway's `allowed_headers`; the CORS hint says so.
 - **`needsProxy` forces the proxy on regardless of the toggle** (`chatUsesProxy`),
   because Ollama Cloud answers with no `access-control-allow-origin` and a
   browser cannot read a direct reply. Settings ticks the visible box and says

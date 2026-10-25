@@ -16,6 +16,7 @@ export interface SettingsModal {
 
 export function createSettings(store: Store): SettingsModal {
 	const provider = el("select", {}, ...(Object.keys(PROVIDERS) as ProviderId[]).map((id) => el("option", { value: id }, PROVIDERS[id].label)));
+	const providerHint = el("span", { class: "hint" });
 	const toolMode = el("select", {}, el("option", { value: "native" }, "Native (function calling)"), el("option", { value: "text" }, "Text tags (no native tools)"));
 	// Model id: free-text combobox backed by <datalist>. Autofill/capitalize/
 	// correct/spellcheck off so a model id is never mangled or flagged. The key
@@ -113,9 +114,11 @@ export function createSettings(store: Store): SettingsModal {
 		// typed is theirs and stays put.
 		const current = model.value.trim();
 		const isSomePreset = Object.values(MODEL_PRESETS).some((list) => list.includes(current));
-		if (isSomePreset && !PROVIDERS[p].models.includes(current)) model.value = PROVIDERS[p].models[0];
+		if (isSomePreset && PROVIDERS[p].models.length && !PROVIDERS[p].models.includes(current)) model.value = PROVIDERS[p].models[0];
 		tempHint.textContent = p === "anthropic" ? "Ignored on Claude 4.6 and newer (thinking replaces it; 4.7+ reject it)." : "";
 		baseUrl.placeholder = `(optional) ${PROVIDERS[p].baseUrl}`;
+		apiKey.placeholder = p === "bifrost" ? "sk-bf-... (virtual key)" : "sk-... / your API key";
+		providerHint.textContent = PROVIDERS[p].hint ?? "";
 		modelStatus.textContent = "";
 	};
 	provider.addEventListener("change", () => {
@@ -164,7 +167,7 @@ export function createSettings(store: Store): SettingsModal {
 		"div",
 		{ class: "modal-body" },
 		el("h3", {}, "Chat model"),
-		field("Provider", provider),
+		el("div", { class: "field" }, el("span", { class: "field-label" }, "Provider"), provider, providerHint),
 		modelField,
 		secretField("API key", apiKey, "Stored only in your browser (localStorage)."),
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),

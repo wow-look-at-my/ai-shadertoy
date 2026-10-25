@@ -27,6 +27,8 @@ export interface ProviderInfo {
 	/** Chat requires an API key. Only the generic OpenAI-compatible provider can
 	 * legitimately run keyless, against a local server. */
 	needsKey: boolean;
+	/** Setup the endpoint cannot infer, shown under the provider select. */
+	hint?: string;
 }
 
 // Anthropic defaults to Opus 5 (the most capable Opus-tier model, at Opus 4.8's
@@ -69,6 +71,20 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
 		needsKeyForModels: false,
 		needsKey: true,
 	},
+	// Bifrost is a self-hosted LLM gateway: its model ids are the providers it
+	// routes to (`<provider>/<model>`), so the presets are examples and the
+	// refresh button lists the deployment's own catalogue. The virtual key goes in
+	// `x-bf-vk` (see providers.ts), not a bearer token.
+	bifrost: {
+		label: "Bifrost",
+		wire: "openai",
+		baseUrl: "http://localhost:8080/v1",
+		needsProxy: false,
+		models: ["openai/gpt-5", "anthropic/claude-opus-5", "google/gemini-3.7-flash", "z-ai/glm-5.3"],
+		needsKeyForModels: true,
+		needsKey: true,
+		hint: "Bifrost needs a virtual key. For direct browser calls, add x-bf-vk to its allowed_headers; otherwise route through the CORS proxy.",
+	},
 };
 
 export const MODEL_PRESETS: Record<ProviderId, string[]> = {
@@ -76,6 +92,7 @@ export const MODEL_PRESETS: Record<ProviderId, string[]> = {
 	openai: PROVIDERS.openai.models,
 	openrouter: PROVIDERS.openrouter.models,
 	"ollama-cloud": PROVIDERS["ollama-cloud"].models,
+	bifrost: PROVIDERS.bifrost.models,
 };
 
 /** The base URL a request actually uses: the user's override, else the

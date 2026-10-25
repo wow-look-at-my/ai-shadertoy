@@ -225,13 +225,16 @@ in, since the copied text re-extracts to the exact same controls.
 
 Open the app, click **Settings**, and add:
 
-- **Provider** — Anthropic (Claude), OpenRouter, Ollama Cloud, or any
-  OpenAI-compatible endpoint. Each brings its own base URL, model presets and
+- **Provider** - Anthropic (Claude), OpenRouter, Ollama Cloud, **Bifrost**, or
+  any OpenAI-compatible endpoint. Each brings its own base URL, model presets and
   CORS handling, so picking one and pasting a key is enough.
-- **Model** — defaults to `claude-opus-5`. Presets are provided; any model id is
+- **Model** - defaults to `claude-opus-5`. Presets are provided; any model id is
   allowed. OpenRouter and Ollama Cloud publish their catalogues without a key, so
-  the model list fills itself before you paste one.
-- **API key** — stored only in your browser's `localStorage`.
+  the model list fills itself before you paste one. Bifrost model ids name the
+  provider it routes to (`<provider>/<model>`), so use **refresh** to list your
+  deployment's own catalogue.
+- **API key** - stored only in your browser's `localStorage`. For Bifrost, paste
+  a **virtual key**; it is sent in `x-bf-vk` (and as a bearer token).
 
 Use **Test connection** to run a tiny real inference (it prompts the model for a
 one-word reply and shows it), confirming the key, model, base URL, and (CORS)
@@ -239,7 +242,9 @@ connectivity all work before you start chatting.
 
 If direct browser calls are blocked by CORS, tick **Route chat through CORS
 proxy**. Ollama Cloud sends no CORS headers at all, so choosing it ticks the box
-for you and says why; you can still untick it.
+for you and says why; you can still untick it. Bifrost answers browser calls from
+an allowed origin, but its gateway only accepts headers named in `allowed_headers`,
+so add `x-bf-vk` there for a direct connection (or use the proxy).
 
 The proxy setting is a **template** naming where the target URL goes, so any
 proxy shape works:
