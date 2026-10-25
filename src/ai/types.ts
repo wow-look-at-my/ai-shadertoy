@@ -36,6 +36,8 @@ export interface Usage {
 	// Prompt-cache token counts, ONLY ever the values the server reports.
 	cacheReadTokens?: number; // served from the prompt cache (Anthropic cache_read; OpenAI cached prompt tokens)
 	cacheWriteTokens?: number; // written to the prompt cache this request (Anthropic cache_creation)
+	/** Server-reported request cost in USD, when the endpoint reports one. */
+	cost?: number;
 }
 
 export interface AssistantTurn {

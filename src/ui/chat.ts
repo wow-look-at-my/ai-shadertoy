@@ -14,6 +14,7 @@ import { cachePct, hasPricing, messageCost, modelContextWindow } from "../ai/pri
 import { toolDefs } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
 import { ProviderError } from "../ai/providers.ts";
+import type { Usage } from "../ai/types.ts";
 import { PROVIDERS } from "../state/defaults.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -91,6 +92,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let lastCtxPct = 0;
 	// Cached share of the last request's input prompt, ONLY from the server-reported cache count: a number (incl.
 	let lastCachePct: number | undefined;
+	let lastUsage: Usage | undefined;
 	let haveStats = false;
 
 	function fmtCost(c: number): string {
@@ -114,7 +116,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			const cacheLabel = `${lastCachePct < 10 ? lastCachePct.toFixed(1) : lastCachePct.toFixed(0)}% cached`;
 			parts.push(sep(), item(cacheLabel, "Share of the input prompt served from the prompt cache (last request)"));
 		}
-		if (hasPricing(store.settings.chat.model)) {
+		if (hasPricing(store.settings.chat.model, lastUsage)) {
 			parts.push(sep(), item(`${fmtCost(costTurn)} turn`, "Cost of the current / last turn"), sep(), item(`${fmtCost(costTotal)} total`, "Total cost this session"));
 		}
 		clear(statsBar);
@@ -392,6 +394,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 					takeSteering,
 					onUsage: (usage, durationMs) => {
 						const model = store.settings.chat.model;
+						lastUsage = usage;
 						const c = messageCost(model, usage);
 						if (c != null) {
 							costTurn += c;

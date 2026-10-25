@@ -265,6 +265,25 @@ const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "obj
 	}
 }
 
+// ---- server-reported cost ---------------------------------------------------
+{
+	const original = globalThis.fetch;
+	const chunk = {
+		choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+		usage: { prompt_tokens: 128406, completion_tokens: 380, cost: 0.003189768, cost_details: { upstream_inference_cost: 0.0012 } },
+	};
+	const stream = `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`;
+	globalThis.fetch = (async () => ({ ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(stream)); c.close(); } }) } as Response)) as typeof fetch;
+	try {
+		const turn = await streamChat(settingsFor("openrouter", { apiKeys: { openrouter: "sk-or" }, model: "deepseek/deepseek-chat" }), "sys", "", HISTORY, []);
+		eq(turn.usage.cost, 0.003189768, "the final usage chunk keeps the reported cost");
+		eq(turn.usage.inputTokens, 128406, "the recorded prompt tokens are kept");
+		eq(turn.usage.outputTokens, 380, "the recorded completion tokens are kept");
+	} finally {
+		globalThis.fetch = original;
+	}
+}
+
 // Anthropic: adaptive thinking on current models, a token budget on 4.5-era ones,
 // and temperature only where sampling is still accepted. An id this code has
 // never seen is treated as new (adaptive, no temperature).

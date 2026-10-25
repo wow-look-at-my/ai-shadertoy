@@ -46,15 +46,15 @@ export function modelContextWindow(model: string): number {
 	return lookup(model).context;
 }
 
-export function hasPricing(model: string): boolean {
-	return lookup(model).rate !== undefined;
+export function hasPricing(model: string, u?: Usage): boolean {
+	return (u?.cost !== undefined && Number.isFinite(u.cost)) || lookup(model).rate !== undefined;
 }
 
-/** Cost in USD for one request's usage, or null when the model's pricing is
- * unknown. Computed purely from the server-reported token counts: base input
- * at the full rate, cache-read tokens at the read discount. This also covers
- * cache-write tokens at the write premium, output at the output rate. */
+/** Cost in USD for one request's usage, or null when neither the server nor the
+ * local table gives a cost. The server-reported cost wins; token math is the
+ * fallback. */
 export function messageCost(model: string, u: Usage): number | null {
+	if (u.cost !== undefined && Number.isFinite(u.cost)) return u.cost;
 	const rate = lookup(model).rate;
 	if (!rate) return null;
 	const cacheRead = u.cacheReadTokens ?? 0;

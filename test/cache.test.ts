@@ -1,6 +1,6 @@
 // Unit tests for prompt-cache usage accounting.
 
-import { cachePct, messageCost } from "../src/ai/pricing.ts";
+import { cachePct, hasPricing, messageCost } from "../src/ai/pricing.ts";
 import type { Usage } from "../src/ai/types.ts";
 
 let passed = 0;
@@ -63,5 +63,18 @@ eq(cachePct({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }), 0, "zero t
 
 // Unknown model => no cost (tokens-only display), not a fabricated number.
 eq(messageCost("some-unknown-model", { inputTokens: 1000, outputTokens: 100 }), null, "unknown model => null (no cost)");
+
+// ---- server-reported cost wins over the local table -------------------------
+{
+	const reported: Usage = { inputTokens: 128406, outputTokens: 380, cost: 0.003189768 };
+	eq(messageCost("some-unknown-model", reported), 0.003189768, "a reported cost is used for an unpriced model");
+	eq(hasPricing("some-unknown-model", reported), true, "a reported cost makes the readout available");
+	eq(messageCost("gpt-4o", { inputTokens: 1_000_000, outputTokens: 0, cost: 7 }), 7, "a reported cost wins over the table");
+
+	const absent: Usage = { inputTokens: 128406, outputTokens: 380 };
+	eq(messageCost("some-unknown-model", absent), null, "an absent cost is not guessed");
+	eq(hasPricing("some-unknown-model", absent), false, "an absent cost leaves the readout hidden");
+	eq(hasPricing("gpt-4o", absent), true, "the local table still prices a known model");
+}
 
 console.log(`ok - ${passed} assertions passed`);

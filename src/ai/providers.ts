@@ -479,6 +479,8 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 				turn.usage.cacheReadTokens = cached;
 				turn.usage.cacheWriteTokens = 0;
 				turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
+				const reportedCost = u["cost"];
+				if (typeof reportedCost === "number" && Number.isFinite(reportedCost)) turn.usage.cost = reportedCost;
 			}
 			const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
 			if (!choice) continue;
