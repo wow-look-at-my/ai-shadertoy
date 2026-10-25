@@ -905,7 +905,7 @@ export class Store {
 	// ---- screenshot ---------------------------------------------------------
 
 	private screenshotBlock(): ShotBlock {
-		const shot = this.renderer.screenshot(this.settings.screenshotMaxDim);
+		const shot = this.renderer.captureOffscreen(this.settings.screenshotMaxDim);
 		const data = shot.dataUrl.slice(shot.dataUrl.indexOf(",") + 1);
 		const avg = `avg rgb(${shot.avgColor.join(", ")})${shot.nonBlack ? "" : " — looks black/empty"}`;
 		return { type: "image", mediaType: shot.mediaType, data, _avg: avg };

@@ -5,6 +5,7 @@ import { getTool, toolDefs } from "../src/ai/tools/index.ts";
 import "../src/ai/tools/index.ts"; // register every tool
 import type { ToolContext, ToolResult } from "../src/ai/tools/types.ts";
 import { makeProject } from "../src/state/defaults.ts";
+import { CAPTURE_HEIGHT, CAPTURE_WIDTH, captureDimensions } from "../src/gl/renderer.ts";
 import { makeCompositeLayer, makePass, makeShape, LAYER_COMPOSITE_SOURCE, type Layer, type Pass, type Project, type ShapeKind, type Uniform } from "../src/state/types.ts";
 
 let passed = 0;
@@ -382,6 +383,18 @@ async function runAsync(ctx: ToolContext, name: string, input: Record<string, un
 	const pass = txt(run(ctx, "histogram", { target: "Image", channel: "g" }));
 	check(pass.includes("Base / Image | g"), "a pass target reports its layer and pass");
 	check(pass.includes("g mean 255.0"), "a pass target reads its own buffer");
+}
+
+// ---- fixed capture ----------------------------------------------------------
+{
+	eq(CAPTURE_WIDTH, 1280, "the capture renders at a fixed width");
+	eq(CAPTURE_HEIGHT, 720, "the capture renders at a fixed height");
+	const full = captureDimensions(1920);
+	eq(full.width, 1280, "a large max edge keeps the fixed width");
+	eq(full.height, 720, "a large max edge keeps the fixed height");
+	const small = captureDimensions(640);
+	eq(small.width, 640, "a small max edge scales the width");
+	eq(small.height, 360, "the downscale keeps the 16:9 aspect");
 }
 
 console.log(`tools.test.ts: ${passed} checks passed`);

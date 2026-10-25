@@ -50,6 +50,15 @@ export interface PixelReadout {
 	data: Uint8Array;
 }
 
+/** The fixed render size a tool screenshot uses, independent of the window. */
+export const CAPTURE_WIDTH = 1280;
+export const CAPTURE_HEIGHT = 720;
+
+export function captureDimensions(maxDim: number): { width: number; height: number } {
+	const scale = Math.min(1, maxDim / Math.max(CAPTURE_WIDTH, CAPTURE_HEIGHT));
+	return { width: Math.max(1, Math.round(CAPTURE_WIDTH * scale)), height: Math.max(1, Math.round(CAPTURE_HEIGHT * scale)) };
+}
+
 interface Target {
 	tex: WebGLTexture;
 	fbo: WebGLFramebuffer;
@@ -147,6 +156,8 @@ export class Renderer {
 	private rafId = 0;
 	private allocW = 0;
 	private allocH = 0;
+	private captureW = 0;
+	private captureH = 0;
 
 	private mouse = { x: 0, y: 0, downX: 0, downY: 0, pressed: false, everDown: false };
 
@@ -667,8 +678,8 @@ export class Renderer {
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		const cssW = this.canvas.clientWidth || 640;
 		const cssH = this.canvas.clientHeight || 360;
-		const w = Math.max(1, Math.floor(cssW * dpr * this.renderScale));
-		const h = Math.max(1, Math.floor(cssH * dpr * this.renderScale));
+		const w = this.captureW || Math.max(1, Math.floor(cssW * dpr * this.renderScale));
+		const h = this.captureH || Math.max(1, Math.floor(cssH * dpr * this.renderScale));
 		if (this.canvas.width !== w || this.canvas.height !== h) {
 			this.canvas.width = w;
 			this.canvas.height = h;
@@ -977,8 +988,28 @@ export class Renderer {
 		const sw = this.canvas.width;
 		const sh = this.canvas.height;
 		const scale = Math.min(1, maxDim / Math.max(sw, sh));
-		const w = Math.max(1, Math.round(sw * scale));
-		const h = Math.max(1, Math.round(sh * scale));
+		return this.encodeScreenshot(Math.max(1, Math.round(sw * scale)), Math.max(1, Math.round(sh * scale)), mime, quality);
+	}
+
+	/** Render at a fixed size, independent of the window, then encode it. */
+	captureOffscreen(maxDim = 512, mime = "image/webp", quality = 0.85): Screenshot {
+		const previousScale = this.renderScale;
+		this.renderScale = 1;
+		this.captureW = CAPTURE_WIDTH;
+		this.captureH = CAPTURE_HEIGHT;
+		try {
+			this.renderFrame();
+			const size = captureDimensions(maxDim);
+			return this.encodeScreenshot(size.width, size.height, mime, quality);
+		} finally {
+			this.captureW = 0;
+			this.captureH = 0;
+			this.renderScale = previousScale;
+			this.renderFrame();
+		}
+	}
+
+	private encodeScreenshot(w: number, h: number, mime: string, quality: number): Screenshot {
 		const off = document.createElement("canvas");
 		off.width = w;
 		off.height = h;
