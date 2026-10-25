@@ -1,7 +1,7 @@
 // Unit tests for the provider registry and the endpoint it composes.
 
 import { PROVIDERS, DEFAULT_SETTINGS, providerBaseUrl } from "../src/state/defaults.ts";
-import { anthropicBody, anthropicHeaders, appendThinking, chatEndpoint, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, toOpenAIMessages } from "../src/ai/providers.ts";
+import { anthropicBody, anthropicHeaders, appendThinking, chatEndpoint, listModels, modelsEndpoint, openaiAuthHeaders, openaiBody, reasoningDelta, streamChat, testConnection, toOpenAIMessages } from "../src/ai/providers.ts";
 import type { Message, ProviderId, Settings } from "../src/state/types.ts";
 import type { AssistantTurn, ToolDef } from "../src/ai/types.ts";
 
@@ -172,6 +172,55 @@ const THINKING: Message = {
 
 const HISTORY: Message[] = [{ id: "m1", role: "user", ts: 0, blocks: [{ type: "text", text: "hi" }] }];
 const TOOL: ToolDef = { name: "read", description: "d", parameters: { type: "object", properties: {} } };
+
+// ---- request-path headers ---------------------------------------------------
+{
+	const original = globalThis.fetch;
+	const seen: Array<Record<string, string>> = [];
+	const json = { choices: [{ message: { content: "Hi" } }], content: [{ type: "text", text: "Hi" }], data: [] };
+	globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+		seen.push((init?.headers ?? {}) as Record<string, string>);
+		return { ok: true, status: 200, json: async () => json } as Response;
+	}) as typeof fetch;
+	try {
+		await listModels(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }));
+		await listModels(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }));
+		await testConnection(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }));
+		await testConnection(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }));
+	} finally {
+		globalThis.fetch = original;
+	}
+	eq(seen[0]["authorization"], "Bearer vk", "the OpenAI model list carries the bearer token");
+	eq(seen[0]["x-bf-vk"], "vk", "the OpenAI model list carries x-bf-vk");
+	eq(seen[1]["x-api-key"], "vk", "the Anthropic model list carries x-api-key");
+	eq(seen[1]["x-bf-vk"], "vk", "the Anthropic model list carries x-bf-vk");
+	eq(seen[2]["authorization"], "Bearer vk", "the OpenAI test connection carries the bearer token");
+	eq(seen[2]["x-bf-vk"], "vk", "the OpenAI test connection carries x-bf-vk");
+	eq(seen[3]["x-api-key"], "vk", "the Anthropic test connection carries x-api-key");
+	eq(seen[3]["x-bf-vk"], "vk", "the Anthropic test connection carries x-bf-vk");
+}
+
+{
+	const original = globalThis.fetch;
+	const seen: Array<Record<string, string>> = [];
+	const openaiStream = 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+	const anthropicStream = 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n';
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		seen.push((init?.headers ?? {}) as Record<string, string>);
+		const body = String(input).includes("/v1/messages") ? anthropicStream : openaiStream;
+		return { ok: true, status: 200, body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(body)); c.close(); } }) } as Response;
+	}) as typeof fetch;
+	try {
+		await streamChat(settingsFor("openai", { baseUrl: "http://localhost:8080/v1", apiKey: "vk" }), "sys", "", HISTORY, []);
+		await streamChat(settingsFor("anthropic", { baseUrl: "http://localhost:8080/anthropic", apiKey: "vk" }), "sys", "", HISTORY, []);
+	} finally {
+		globalThis.fetch = original;
+	}
+	eq(seen[0]["authorization"], "Bearer vk", "the OpenAI chat carries the bearer token");
+	eq(seen[0]["x-bf-vk"], "vk", "the OpenAI chat carries x-bf-vk");
+	eq(seen[1]["x-api-key"], "vk", "the Anthropic chat carries x-api-key");
+	eq(seen[1]["x-bf-vk"], "vk", "the Anthropic chat carries x-bf-vk");
+}
 
 // Anthropic: adaptive thinking on current models, a token budget on 4.5-era ones,
 // and temperature only where sampling is still accepted. An id this code has
