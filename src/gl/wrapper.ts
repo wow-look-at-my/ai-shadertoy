@@ -193,6 +193,33 @@ const BUILTIN_NAMES = new Set([
 	"main",
 ]);
 
+// Square-pixel mode hands mainImage a centred fragCoord and a square
+// iResolution, so `fragCoord / iResolution.xy` is a square-space uv. A channel
+// that is a canvas render target (pass, under, geometry, mask) is stored in
+// texture space. ai_chanRemap[i] (scale.xy, offset.zw) maps a square-space uv
+// onto it and ai_chanFetch[i] shifts a texel coordinate the same way. Both are
+// identity for every other channel and whenever square pixels are off.
+function channelRemapDecls(channelCount: number): string {
+	return `uniform vec4 ai_chanRemap[${channelCount}];
+uniform ivec2 ai_chanFetch[${channelCount}];
+vec4 ai_texture(vec4 r, sampler2D s, vec2 uv) { return texture(s, uv * r.xy + r.zw); }
+vec4 ai_texture(vec4 r, sampler2D s, vec2 uv, float bias) { return texture(s, uv * r.xy + r.zw, bias); }
+vec4 ai_textureLod(vec4 r, sampler2D s, vec2 uv, float lod) { return textureLod(s, uv * r.xy + r.zw, lod); }
+vec4 ai_texelFetch(ivec2 o, sampler2D s, ivec2 p, int lod) { return texelFetch(s, p + o, lod); }
+`;
+}
+
+/** Route every direct `texture`/`textureLod`/`texelFetch` on a declared iChannel
+ * through its remap. Line breaks are untouched, so `#line 1` still maps errors. */
+export function remapChannelLookups(source: string, channelCount: number): string {
+	return source.replace(/\b(texture|textureLod|texelFetch)(\s*\(\s*)iChannel(\d+)(\s*,)/g, (match, fn: string, open: string, idx: string, comma: string) => {
+		const i = Number(idx);
+		if (i >= channelCount) return match;
+		const remap = fn === "texelFetch" ? `ai_chanFetch[${i}]` : `ai_chanRemap[${i}]`;
+		return `ai_${fn}${open}${remap}, iChannel${i}${comma}`;
+	});
+}
+
 function header(uniforms: Uniform[], channelCount: number): string {
 	// Dedupe by name: emitting the same `uniform` twice is a GLSL redefinition.
 	const seen = new Set<string>();
@@ -205,7 +232,7 @@ function header(uniforms: Uniform[], channelCount: number): string {
 		.map((u) => `uniform ${glslType(u.type)} ${u.name};`)
 		.join("\n");
 	// Declare exactly the input samplers this pass has (iChannel0..N-1) plus a matching iChannelResolution[] -- no arbitrary cap, no unused declarations.
-	const channelDecls = channelCount > 0 ? Array.from({ length: channelCount }, (_, i) => `uniform sampler2D iChannel${i};`).join("\n") + `\nuniform vec3 iChannelResolution[${channelCount}];\n` : "";
+	const channelDecls = channelCount > 0 ? Array.from({ length: channelCount }, (_, i) => `uniform sampler2D iChannel${i};`).join("\n") + `\nuniform vec3 iChannelResolution[${channelCount}];\n` + channelRemapDecls(channelCount) : "";
 	return `#version 300 es
 precision highp float;
 precision highp int;
@@ -245,5 +272,5 @@ export interface AssembledShader {
  * inputs this pass declares. Errors inside FOOTER (a missing or mistyped
  * `mainImage`) report a line just past the end of the user source. */
 export function assembleFragment(userSource: string, uniforms: Uniform[], channelCount: number): AssembledShader {
-	return { source: header(uniforms, channelCount) + "#line 1\n" + stripUniformDeclarations(userSource) + FOOTER };
+	return { source: header(uniforms, channelCount) + "#line 1\n" + remapChannelLookups(stripUniformDeclarations(userSource), channelCount) + FOOTER };
 }

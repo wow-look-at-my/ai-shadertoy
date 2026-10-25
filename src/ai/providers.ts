@@ -3,10 +3,11 @@
 // tool use. The app's neutral Message[] model (state/types.ts) mirrors
 // Anthropic's content blocks; the OpenAI path down-converts.
 
-import type { Block, ChatConfig, ImageBlock, Message, Settings, TextBlock, ThinkingBlock } from "../state/types.ts";
+import type { Block, ChatConfig, ImageBlock, Message, ReasoningDetailType, Settings, TextBlock, ThinkingBlock } from "../state/types.ts";
 import type { AssistantTurn, StreamEvent, StreamOptions, ToolDef, Usage } from "./types.ts";
 import { PROVIDERS, providerBaseUrl } from "../state/defaults.ts";
 import { proxied, withScheme } from "../util/misc.ts";
+import { acceptsImages, acceptsParam, publishedModel, recordModelListing } from "./modelinfo.ts";
 
 export class ProviderError extends Error {
 	readonly status?: number;
@@ -51,15 +52,20 @@ export function modelsEndpoint(settings: Settings): string {
 	return endpoint(`${chatBase(cfg)}${path}`, settings, chatUsesProxy(cfg));
 }
 
+/** The active provider's key. */
+export function chatApiKey(cfg: ChatConfig): string {
+	return (cfg.apiKeys[cfg.provider] ?? "").trim();
+}
+
 /** The Anthropic-wire credential headers. A base-URL override is a gateway, so
  * the key also goes in `x-bf-vk`. The hosted default keeps its own headers. */
 export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
+	const key = chatApiKey(cfg);
 	const headers: Record<string, string> = {
-		"x-api-key": cfg.apiKey,
+		"x-api-key": key,
 		"anthropic-version": "2023-06-01",
 		"anthropic-dangerous-direct-browser-access": "true",
 	};
-	const key = cfg.apiKey.trim();
 	if (key && cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
 	return headers;
 }
@@ -68,7 +74,7 @@ export function anthropicHeaders(cfg: ChatConfig): Record<string, string> {
  * gateway, so the key also goes in `x-bf-vk` (Bifrost reads it verbatim). The
  * hosted default keeps the bearer token alone. */
 export function openaiAuthHeaders(cfg: ChatConfig): Record<string, string> {
-	const key = cfg.apiKey.trim();
+	const key = chatApiKey(cfg);
 	if (!key) return {};
 	const headers: Record<string, string> = { authorization: `Bearer ${key}` };
 	if (cfg.baseUrl.trim()) headers["x-bf-vk"] = key;
@@ -123,26 +129,39 @@ function isAbort(e: unknown): boolean {
 
 type ACBlock = Record<string, unknown>;
 
+/** The Anthropic form of a thinking block. Encrypted reasoning or a raw entry from
+ * another wire has no Anthropic form; it stays on the message for a switch back. */
+function anthropicThinkingBlock(b: ThinkingBlock): ACBlock | null {
+	if (b.raw) return b.rawWire === "anthropic" ? b.raw : null;
+	if (b.encrypted === undefined) return { type: "thinking", thinking: b.thinking, signature: b.signature };
+	if (b.detailFormat !== undefined && b.detailFormat !== "anthropic-claude-v1") return null;
+	return { type: "redacted_thinking", data: b.encrypted };
+}
+
 function anthropicContent(blocks: Block[]): ACBlock[] {
-	return blocks.map((b) => {
-		switch (b.type) {
-			case "text":
-				return { type: "text", text: b.text };
-			case "image":
-				return { type: "image", source: { type: "base64", media_type: b.mediaType, data: b.data } };
-			case "tool_use":
-				return { type: "tool_use", id: b.id, name: b.name, input: b.input };
-			case "thinking":
-				return { type: "thinking", thinking: b.thinking, signature: b.signature };
-			case "tool_result":
-				return {
-					type: "tool_result",
-					tool_use_id: b.toolUseId,
-					is_error: b.isError ?? false,
-					content: b.content.map((c) => (c.type === "text" ? { type: "text", text: c.text } : { type: "image", source: { type: "base64", media_type: c.mediaType, data: c.data } })),
-				};
-		}
+	return blocks.flatMap((b): ACBlock[] => {
+		if (b.type !== "thinking") return [anthropicBlock(b)];
+		const block = anthropicThinkingBlock(b);
+		return block ? [block] : [];
 	});
+}
+
+function anthropicBlock(b: Exclude<Block, ThinkingBlock>): ACBlock {
+	switch (b.type) {
+		case "text":
+			return { type: "text", text: b.text };
+		case "image":
+			return { type: "image", source: { type: "base64", media_type: b.mediaType, data: b.data } };
+		case "tool_use":
+			return { type: "tool_use", id: b.id, name: b.name, input: b.input };
+		case "tool_result":
+			return {
+				type: "tool_result",
+				tool_use_id: b.toolUseId,
+				is_error: b.isError ?? false,
+				content: b.content.map((c) => (c.type === "text" ? { type: "text", text: c.text } : { type: "image", source: { type: "base64", media_type: c.mediaType, data: c.data } })),
+			};
+	}
 }
 
 function toAnthropicMessages(messages: Message[], state: string): ACBlock[] {
@@ -166,8 +185,9 @@ function anthropicAcceptsTemperature(model: string): boolean {
 
 // Extended thinking. Thinking and temperature are mutually exclusive in our
 // request — see the body assembly below.
-function anthropicThinking(model: string, maxTokens: number): Record<string, unknown> | undefined {
+function anthropicThinking(model: string, maxTokens?: number): Record<string, unknown> | undefined {
 	if (ANTHROPIC_BUDGET_MODELS.test(model)) {
+		if (maxTokens === undefined) return undefined; // a budget needs a limit
 		const budget = Math.max(1024, Math.min(8192, Math.floor(maxTokens / 2)));
 		return budget < maxTokens ? { type: "enabled", budget_tokens: budget } : undefined;
 	}
@@ -178,28 +198,66 @@ function anthropicEffort(model: string): string | undefined {
 	return /sonnet-4-[05]|haiku-4-5|opus-4-[01]/i.test(model) ? undefined : "medium";
 }
 
+/** The configured output limit, held to the most the model publishes it can write. */
+function outputLimit(cfg: ChatConfig): number | undefined {
+	const max = publishedModel(cfg.model)?.maxOutput;
+	return cfg.maxTokens !== undefined && max !== undefined ? Math.min(cfg.maxTokens, max) : cfg.maxTokens;
+}
+
 /** The Anthropic Messages request body. Exported so the model gates (thinking vs
  * temperature, effort, tool_choice) can be asserted without a request. */
 export function anthropicBody(cfg: ChatConfig, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions = {}): Record<string, unknown> {
 	const body: Record<string, unknown> = {
 		model: cfg.model,
-		max_tokens: cfg.maxTokens,
 		// Cache the (stable) system prompt. Tools render before it, so this breakpoint covers tools + system.
 		system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
 		stream: true,
 		messages: toAnthropicMessages(messages, state),
 	};
+	const maxTokens = outputLimit(cfg);
+	if (maxTokens !== undefined) body["max_tokens"] = maxTokens;
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
 		// A history that carries tool_use/tool_result blocks must define tools.
 		if (opts.toolChoice === "none") body["tool_choice"] = { type: "none" };
 	}
-	const thinking = anthropicThinking(cfg.model, cfg.maxTokens);
+	const thinking = anthropicThinking(cfg.model, maxTokens);
 	if (thinking) body["thinking"] = thinking;
-	else if (anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
+	else if (cfg.temperature !== undefined && anthropicAcceptsTemperature(cfg.model)) body["temperature"] = cfg.temperature;
 	const effort = anthropicEffort(cfg.model);
 	if (effort) body["output_config"] = { effort };
 	return body;
+}
+
+interface AnthropicStreamBlock {
+	type: string;
+	id?: string;
+	name?: string;
+	json: string;
+	thinking: string;
+	signature: string;
+	data?: string;
+	raw?: Record<string, unknown>;
+	done?: boolean;
+}
+
+/** The block a thinking/signature delta extends, opened on the spot when the start event never came. */
+function thinkingBlockAt(blocks: Record<number, AnthropicStreamBlock>, idx: number): AnthropicStreamBlock {
+	blocks[idx] ??= { type: "thinking", json: "", thinking: "", signature: "" };
+	return blocks[idx];
+}
+
+/** A finished reasoning block as a captured thinking entry, or null for a non-reasoning block. */
+function anthropicThinkingEntry(b: AnthropicStreamBlock): Omit<ThinkingBlock, "type"> | null {
+	if (b.raw) {
+		const raw = { ...b.raw };
+		if (b.thinking) raw["thinking"] = b.thinking;
+		if (b.signature) raw["signature"] = b.signature;
+		return { thinking: b.thinking, signature: "", raw, rawWire: "anthropic" };
+	}
+	if (b.data !== undefined) return { thinking: "", signature: "", encrypted: b.data };
+	if (b.type === "thinking") return { thinking: b.thinking, signature: b.signature };
+	return null;
 }
 
 async function streamAnthropic(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
@@ -221,7 +279,7 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 	if (!res.ok) throw await httpError(res);
 
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "end_turn", thinking: [], usage: emptyUsage(), durationMs: 0 };
-	const blocks: Record<number, { type: string; id?: string; name?: string; json: string; thinking: string; signature: string }> = {};
+	const blocks: Record<number, AnthropicStreamBlock> = {};
 	let firstTokenAt = 0;
 
 	try {
@@ -249,7 +307,10 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 				if (!firstTokenAt) firstTokenAt = performance.now();
 				const idx = msg["index"] as number;
 				const cb = msg["content_block"] as Record<string, unknown>;
-				blocks[idx] = { type: cb["type"] as string, id: cb["id"] as string, name: cb["name"] as string, json: "", thinking: (cb["thinking"] as string) ?? "", signature: (cb["signature"] as string) ?? "" };
+				const cbType = String(cb["type"]);
+				blocks[idx] = { type: cbType, id: cb["id"] as string, name: cb["name"] as string, json: "", thinking: typeof cb["thinking"] === "string" ? cb["thinking"] : "", signature: typeof cb["signature"] === "string" ? cb["signature"] : "" };
+				if (cbType === "redacted_thinking" && typeof cb["data"] === "string") blocks[idx].data = cb["data"];
+				else if (cbType !== "thinking" && /thinking|reasoning/.test(cbType)) blocks[idx].raw = cb;
 				if (cb["type"] === "tool_use") emit(opts, { type: "tool_start", id: cb["id"] as string, name: cb["name"] as string });
 			} else if (type === "content_block_delta") {
 				const idx = msg["index"] as number;
@@ -258,14 +319,10 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 					turn.text += delta["text"] as string;
 					emit(opts, { type: "text", delta: delta["text"] as string });
 				} else if (delta["type"] === "thinking_delta") {
-					const b = blocks[idx];
-					if (b) {
-						b.thinking += delta["thinking"] as string;
-						emit(opts, { type: "thinking", delta: delta["thinking"] as string });
-					}
+					thinkingBlockAt(blocks, idx).thinking += delta["thinking"] as string;
+					emit(opts, { type: "thinking", delta: delta["thinking"] as string });
 				} else if (delta["type"] === "signature_delta") {
-					const b = blocks[idx];
-					if (b) b.signature += (delta["signature"] as string) ?? "";
+					thinkingBlockAt(blocks, idx).signature += (delta["signature"] as string) ?? "";
 				} else if (delta["type"] === "input_json_delta") {
 					const b = blocks[idx];
 					if (b) {
@@ -275,10 +332,12 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 				}
 			} else if (type === "content_block_stop") {
 				const b = blocks[msg["index"] as number];
+				if (b) b.done = true;
 				if (b && b.type === "tool_use") {
 					turn.toolCalls.push({ id: b.id ?? "", name: b.name ?? "", input: safeJson(b.json) });
-				} else if (b && b.type === "thinking") {
-					turn.thinking.push({ thinking: b.thinking, signature: b.signature });
+				} else if (b) {
+					const entry = anthropicThinkingEntry(b);
+					if (entry) turn.thinking.push(entry);
 				}
 			} else if (type === "message_delta") {
 				const delta = msg["delta"] as Record<string, unknown>;
@@ -294,6 +353,11 @@ async function streamAnthropic(settings: Settings, system: string, state: string
 		if (isAbort(e)) throw new ProviderError("Request cancelled.");
 		throw e;
 	}
+	// A reasoning block the stream never closed is still the model's reasoning.
+	for (const idx of Object.keys(blocks).map(Number).sort((a, b) => a - b)) {
+		const entry = blocks[idx].done ? null : anthropicThinkingEntry(blocks[idx]);
+		if (entry) turn.thinking.push(entry);
+	}
 	turn.durationMs = firstTokenAt ? performance.now() - firstTokenAt : 0;
 	emit(opts, { type: "done", stopReason: turn.stopReason });
 	return turn;
@@ -308,7 +372,24 @@ function openaiUserContent(blocks: Array<TextBlock | ImageBlock>): unknown {
 	return blocks.map((b) => (b.type === "text" ? { type: "text", text: b.text } : { type: "image_url", image_url: { url: `data:${b.mediaType};base64,${b.data}` } }));
 }
 
-export function toOpenAIMessages(system: string, messages: Message[], state: string): unknown[] {
+/** Rebuild the `reasoning_details` entry a thinking block came from (or the
+ * entry OpenRouter expects for an Anthropic block). */
+function reasoningDetail(b: ThinkingBlock): Record<string, unknown> {
+	if (b.raw) return b.raw;
+	const type = b.detailType ?? (b.encrypted !== undefined ? "reasoning.encrypted" : "reasoning.text");
+	const out: Record<string, unknown> = { type };
+	if (type === "reasoning.encrypted") out["data"] = b.encrypted ?? "";
+	else if (type === "reasoning.summary") out["summary"] = b.thinking;
+	else out["text"] = b.thinking;
+	if (b.signature) out["signature"] = b.signature;
+	if (b.detailFormat !== undefined) out["format"] = b.detailFormat;
+	if (b.detailId !== undefined) out["id"] = b.detailId;
+	if (b.detailIndex !== undefined) out["index"] = b.detailIndex;
+	return out;
+}
+
+/** `textOnlyModel` names a model that takes no image input; its requests carry a note in place of each image. */
+export function toOpenAIMessages(system: string, messages: Message[], state: string, textOnlyModel?: string): unknown[] {
 	const out: unknown[] = [{ role: "system", content: system }];
 	for (const m of messages) {
 		if (m.role === "assistant") {
@@ -327,9 +408,13 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 			if (toolCalls.length) msg["tool_calls"] = toolCalls;
 			if (!text && !toolCalls.length) msg["content"] = "";
 			const thinking = m.blocks.filter((b): b is ThinkingBlock => b.type === "thinking");
-			const reasoning = thinking.map((b) => b.thinking).join("");
+			const reasoning = thinking
+				.filter((b) => b.encrypted === undefined && !b.raw)
+				.map((b) => b.thinking)
+				.join("");
 			if (reasoning) msg["reasoning_content"] = reasoning;
-			const details = thinking.filter((b) => b.signature).map((b) => ({ type: "reasoning.text", text: b.thinking, signature: b.signature }));
+			// A raw Anthropic block has no Chat Completions form; it stays on the message for a switch back.
+			const details = thinking.filter((b) => (b.raw ? b.rawWire === "openai" : b.signature || b.encrypted !== undefined || b.detailType)).map(reasoningDetail);
 			if (details.length) msg["reasoning_details"] = details;
 			out.push(msg);
 		} else {
@@ -344,7 +429,9 @@ export function toOpenAIMessages(system: string, messages: Message[], state: str
 					trailing.push(b);
 				}
 			}
-			if (trailing.length) out.push({ role: "user", content: openaiUserContent(trailing) });
+			// A model that takes no image input gets a note in each image's place; the message keeps the image.
+			const sendable = textOnlyModel ? trailing.map((b): TextBlock | ImageBlock => (b.type === "image" ? { type: "text", text: `[image not sent: ${textOnlyModel} takes no image input]` } : b)) : trailing;
+			if (sendable.length) out.push({ role: "user", content: openaiUserContent(sendable) });
 		}
 	}
 	// Volatile project state as an uncached, varying suffix -- keeps the system + conversation prefix stable for OpenAI's automatic (server-side) caching.
@@ -367,18 +454,21 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 		stream: true,
 		// ask for a final usage chunk so we can report cost + context use
 		stream_options: { include_usage: true },
-		messages: toOpenAIMessages(system, messages, state),
+		messages: toOpenAIMessages(system, messages, state, acceptsImages(cfg.model) ? undefined : cfg.model),
 	};
+	const maxTokens = outputLimit(cfg);
 	if (isOpenAIReasoningModel(cfg)) {
-		body["max_completion_tokens"] = cfg.maxTokens;
+		if (maxTokens !== undefined) body["max_completion_tokens"] = maxTokens;
 	} else {
-		body["max_tokens"] = cfg.maxTokens;
-		body["temperature"] = cfg.temperature;
+		if (maxTokens !== undefined) body["max_tokens"] = maxTokens;
+		if (cfg.temperature !== undefined && acceptsParam(cfg.model, "temperature")) body["temperature"] = cfg.temperature;
 	}
 	if (tools.length) {
 		body["tools"] = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 		if (opts.toolChoice === "none") body["tool_choice"] = "none";
 	}
+	// Reasoning on, at the model's default effort, wherever the model takes it.
+	if (cfg.provider === "openrouter" && acceptsParam(cfg.model, "reasoning")) body["reasoning"] = { enabled: true };
 	// Hosted OpenAI caches automatically (>= 1024-token prefixes).
 	if (opts.cacheKey) body["prompt_cache_key"] = opts.cacheKey;
 	// Self-hosted OpenAI-compatible servers (llama.cpp, Ollama, LM Studio, ...) opt into KV-cache prefix reuse with `cache_prompt`: re-use the cache from a prior request.
@@ -386,49 +476,100 @@ export function openaiBody(cfg: ChatConfig, system: string, state: string, messa
 	return body;
 }
 
-export interface ReasoningPiece {
-	text: string;
-	signature: string;
+/** One streamed fragment of a thinking block. */
+export type ReasoningPiece = Omit<ThinkingBlock, "type" | "thinking"> & { text: string };
+
+const DETAIL_PAYLOAD: Record<ReasoningDetailType, string> = { "reasoning.text": "text", "reasoning.summary": "summary", "reasoning.encrypted": "data" };
+
+/** Reasoning text in a value of unknown shape: a string as-is, anything else as JSON. */
+function asText(value: unknown): string {
+	if (value === undefined || value === null) return "";
+	return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-/** Read reasoning text from one streamed OpenAI delta. A `reasoning_details`
- * entry with text wins, then `reasoning` or `reasoning_content`. */
-export function reasoningDelta(delta: Record<string, unknown> | undefined): ReasoningPiece | null {
-	if (!delta) return null;
-	let detailText = "";
-	let signature = "";
-	const details = delta["reasoning_details"];
-	if (Array.isArray(details)) {
-		for (const entry of details) {
-			if (!entry || typeof entry !== "object") continue;
-			const detail = entry as Record<string, unknown>;
-			const text = detail["text"];
-			if (typeof text === "string" && text) detailText += text;
-			if (typeof detail["signature"] === "string" && detail["signature"]) signature = detail["signature"];
-		}
-	}
-	if (detailText) return { text: detailText, signature };
-	const parts: string[] = [];
+/** A `reasoning_details` entry this app does not model: kept verbatim, with any readable text shown. */
+function rawDetailPiece(entry: unknown): ReasoningPiece {
+	const raw = entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as Record<string, unknown>) : { value: entry };
+	return { text: asText(raw["text"] ?? raw["summary"]), signature: "", raw, rawWire: "openai" };
+}
+
+/** One `reasoning_details` entry as a piece. An untyped entry with string text (Bifrost's shape) is plain reasoning text. */
+function detailPiece(entry: unknown): ReasoningPiece {
+	if (!entry || typeof entry !== "object" || Array.isArray(entry)) return rawDetailPiece(entry);
+	const d = entry as Record<string, unknown>;
+	const rawType = d["type"];
+	const signature = d["signature"] ?? "";
+	if (typeof signature !== "string") return rawDetailPiece(entry);
+	if ((rawType === undefined || rawType === null) && typeof d["text"] === "string") return { text: d["text"], signature };
+	if (typeof rawType !== "string" || !(rawType in DETAIL_PAYLOAD)) return rawDetailPiece(entry);
+	const type = rawType as ReasoningDetailType;
+	const payload = d[DETAIL_PAYLOAD[type]] ?? "";
+	const format = d["format"];
+	const id = d["id"];
+	const index = d["index"];
+	const wellFormed = typeof payload === "string" && (format == null || typeof format === "string") && (id == null || typeof id === "string") && (index == null || typeof index === "number");
+	if (!wellFormed) return rawDetailPiece(entry);
+	const piece: ReasoningPiece = { text: type === "reasoning.encrypted" ? "" : payload, signature, detailType: type };
+	if (type === "reasoning.encrypted") piece.encrypted = payload;
+	if (typeof format === "string") piece.detailFormat = format;
+	if (typeof id === "string") piece.detailId = id;
+	if (typeof index === "number") piece.detailIndex = index;
+	return piece;
+}
+
+/** Read every reasoning fragment in one streamed OpenAI delta. `reasoning_details`
+ * holds the full structure, and `reasoning`/`reasoning_content` normally repeat its
+ * readable text; text they carry beyond it becomes its own piece. */
+export function reasoningPieces(delta: Record<string, unknown> | undefined): ReasoningPiece[] {
+	if (!delta) return [];
+	const strings: string[] = [];
 	for (const field of ["reasoning", "reasoning_content"]) {
-		const value = delta[field];
-		if (typeof value === "string" && value && !parts.includes(value)) parts.push(value);
+		const value = asText(delta[field]);
+		if (value && !strings.includes(value)) strings.push(value);
 	}
-	const text = parts.join("");
-	if (!text && !signature) return null;
-	return { text, signature };
+	const plain = strings.join("");
+	const details = delta["reasoning_details"];
+	const entries = details === undefined || details === null ? [] : Array.isArray(details) ? details : [details];
+	const pieces = entries.map(detailPiece);
+	const readable = pieces
+		.filter((p) => p.encrypted === undefined)
+		.map((p) => p.text)
+		.join("");
+	if (plain && plain !== readable) pieces.push({ text: plain, signature: "" });
+	return pieces;
+}
+
+/** Whether a piece continues the block it would be appended to: the same
+ * detail entry, and not past a signature. */
+function continuesBlock(block: Omit<ThinkingBlock, "type">, piece: ReasoningPiece): boolean {
+	if (block.signature || block.raw) return false;
+	if ((block.encrypted === undefined) !== (piece.encrypted === undefined)) return false;
+	if (block.detailType !== piece.detailType) return false;
+	if (piece.detailIndex !== undefined && block.detailIndex !== undefined && piece.detailIndex !== block.detailIndex) return false;
+	return !(piece.detailId !== undefined && block.detailId !== undefined && piece.detailId !== block.detailId);
 }
 
 /** Append one reasoning piece to the turn's thinking blocks. A signed block is
  * closed, so later text starts a new block and every signature survives replay. */
 export function appendThinking(turn: AssistantTurn, piece: ReasoningPiece): void {
-	if (!piece.text && !piece.signature) return;
+	if (piece.raw) {
+		turn.thinking.push({ thinking: piece.text, signature: "", raw: piece.raw, rawWire: piece.rawWire });
+		return;
+	}
+	if (!piece.text && !piece.signature && !piece.encrypted && !piece.detailType) return;
 	let block = turn.thinking[turn.thinking.length - 1];
-	if (!block || block.signature) {
+	if (!block || !continuesBlock(block, piece)) {
 		block = { thinking: "", signature: "" };
+		if (piece.encrypted !== undefined) block.encrypted = "";
+		if (piece.detailType !== undefined) block.detailType = piece.detailType;
 		turn.thinking.push(block);
 	}
 	block.thinking += piece.text;
+	if (piece.encrypted !== undefined) block.encrypted = (block.encrypted ?? "") + piece.encrypted;
 	if (piece.signature) block.signature = piece.signature;
+	if (piece.detailFormat !== undefined) block.detailFormat ??= piece.detailFormat;
+	if (piece.detailId !== undefined) block.detailId ??= piece.detailId;
+	if (piece.detailIndex !== undefined) block.detailIndex ??= piece.detailIndex;
 }
 
 async function streamOpenAI(settings: Settings, system: string, state: string, messages: Message[], tools: ToolDef[], opts: StreamOptions): Promise<AssistantTurn> {
@@ -452,6 +593,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 	const turn: AssistantTurn = { text: "", toolCalls: [], stopReason: "stop", thinking: [], usage: emptyUsage(), durationMs: 0 };
 	const calls: Array<{ id: string; name: string; args: string; started: boolean }> = [];
 	let firstTokenAt = 0;
+	let reportedReasoningTokens = 0;
 
 	try {
 		for await (const ev of sseEvents(res)) {
@@ -473,15 +615,18 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 				turn.usage.cacheReadTokens = cached;
 				turn.usage.cacheWriteTokens = 0;
 				turn.usage.outputTokens = (u["completion_tokens"] as number) ?? turn.usage.outputTokens;
+				const reasoningTokens = (u["completion_tokens_details"] as Record<string, unknown> | undefined)?.["reasoning_tokens"];
+				if (typeof reasoningTokens === "number") reportedReasoningTokens = reasoningTokens;
+				const reportedCost = u["cost"];
+				if (typeof reportedCost === "number" && Number.isFinite(reportedCost)) turn.usage.cost = reportedCost;
 			}
 			const choice = (msg["choices"] as Array<Record<string, unknown>> | undefined)?.[0];
 			if (!choice) continue;
 			const delta = choice["delta"] as Record<string, unknown> | undefined;
-			const reasoning = reasoningDelta(delta);
-			if (reasoning) {
+			for (const piece of reasoningPieces(delta)) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
-				appendThinking(turn, reasoning);
-				if (reasoning.text) emit(opts, { type: "thinking", delta: reasoning.text });
+				appendThinking(turn, piece);
+				if (piece.text) emit(opts, { type: "thinking", delta: piece.text });
 			}
 			if (delta?.["content"]) {
 				if (!firstTokenAt) firstTokenAt = performance.now();
@@ -517,6 +662,7 @@ async function streamOpenAI(settings: Settings, system: string, state: string, m
 		if (isAbort(e)) throw new ProviderError("Request cancelled.");
 		throw e;
 	}
+	if (reportedReasoningTokens > 0 && !turn.thinking.length) turn.note = `The server billed ${reportedReasoningTokens} reasoning tokens but sent no reasoning, so the model cannot see it on later turns.`;
 	calls.forEach((c, i) => {
 		if (c.name) turn.toolCalls.push({ id: c.id || `call_${i}`, name: c.name, input: safeJson(c.args) });
 	});
@@ -546,7 +692,7 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 	const prompt = 'Respond with one word: "Hi"';
 	const isAnthropic = PROVIDERS[cfg.provider].wire === "anthropic";
 	// A blank key is valid for keyless endpoints (e.g. Ollama); only flag it as a likely cause when the request fails.
-	const keyNote = cfg.apiKey.trim() ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
+	const keyNote = chatApiKey(cfg) ? "" : " (no API key set — required unless your endpoint is keyless, e.g. Ollama)";
 	let url: string;
 	let headers: Record<string, string>;
 	if (isAnthropic) {
@@ -587,7 +733,8 @@ export async function testConnection(settings: Settings): Promise<TestResult> {
 }
 
 /** List available model ids from the provider (Anthropic /v1/models or an
- * OpenAI-compatible /models). Throws a ProviderError on failure. */
+ * OpenAI-compatible /models), recording what each entry publishes about its
+ * model (limits, prices, accepted parameters). Throws a ProviderError on failure. */
 export async function listModels(settings: Settings): Promise<string[]> {
 	const cfg = settings.chat;
 	const url = modelsEndpoint(settings);
@@ -608,6 +755,7 @@ export async function listModels(settings: Settings): Promise<string[]> {
 	const json = (await res.json()) as { data?: Array<{ id?: string; name?: string }>; models?: Array<{ id?: string; name?: string }> };
 	const items = json.data ?? json.models ?? [];
 	const ids = items.map((m) => m.id ?? m.name ?? "").filter((s) => s.length > 0);
+	recordModelListing(items);
 	return [...new Set(ids)].sort();
 }
 

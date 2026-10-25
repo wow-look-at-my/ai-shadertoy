@@ -1,6 +1,8 @@
 // Unit tests for prompt-cache usage accounting.
 
-import { cachePct, messageCost } from "../src/ai/pricing.ts";
+import { cachePct, hasContextWindow, hasPricing, messageCost, modelContextWindow } from "../src/ai/pricing.ts";
+import { recordModelListing } from "../src/ai/modelinfo.ts";
+import { shouldAutoCompact } from "../src/ai/compact.ts";
 import type { Usage } from "../src/ai/types.ts";
 
 let passed = 0;
@@ -63,5 +65,37 @@ eq(cachePct({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }), 0, "zero t
 
 // Unknown model => no cost (tokens-only display), not a fabricated number.
 eq(messageCost("some-unknown-model", { inputTokens: 1000, outputTokens: 100 }), null, "unknown model => null (no cost)");
+
+// ---- server-reported cost wins over the local table -------------------------
+{
+	const reported: Usage = { inputTokens: 128406, outputTokens: 380, cost: 0.003189768 };
+	eq(messageCost("some-unknown-model", reported), 0.003189768, "a reported cost is used for an unpriced model");
+	eq(hasPricing("some-unknown-model", reported), true, "a reported cost makes the readout available");
+	eq(messageCost("gpt-4o", { inputTokens: 1_000_000, outputTokens: 0, cost: 7 }), 7, "a reported cost wins over the table");
+
+	const absent: Usage = { inputTokens: 128406, outputTokens: 380 };
+	eq(messageCost("some-unknown-model", absent), null, "an absent cost is not guessed");
+	eq(hasPricing("some-unknown-model", absent), false, "an absent cost leaves the readout hidden");
+	eq(hasPricing("gpt-4o", absent), true, "the local table still prices a known model");
+}
+
+// ---- context windows resolve through a provider prefix ----------------------
+{
+	eq(modelContextWindow("anthropic/claude-opus-5"), 1_000_000, "a provider-prefixed id resolves its base window");
+	eq(hasContextWindow("anthropic/claude-opus-5"), true, "the prefixed id counts as known");
+	eq(hasContextWindow("deepseek/deepseek-chat"), false, "an unknown model has no known window");
+	eq(modelContextWindow("deepseek/deepseek-chat"), undefined, "an unknown model's window stays unknown, never a guess");
+
+	recordModelListing([{ id: "deepseek/deepseek-v4.1-flash-1017", context_length: 1_048_576, pricing: { prompt: "0.00000015", completion: "0.0000006", input_cache_read: "0.000000003" } }, { id: "nested", top_provider: { context_length: 65_536 } }, { id: "no-window" }]);
+	eq(modelContextWindow("deepseek/deepseek-v4.1-flash-1017"), 1_048_576, "a listed window is used");
+	eq(modelContextWindow("nested"), 65_536, "top_provider.context_length is read");
+	eq(modelContextWindow("no-window"), undefined, "a listing with no window leaves it unknown");
+	eq(hasPricing("deepseek/deepseek-v4.1-flash-1017"), true, "listed prices count as pricing");
+	close(messageCost("deepseek/deepseek-v4.1-flash-1017", { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }) ?? -1, 0.15 + 0.6 + 0.003, "listed per-token prices are billed per class", 1e-6);
+	eq(hasContextWindow("deepseek/deepseek-v4.1-flash-1017"), true, "and counts as known");
+	eq(shouldAutoCompact({ promptTokens: 265_749, window: modelContextWindow("deepseek/deepseek-v4.1-flash-1017") }), false, "the HAR's 265k prompt is far from compaction on a 1M window");
+	eq(shouldAutoCompact({ promptTokens: 265_749, window: undefined }), false, "an unknown window never auto-compacts");
+	eq(shouldAutoCompact({ promptTokens: 900_000, window: 1_048_576 }), true, "85% of a known window does");
+}
 
 console.log(`ok - ${passed} assertions passed`);

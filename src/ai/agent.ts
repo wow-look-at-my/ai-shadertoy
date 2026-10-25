@@ -12,6 +12,7 @@ import type { ToolDef, Usage } from "./types.ts";
 import type { ToolResult } from "./tools/index.ts";
 import { getTool, text } from "./tools/index.ts";
 import { streamChat } from "./providers.ts";
+import { acceptsParam } from "./modelinfo.ts";
 import { parseTextToolCalls } from "./texttools.ts";
 import { textToolInstructions } from "./system-prompt.ts";
 import { uid } from "../util/misc.ts";
@@ -58,7 +59,8 @@ export async function runAgent(
 	applyTool: (name: string, input: unknown) => Promise<ToolResult>,
 	cb: AgentCallbacks,
 ): Promise<void> {
-	const textMode = settings.chat.toolMode === "text";
+	// A model whose endpoint lists no native tool support gets the text-tag protocol.
+	const textMode = settings.chat.toolMode === "text" || !acceptsParam(settings.chat.model, "tools");
 
 	// Fold any steering messages the user queued mid-turn into the conversation
 	// so the model sees them on its next response.
@@ -91,7 +93,7 @@ export async function runAgent(
 		const calls = textMode ? parseTextToolCalls(turn.text, new Set(tools.map((t) => t.name))) : toolCalls;
 
 		// Thinking blocks ride at the front of the assistant turn.
-		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, thinking: t.thinking, signature: t.signature }));
+		const thinkingBlocks = turn.thinking.map((t) => ({ type: "thinking" as const, ...t }));
 		const textBlocks: TextBlock[] = turn.text.trim() ? [{ type: "text", text: turn.text }] : [];
 		const assistantMsg: Message = {
 			id: uid("m_"),
@@ -102,8 +104,12 @@ export async function runAgent(
 				: [...thinkingBlocks, ...textBlocks, ...toolCalls.map((tc) => ({ type: "tool_use" as const, id: tc.id, name: tc.name, input: tc.input }))],
 			...(textMode ? { textTools: calls.map((c) => c.name) } : {}),
 		};
-		if (truncated) assistantMsg.note = `Cut off at ${settings.chat.maxTokens} output tokens${toolCalls.length < turn.toolCalls.length ? "; an incomplete tool call was dropped" : ""}. Raise "Max tokens" in Settings, or ask for a smaller step.`;
+		if (truncated) {
+			const limit = settings.chat.maxTokens === undefined ? "the output token limit" : `${settings.chat.maxTokens} output tokens`;
+			assistantMsg.note = `Cut off at ${limit}${toolCalls.length < turn.toolCalls.length ? "; an incomplete tool call was dropped" : ""}. Raise "Max tokens" in Settings, or ask for a smaller step.`;
+		}
 		else if (refused) assistantMsg.note = "The model declined this request (safety refusal).";
+		if (turn.note) assistantMsg.note = assistantMsg.note ? `${assistantMsg.note} ${turn.note}` : turn.note;
 		// An assistant turn must carry content; the API rejects an empty one.
 		if (assistantMsg.blocks.length === 0) assistantMsg.blocks.push({ type: "text", text: refused ? "(declined)" : "(no response)" });
 		messages.push(assistantMsg);

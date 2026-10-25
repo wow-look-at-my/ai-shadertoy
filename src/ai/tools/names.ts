@@ -12,6 +12,7 @@ export const TOOL_NAMES = {
 	connectPins: "connect_pins",
 	setUniforms: "set_uniforms",
 	screenshot: "capture_screenshot",
+	histogram: "histogram",
 	generateTexture: "generate_texture",
 } as const;
 

@@ -5,7 +5,7 @@
 
 import { makeProject, normalizeProject } from "../src/state/defaults.ts";
 import { channelsForSource, ensureMaskCompositePass, isMaskCompositePass, makeCompositeLayer, makeMaskLayer, makePass, makeShape, referencedInputCount, removeMaskCompositePass } from "../src/state/types.ts";
-import { assembleFragment, extractUniformDeclarations } from "../src/gl/wrapper.ts";
+import { assembleFragment, extractUniformDeclarations, remapChannelLookups } from "../src/gl/wrapper.ts";
 import { isShapeKind, shapeKindIndex, SHAPE_KINDS } from "../src/gl/shapes.ts";
 import { parseShapePatch } from "../src/ai/tools/geometry_util.ts";
 
@@ -54,6 +54,22 @@ function near(a: number, b: number, msg: string): void {
 	const assembled = assembleFragment(src, uniforms, 3).source;
 	eq((assembled.match(/uniform float u_speed;/g) ?? []).length, 1, "custom uniform declared once in assembled shader");
 	eq((assembled.match(/uniform vec3 u_tint;/g) ?? []).length, 1, "vec3 custom uniform declared once in assembled shader");
+}
+
+// Square-pixel mode: direct lookups on a channel go through its remap so a
+// pass reading another pass with fragCoord / iResolution.xy stays aligned.
+{
+	const body = "void mainImage(out vec4 c, in vec2 f) {\n\tvec2 uv = f / iResolution.xy;\n\tc = texture(iChannel0, uv) + textureLod( iChannel1 , uv, 0.0) + texelFetch(iChannel0, ivec2(f), 0) + texture(iChannel5, uv);\n}";
+	eq(
+		remapChannelLookups(body, 2),
+		"void mainImage(out vec4 c, in vec2 f) {\n\tvec2 uv = f / iResolution.xy;\n\tc = ai_texture(ai_chanRemap[0], iChannel0, uv) + ai_textureLod( ai_chanRemap[1], iChannel1 , uv, 0.0) + ai_texelFetch(ai_chanFetch[0], iChannel0, ivec2(f), 0) + texture(iChannel5, uv);\n}",
+		"declared channel lookups are remapped; an undeclared channel is left for the compiler to report",
+	);
+	const assembled = assembleFragment(body, [], 2).source;
+	check(assembled.includes("uniform vec4 ai_chanRemap[2];"), "the remap uniform is declared per channel");
+	check(assembled.includes("uniform ivec2 ai_chanFetch[2];"), "and the texel offset uniform");
+	eq(assembled.split("#line 1\n")[1].split("\n").length, assembleFragment("void mainImage(out vec4 c, in vec2 f) {\n\tvec2 uv = f / iResolution.xy;\n\tc = vec4(0);\n}", [], 2).source.split("#line 1\n")[1].split("\n").length, "the rewrite keeps the line count, so errors map to user lines");
+	check(!assembleFragment(body, [], 0).source.includes("ai_chanRemap"), "a pass with no inputs declares no remap");
 }
 
 // migration: old single shaderSource -> Base layer

@@ -108,7 +108,7 @@ export function buildSystemPrompt(): string {
 - Worked example -- glow/bloom within a layer: create_object type:pass name:"Effect" format:rgba16f sampling geometry; create_object type:pass name:"BlurX" sampling Effect; create_object type:pass name:"BlurY" sampling BlurX; then the layer's output pass samples under + BlurY and adds the soft glow over what's below. Separable blur is far cheaper than one giant kernel.
 
 # Built-in uniforms (already declared in every pass, just use them)
-  vec3  iResolution      // viewport size in pixels (xy), z = 1
+  vec3  iResolution      // render size in pixels (xy), z = 1 -- see "Square pixels" below
   float iTime            // seconds since start
   float iTimeDelta       // seconds per frame (approx)
   float iFrameRate
@@ -119,6 +119,7 @@ export function buildSystemPrompt(): string {
   vec3  iChannelResolution[N]           // N = this pass's input count
 Only the iChannelK inputs this pass actually has are declared -- don't sample an input you haven't wired.
 Normalize coordinates with: vec2 uv = fragCoord / iResolution.xy;  (use iResolution.xy for aspect correction).
+Square pixels: the user's preview may have the square-pixels toggle on (it is the default). Then iResolution is the canvas's SHORT side on both axes and fragCoord is centred, so uv = fragCoord / iResolution.xy is isotropic (circles stay round), uv 0..1 covers the centred square, and uv runs past 0..1 along the long axis. Sampling another pass, under, geometry or mask with texture(iChannelN, uv) still lines up pixel-for-pixel, and 1.0 / iResolution.xy or 1.0 / iChannelResolution[N].xy is one texel -- write blurs and feedback the ordinary Shadertoy way. Call texture/textureLod/texelFetch on iChannelN directly (not through a helper taking a sampler2D parameter), because that direct call is what keeps the lookup aligned.
 Custom uniforms are SHARED across all passes in all layers. Declare them in shader source WITH a baked default in the same edit (e.g. \`uniform float u_gain = 1.5;\` or \`uniform vec3 u_tint = vec3(1.0, 0.5, 0.2);\`); the editor extracts them into live controls automatically. The inline default IS how you give a uniform its value -- never declare it bare and reach for set_uniforms to set the starting value (that's two steps for what should be one, and bare leaves it at 0 meanwhile). set_uniforms is a PATCH for the OTHER cases only -- adjusting a control's range/step/label, or programmatically nudging an existing uniform mid-session -- touching ONLY the names you list, so you never resend the whole list. Built-in procedural textures you can bind to channels: ${builtins}.
 
 # Working style

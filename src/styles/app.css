@@ -487,6 +487,33 @@ textarea:focus {
 .cs-item {
 	white-space: nowrap;
 }
+.cs-action {
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+}
+.cs-action:hover {
+	color: var(--fg);
+	text-decoration: underline;
+}
+.cs-ctx {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+.cs-ctx-bar {
+	width: 48px;
+	height: 5px;
+	border-radius: 3px;
+	background: var(--bg-3);
+	overflow: hidden;
+}
+.cs-ctx-fill {
+	display: block;
+	height: 100%;
+	background: var(--accent);
+}
 
 /* Icons: each glyph (SVG path data) lives here as a currentColor-tinted CSS
    mask -- never in .ts. `.glyph` is the shared base; one `.icon-<name>` rule per
@@ -1534,6 +1561,20 @@ textarea.code {
 	border-bottom: 1px solid var(--danger);
 	color: var(--danger);
 	font-size: 13px;
+}
+
+.histogram-canvas {
+	display: block;
+	width: 100%;
+	height: auto;
+	margin-top: 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--bg-2);
+}
+.histogram-meta {
+	display: block;
+	margin-top: 8px;
 }
 
 /* ---- scrollbars ---- */

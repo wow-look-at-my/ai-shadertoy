@@ -5,6 +5,7 @@ import { getTool, toolDefs } from "../src/ai/tools/index.ts";
 import "../src/ai/tools/index.ts"; // register every tool
 import type { ToolContext, ToolResult } from "../src/ai/tools/types.ts";
 import { makeProject } from "../src/state/defaults.ts";
+import { CAPTURE_HEIGHT, CAPTURE_WIDTH, captureDimensions } from "../src/gl/renderer.ts";
 import { makeCompositeLayer, makePass, makeShape, LAYER_COMPOSITE_SOURCE, type Layer, type Pass, type Project, type ShapeKind, type Uniform } from "../src/state/types.ts";
 
 let passed = 0;
@@ -45,6 +46,13 @@ function makeCtx(project: Project): ToolContext {
 	};
 	const passById = (id: string): Pass | undefined => layerOfPass(id)?.passes.find((p) => p.id === id);
 
+	let rendered = "";
+	const render = (): void => {
+		const layer = topLayer();
+		const out = layer?.passes.find((p) => p.id === layer.outputPassId) ?? layer?.passes[0];
+		rendered = out?.source ?? "";
+	};
+
 	const resolveLayer = (ref?: string | number): Layer | null => {
 		if (ref === undefined || ref === "") return topLayer();
 		if (typeof ref === "number" && Number.isInteger(ref)) return project.layers[ref] ?? null;
@@ -61,7 +69,13 @@ function makeCtx(project: Project): ToolContext {
 		return layer.passes.find((p) => p.id === ref) ?? layer.passes.find((p) => p.name.toLowerCase() === ref.toLowerCase()) ?? passById(ref) ?? null;
 	};
 
-	const renderer = { maxInputs: () => 16, supportsFloat: () => true, stats: () => ({ time: 0, width: 4, height: 4, layers: project.layers.length, passes: project.layers.reduce((n, l) => n + l.passes.length, 0) }) } as unknown as ToolContext["renderer"];
+	const renderer = {
+		maxInputs: () => 16,
+		supportsFloat: () => true,
+		stats: () => ({ time: 0, width: 4, height: 4, layers: project.layers.length, passes: project.layers.reduce((n, l) => n + l.passes.length, 0) }),
+		readViewport: () => ({ width: 2, height: 1, data: Uint8Array.from([255, 255, 255, 255, 0, 0, 0, 0]) }),
+		readPass: () => ({ width: 1, height: 1, data: Uint8Array.from([0, 255, 0, 255]) }),
+	} as unknown as ToolContext["renderer"];
 
 	return {
 		settings: { imageGen: { enabled: false }, autoScreenshot: false } as unknown as ToolContext["settings"],
@@ -171,7 +185,10 @@ function makeCtx(project: Project): ToolContext {
 			project.name = n;
 		},
 		addAsset: () => {},
-		screenshotBlock: () => ({ type: "image", mediaType: "image/webp", data: "", _avg: "avg rgb(0,0,0)" }),
+		screenshotBlock: () => ({ type: "image", mediaType: "image/webp", data: rendered, _avg: "avg rgb(0,0,0)" }),
+		nextFrame: async () => {
+			render();
+		},
 		shaderResult: (prefix) => ({ content: [{ type: "text", text: prefix }] }),
 		compileError: () => null,
 	};
@@ -183,6 +200,12 @@ function run(ctx: ToolContext, name: string, input: Record<string, unknown>): To
 	const r = tool.execute(ctx, input);
 	if (r instanceof Promise) throw new Error("FAIL: sync test path expected");
 	return r;
+}
+
+async function runAsync(ctx: ToolContext, name: string, input: Record<string, unknown>): Promise<ToolResult> {
+	const tool = getTool(name);
+	if (!tool) throw new Error(`FAIL: tool ${name} not registered`);
+	return await tool.execute(ctx, input);
 }
 
 // ---- ref resolution: layer by name / id / stack index ----------------------
@@ -319,9 +342,9 @@ function run(ctx: ToolContext, name: string, input: Record<string, unknown>): To
 	eq(a, b, "advertised set is deterministic");
 
 	const names = toolDefs({ imageGen: false }).map((t) => t.name);
-	eq(names.length, 8, "8 tools without image gen");
+	eq(names.length, 9, "9 tools without image gen");
 	const withGen = toolDefs({ imageGen: true }).map((t) => t.name);
-	eq(withGen.length, 9, "9 tools with image gen (generate_texture added)");
+	eq(withGen.length, 10, "10 tools with image gen (generate_texture added)");
 	check(!names.includes("generate_texture"), "generate_texture is the only gated tool");
 	check(withGen.includes("generate_texture"), "generate_texture appears when imageGen on");
 
@@ -329,8 +352,49 @@ function run(ctx: ToolContext, name: string, input: Record<string, unknown>): To
 	eq(JSON.stringify(names), JSON.stringify(withGen.filter((n) => n !== "generate_texture")), "only generate_texture differs by gate");
 
 	// No per-conversation / per-state gating: identical before vs after authoring.
-	const expected = ["read", "create_object", "destroy_object", "edit_object", "edit_shader", "connect_pins", "set_uniforms", "capture_screenshot"];
-	eq(JSON.stringify(names), JSON.stringify(expected), "exactly the 8 generic + kept tools, in order");
+	const expected = ["read", "create_object", "destroy_object", "edit_object", "edit_shader", "connect_pins", "set_uniforms", "capture_screenshot", "histogram"];
+	eq(JSON.stringify(names), JSON.stringify(expected), "exactly the 9 generic + kept tools, in order");
+}
+
+// ---- screenshot barrier -----------------------------------------------------
+{
+	const project = makeProject("T", DEFAULT_SRC);
+	const ctx = makeCtx(project);
+	await runAsync(ctx, "edit_shader", { old: "vec4(0.0)", new: "vec4(1.0, 0.0, 0.0, 1.0)" });
+	const shot = await runAsync(ctx, "capture_screenshot", {});
+	const image = shot.content.find((b) => b.type === "image");
+	check(image?.type === "image" && image.data.includes("vec4(1.0, 0.0, 0.0, 1.0)"), "a screenshot after an edit reads the post-edit frame");
+	check(image?.type === "image" && !image.data.includes("vec4(0.0)"), "the pre-edit source is gone");
+}
+
+// ---- histogram tool ---------------------------------------------------------
+{
+	const project = makeProject("T", DEFAULT_SRC);
+	const ctx = makeCtx(project);
+	const tool = getTool("histogram");
+	check(!!tool && tool.def.name === "histogram", "the histogram tool is registered");
+	check(JSON.stringify(tool?.def.parameters).includes("\"channel\""), "the histogram schema exposes the channel");
+
+	const view = txt(run(ctx, "histogram", { channel: "luma" }));
+	check(view.includes("viewport | luma | 1 px"), "the viewport histogram reports its target and samples");
+	check(view.includes("luma mean 255.0 peak 255 (1)"), "a white pixel peaks at the top bin");
+	check(view.includes("255:1"), "the populated bins are listed");
+
+	const pass = txt(run(ctx, "histogram", { target: "Image", channel: "g" }));
+	check(pass.includes("Base / Image | g"), "a pass target reports its layer and pass");
+	check(pass.includes("g mean 255.0"), "a pass target reads its own buffer");
+}
+
+// ---- fixed capture ----------------------------------------------------------
+{
+	eq(CAPTURE_WIDTH, 1280, "the capture renders at a fixed width");
+	eq(CAPTURE_HEIGHT, 720, "the capture renders at a fixed height");
+	const full = captureDimensions(1920);
+	eq(full.width, 1280, "a large max edge keeps the fixed width");
+	eq(full.height, 720, "a large max edge keeps the fixed height");
+	const small = captureDimensions(640);
+	eq(small.width, 640, "a small max edge scales the width");
+	eq(small.height, 360, "the downscale keeps the 16:9 aspect");
 }
 
 console.log(`tools.test.ts: ${passed} checks passed`);

@@ -11,7 +11,8 @@ registerTool({
 		description: "Capture and return the current rendered frame as an image so you can see the result.",
 		parameters: { type: "object", properties: {} },
 	},
-	execute: (ctx) => {
+	execute: async (ctx) => {
+		await ctx.nextFrame();
 		const shot = ctx.screenshotBlock();
 		const stats = ctx.renderer.stats();
 		return { content: [text(`Frame at t=${stats.time.toFixed(2)}s, ${stats.width}x${stats.height}. ${shot._avg}.`), imageBlock(shot)] };

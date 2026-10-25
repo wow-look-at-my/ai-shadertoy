@@ -1,5 +1,6 @@
-// Provider-neutral types for the chat client: tool definitions, streaming
-// events, and the assembled assistant turn.
+// Provider-neutral types for the chat client: tool definitions, streaming events, and the assembled assistant turn.
+
+import type { ThinkingBlock } from "../state/types.ts";
 
 export interface JSONSchema {
 	type: string;
@@ -36,14 +37,18 @@ export interface Usage {
 	// Prompt-cache token counts, ONLY ever the values the server reports.
 	cacheReadTokens?: number; // served from the prompt cache (Anthropic cache_read; OpenAI cached prompt tokens)
 	cacheWriteTokens?: number; // written to the prompt cache this request (Anthropic cache_creation)
+	/** Server-reported request cost in USD, when the endpoint reports one. */
+	cost?: number;
 }
 
 export interface AssistantTurn {
 	text: string;
 	toolCalls: ToolCall[];
 	stopReason: string;
-	/** Captured thinking blocks (Anthropic extended thinking), in order. */
-	thinking: Array<{ thinking: string; signature: string }>;
+	/** Captured thinking blocks, in order. */
+	thinking: Array<Omit<ThinkingBlock, "type">>;
+	/** Something about the response the user should see on the message. */
+	note?: string;
 	usage: Usage;
 	durationMs: number; // generation wall-clock (first token -> done), for tokens/sec
 }

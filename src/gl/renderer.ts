@@ -42,10 +42,30 @@ export interface RenderStats {
 	layers: number;
 }
 
+/** RGBA bytes read back from a render target, top-down. Float targets are
+ * clamped to the byte range. */
+export interface PixelReadout {
+	width: number;
+	height: number;
+	data: Uint8Array;
+}
+
+/** The fixed render size a tool screenshot uses, independent of the window. */
+export const CAPTURE_WIDTH = 1280;
+export const CAPTURE_HEIGHT = 720;
+
+export function captureDimensions(maxDim: number): { width: number; height: number } {
+	const scale = Math.min(1, maxDim / Math.max(CAPTURE_WIDTH, CAPTURE_HEIGHT));
+	return { width: Math.max(1, Math.round(CAPTURE_WIDTH * scale)), height: Math.max(1, Math.round(CAPTURE_HEIGHT * scale)) };
+}
+
 interface Target {
 	tex: WebGLTexture;
 	fbo: WebGLFramebuffer;
 }
+
+/** Channel kinds backed by a canvas-sized render target. */
+const CANVAS_TARGET_KINDS: ReadonlySet<Channel["kind"]> = new Set(["pass", "under", "geometry", "mask"]);
 
 interface ChannelSlot {
 	kind: Channel["kind"];
@@ -139,6 +159,8 @@ export class Renderer {
 	private rafId = 0;
 	private allocW = 0;
 	private allocH = 0;
+	private captureW = 0;
+	private captureH = 0;
 
 	private mouse = { x: 0, y: 0, downX: 0, downY: 0, pressed: false, everDown: false };
 
@@ -659,8 +681,8 @@ export class Renderer {
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		const cssW = this.canvas.clientWidth || 640;
 		const cssH = this.canvas.clientHeight || 360;
-		const w = Math.max(1, Math.floor(cssW * dpr * this.renderScale));
-		const h = Math.max(1, Math.floor(cssH * dpr * this.renderScale));
+		const w = this.captureW || Math.max(1, Math.floor(cssW * dpr * this.renderScale));
+		const h = this.captureH || Math.max(1, Math.floor(cssH * dpr * this.renderScale));
 		if (this.canvas.width !== w || this.canvas.height !== h) {
 			this.canvas.width = w;
 			this.canvas.height = h;
@@ -829,6 +851,8 @@ export class Renderer {
 		this.setFloat4(p, "iDate", d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds());
 
 		const chRes: number[] = [];
+		const chRemap: number[] = [];
+		const chFetch: number[] = [];
 		for (let i = 0; i < p.channels.length; i++) {
 			const slot = p.channels[i];
 			const r = this.resolveChannel(slot, p, rendered);
@@ -837,10 +861,24 @@ export class Renderer {
 			gl.bindSampler(i, this.sampler(slot, r.float));
 			const l = this.loc(p, `iChannel${i}`);
 			if (l) gl.uniform1i(l, i);
-			chRes.push(r.width, r.height, 1);
+			// A canvas render target is stored in texture space; in square-pixel mode its lookups and reported size follow the square space mainImage sees.
+			const target = resSide > 0 && CANVAS_TARGET_KINDS.has(slot.kind);
+			if (target) {
+				chRes.push((r.width * resSide) / p.width, (r.height * resSide) / p.height, 1);
+				chRemap.push(resSide / p.width, resSide / p.height, offX / p.width, offY / p.height);
+				chFetch.push(Math.round((offX * r.width) / p.width), Math.round((offY * r.height) / p.height));
+			} else {
+				chRes.push(r.width, r.height, 1);
+				chRemap.push(1, 1, 0, 0);
+				chFetch.push(0, 0);
+			}
 		}
 		const lcr = this.loc(p, "iChannelResolution[0]");
 		if (lcr) gl.uniform3fv(lcr, chRes);
+		const lrm = this.loc(p, "ai_chanRemap[0]");
+		if (lrm) gl.uniform4fv(lrm, chRemap);
+		const lft = this.loc(p, "ai_chanFetch[0]");
+		if (lft) gl.uniform2iv(lft, chFetch);
 
 		for (const u of this.uniforms) {
 			const l = this.loc(p, u.name);
@@ -953,13 +991,44 @@ export class Renderer {
 
 	// ---- screenshot ---------------------------------------------------------
 
+	/** Draw the latest state and resolve after the browser presents a frame. */
+	nextFrame(): Promise<void> {
+		this.renderFrame();
+		return new Promise((resolve) => {
+			requestAnimationFrame(() => {
+				this.renderFrame();
+				resolve();
+			});
+		});
+	}
+
 	screenshot(maxDim = 512, mime = "image/webp", quality = 0.85): Screenshot {
 		this.renderFrame();
 		const sw = this.canvas.width;
 		const sh = this.canvas.height;
 		const scale = Math.min(1, maxDim / Math.max(sw, sh));
-		const w = Math.max(1, Math.round(sw * scale));
-		const h = Math.max(1, Math.round(sh * scale));
+		return this.encodeScreenshot(Math.max(1, Math.round(sw * scale)), Math.max(1, Math.round(sh * scale)), mime, quality);
+	}
+
+	/** Render at a fixed size, independent of the window, then encode it. */
+	captureOffscreen(maxDim = 512, mime = "image/webp", quality = 0.85): Screenshot {
+		const previousScale = this.renderScale;
+		this.renderScale = 1;
+		this.captureW = CAPTURE_WIDTH;
+		this.captureH = CAPTURE_HEIGHT;
+		try {
+			this.renderFrame();
+			const size = captureDimensions(maxDim);
+			return this.encodeScreenshot(size.width, size.height, mime, quality);
+		} finally {
+			this.captureW = 0;
+			this.captureH = 0;
+			this.renderScale = previousScale;
+			this.renderFrame();
+		}
+	}
+
+	private encodeScreenshot(w: number, h: number, mime: string, quality: number): Screenshot {
 		const off = document.createElement("canvas");
 		off.width = w;
 		off.height = h;
@@ -988,6 +1057,42 @@ export class Renderer {
 			avgColor: avg,
 			nonBlack: avg[0] + avg[1] + avg[2] > 6,
 		};
+	}
+
+	/** Read the presented composite as RGBA bytes. Null when nothing is presented. */
+	readViewport(): PixelReadout | null {
+		this.renderFrame();
+		const f = this.lastFinal;
+		if (!f) return null;
+		return this.readTarget(f.fbo, f.width, f.height, f.format);
+	}
+
+	/** Read one pass's current output target as RGBA bytes. */
+	readPass(passId: string): PixelReadout | null {
+		this.renderFrame();
+		const p = this.allPasses.get(passId);
+		if (!p || !p.a || !p.b) return null;
+		return this.readTarget(this.curr(p).fbo, p.width, p.height, p.format);
+	}
+
+	private readTarget(fbo: WebGLFramebuffer, width: number, height: number, format: PassFormat): PixelReadout | null {
+		const gl = this.gl;
+		const data = new Uint8Array(width * height * 4);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+		if (this.isFloatFormat(format)) {
+			const raw = new Float32Array(width * height * 4);
+			gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, raw);
+			for (let i = 0; i < raw.length; i++) data[i] = Math.max(0, Math.min(255, Math.round(raw[i] * 255)));
+		} else {
+			gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+		}
+		const err = gl.getError();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		if (err !== gl.NO_ERROR) {
+			console.error(`readTarget: readPixels failed (GL error 0x${err.toString(16)})`);
+			return null;
+		}
+		return { width, height, data };
 	}
 
 	/** True when the presented composite is backed by a real HDR (rgba16f) target,

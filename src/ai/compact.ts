@@ -26,10 +26,29 @@ export interface CompactOptions {
 	signal?: AbortSignal;
 }
 
-/** Worth compacting? Needs at least a couple of rounds of real history; below
- * that there's nothing to save. */
-export function shouldCompact(messages: Message[]): boolean {
+/** Measured prompt size for the compaction gate. */
+export interface ContextUsage {
+	promptTokens: number;
+	window: number | undefined; // undefined: the model's window is not known
+}
+
+const COMPACT_AT = 0.85;
+
+/** Auto-compact before the next send? Only from measured usage against a known window. */
+export function shouldAutoCompact(usage: ContextUsage | undefined): boolean {
+	return !!usage && usage.window !== undefined && usage.window > 0 && usage.promptTokens / usage.window >= COMPACT_AT;
+}
+
+/** Worth compacting on request? Measured context usage wins. The message count
+ * is the fallback when no usage or window is known. */
+export function shouldCompact(messages: Message[], usage?: ContextUsage): boolean {
+	if (usage && usage.window) return shouldAutoCompact(usage);
 	return messages.filter((m) => !m.compaction).length >= 4;
+}
+
+/** Rough token estimate for text not yet sent. Used by the compaction gate. */
+export function estimateTokens(text: string): number {
+	return Math.ceil(text.length / 3);
 }
 
 /** Whether `messages` already contains a compaction summary (history was

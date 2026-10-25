@@ -8,7 +8,7 @@ import { channelsForSource, ensureMaskCompositePass, LAYER_COMPOSITE_SOURCE, mak
 import { shapeDef } from "../gl/shapes.ts";
 import { extractUniformDeclarations, reconcileUniforms } from "../gl/wrapper.ts";
 import { getTool, text, toolDefs } from "../ai/tools/index.ts";
-import { buildCompactedMessages, shouldCompact, summarizeConversation } from "../ai/compact.ts";
+import { buildCompactedMessages, shouldCompact, summarizeConversation, type ContextUsage } from "../ai/compact.ts";
 import type { ShotBlock, ToolContext, ToolResult } from "../ai/tools/types.ts";
 import { Renderer } from "../gl/renderer.ts";
 import type { CompileResult } from "../gl/renderer.ts";
@@ -425,9 +425,9 @@ export class Store {
 	 * the context window (and per-turn cost) drops. The model call is the caller's
 	 * to gate (busy/abort live in the chat, like an agent turn); this just does the
 	 * summarize-and-replace and persists. Throws on a provider/network error. */
-	async compactConversation(signal?: AbortSignal): Promise<{ ok: boolean; error?: string; before: number; after: number }> {
+	async compactConversation(signal?: AbortSignal, usage?: ContextUsage): Promise<{ ok: boolean; error?: string; before: number; after: number }> {
 		const before = this.project.messages.length;
-		if (!shouldCompact(this.project.messages)) return { ok: false, error: "Not enough conversation to compact yet.", before, after: before };
+		if (!shouldCompact(this.project.messages, usage)) return { ok: false, error: "Not enough conversation to compact yet.", before, after: before };
 		// Same tool set as the agent turns, so a history carrying tool blocks stays valid.
 		const { summary } = await summarizeConversation(this.settings, this.project.messages, toolDefs({ imageGen: this.settings.imageGen.enabled }), { signal });
 		if (signal?.aborted) return { ok: false, error: "Compaction cancelled.", before, after: before };
@@ -905,7 +905,7 @@ export class Store {
 	// ---- screenshot ---------------------------------------------------------
 
 	private screenshotBlock(): ShotBlock {
-		const shot = this.renderer.screenshot(this.settings.screenshotMaxDim);
+		const shot = this.renderer.captureOffscreen(this.settings.screenshotMaxDim);
 		const data = shot.dataUrl.slice(shot.dataUrl.indexOf(",") + 1);
 		const avg = `avg rgb(${shot.avgColor.join(", ")})${shot.nonBlack ? "" : " — looks black/empty"}`;
 		return { type: "image", mediaType: shot.mediaType, data, _avg: avg };
@@ -965,6 +965,7 @@ export class Store {
 			renameProject: (n) => this.renameProject(n),
 			addAsset: (a) => this.addAsset(a),
 			screenshotBlock: () => this.screenshotBlock(),
+			nextFrame: () => this.renderer.nextFrame(),
 			shaderResult: (p, w) => this.shaderResult(p, w),
 			compileError: () => (this.lastCompile && !this.lastCompile.ok ? this.lastCompile.log : null),
 		};

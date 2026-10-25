@@ -9,15 +9,22 @@ import { createChat } from "./chat.ts";
 import { createPreview } from "./preview.ts";
 import { createRightPanel } from "./rightpanel.ts";
 import { createSettings } from "./settings.ts";
+import { createHistogram } from "./histogram.ts";
 import type { Store } from "../state/store.ts";
 
-export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader: () => string): HTMLElement {
+export interface App {
+	root: HTMLElement;
+	openSettings: () => void;
+}
+
+export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader: () => string): App {
 	const settings = createSettings(store);
 	const openSettings = () => settings.open();
+	const histogram = createHistogram(store);
 
 	const topbar = createTopbar({ store, defaultShader, openSettings });
 	const chat = createChat({ store, openSettings });
-	const preview = createPreview(store, canvas);
+	const preview = createPreview(store, canvas, () => histogram.open());
 	const right = createRightPanel(store);
 
 	const splitter = el("div", { class: "v-splitter", title: "Drag to resize the preview" });
@@ -25,7 +32,7 @@ export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader
 	wireSplitter(main, splitter);
 
 	const workspace = el("div", { class: "workspace" }, chat, main);
-	const root = el("div", { class: "app" }, topbar, workspace, settings.root);
+	const root = el("div", { class: "app" }, topbar, workspace, settings.root, histogram.root);
 
 	// Space toggles playback unless the user is typing in a control or has a
 	// button focused (Space activates the button there).
@@ -53,7 +60,7 @@ export function createApp(store: Store, canvas: HTMLCanvasElement, defaultShader
 		else store.redo();
 	});
 
-	return root;
+	return { root, openSettings };
 }
 
 // True for elements with meaningful native text undo, where we must not hijack

@@ -17,10 +17,22 @@ export interface ToolUseBlock {
 	name: string;
 	input: unknown;
 }
+/** An OpenRouter-style `reasoning_details` entry type. */
+export type ReasoningDetailType = "reasoning.text" | "reasoning.summary" | "reasoning.encrypted";
+
 export interface ThinkingBlock {
 	type: "thinking";
-	thinking: string; // summarized reasoning text (may be empty if display omitted)
+	thinking: string; // reasoning text, or a reasoning summary (may be empty if display omitted)
 	signature: string; // opaque signature; must be replayed unchanged on the same model
+	encrypted?: string;
+	/** Set when the block arrived as a `reasoning_details` entry; replay rebuilds that entry from these fields. */
+	detailType?: ReasoningDetailType;
+	detailFormat?: string;
+	detailId?: string;
+	detailIndex?: number;
+	/** A reasoning entry or block this app does not model, kept verbatim and replayed as-is on the wire it came from. */
+	raw?: Record<string, unknown>;
+	rawWire?: "anthropic" | "openai";
 }
 export interface ToolResultBlock {
 	type: "tool_result";
@@ -155,15 +167,20 @@ export interface Project {
 
 export type ProviderId = "anthropic" | "openai" | "openrouter" | "ollama-cloud";
 
+/** Chat keys by provider, so switching providers keeps each one's key. */
+export type ApiKeys = Partial<Record<ProviderId, string>>;
+
 export type ToolMode = "native" | "text";
 
 export interface ChatConfig {
 	provider: ProviderId;
 	baseUrl: string; // override endpoint (OpenAI-compatible) or anthropic base
-	apiKey: string;
+	apiKeys: ApiKeys;
 	model: string;
-	maxTokens: number;
-	temperature: number;
+	/** Undefined means the provider's default. */
+	maxTokens?: number;
+	/** Undefined means the provider's default. */
+	temperature?: number;
 	useProxy: boolean;
 	/** "native" = function/tool calling via the API. */
 	toolMode: ToolMode;

@@ -1,6 +1,7 @@
 // Per-model pricing + context windows for the chat usage indicator (cost and context-window %).
 
 import type { Usage } from "./types.ts";
+import { publishedModel } from "./modelinfo.ts";
 
 interface Rate {
 	in: number;
@@ -14,7 +15,6 @@ interface ModelInfo {
 }
 
 const PER_M = 1_000_000;
-const DEFAULT_CONTEXT = 128_000;
 
 // First matching pattern wins; keep most-specific entries first.
 const TABLE: Array<[RegExp, ModelInfo]> = [
@@ -36,26 +36,41 @@ const TABLE: Array<[RegExp, ModelInfo]> = [
 	[/gpt-4\.1/, { rate: { in: 2, out: 8, cacheRead: 0.5, cacheWrite: 0 }, context: 1_000_000 }],
 ];
 
-function lookup(model: string): ModelInfo {
+function find(model: string): ModelInfo | undefined {
 	const m = model.toLowerCase();
 	for (const [re, info] of TABLE) if (re.test(m)) return info;
-	return { context: DEFAULT_CONTEXT };
+	const slash = m.lastIndexOf("/");
+	if (slash >= 0) {
+		const tail = m.slice(slash + 1);
+		for (const [re, info] of TABLE) if (re.test(tail)) return info;
+	}
+	return undefined;
 }
 
-export function modelContextWindow(model: string): number {
-	return lookup(model).context;
+/** The model's context window: what a listing published, else the table, else unknown. */
+export function modelContextWindow(model: string): number | undefined {
+	return publishedModel(model)?.contextWindow ?? find(model)?.context;
 }
 
-export function hasPricing(model: string): boolean {
-	return lookup(model).rate !== undefined;
+/** True when the model's context window is known. */
+export function hasContextWindow(model: string): boolean {
+	return modelContextWindow(model) !== undefined;
 }
 
-/** Cost in USD for one request's usage, or null when the model's pricing is
- * unknown. Computed purely from the server-reported token counts: base input
- * at the full rate, cache-read tokens at the read discount. This also covers
- * cache-write tokens at the write premium, output at the output rate. */
+function modelRate(model: string): Rate | undefined {
+	return publishedModel(model)?.rate ?? find(model)?.rate;
+}
+
+export function hasPricing(model: string, u?: Usage): boolean {
+	return (u?.cost !== undefined && Number.isFinite(u.cost)) || modelRate(model) !== undefined;
+}
+
+/** Cost in USD for one request's usage, or null when neither the server nor the
+ * local table gives a cost. The server-reported cost wins; token math is the
+ * fallback. */
 export function messageCost(model: string, u: Usage): number | null {
-	const rate = lookup(model).rate;
+	if (u.cost !== undefined && Number.isFinite(u.cost)) return u.cost;
+	const rate = modelRate(model);
 	if (!rate) return null;
 	const cacheRead = u.cacheReadTokens ?? 0;
 	const cacheWrite = u.cacheWriteTokens ?? 0;

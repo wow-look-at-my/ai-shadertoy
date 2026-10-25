@@ -8,12 +8,14 @@ import { renderMarkdown } from "../util/markdown.ts";
 import { uid } from "../util/misc.ts";
 import { deletionRange, isDeletable } from "../util/conversation.ts";
 import { runAgent, type PermissionRequest } from "../ai/agent.ts";
-import { shouldCompact } from "../ai/compact.ts";
+import { estimateTokens, shouldAutoCompact, shouldCompact, type ContextUsage } from "../ai/compact.ts";
 import { buildProjectState, buildSystemPrompt } from "../ai/system-prompt.ts";
 import { cachePct, hasPricing, messageCost, modelContextWindow } from "../ai/pricing.ts";
 import { toolDefs } from "../ai/tools/index.ts";
 import { stripTextToolTags } from "../ai/texttools.ts";
-import { ProviderError } from "../ai/providers.ts";
+import { listModels, ProviderError } from "../ai/providers.ts";
+import { fetchCatalogueEntry } from "../ai/modelinfo.ts";
+import type { Usage } from "../ai/types.ts";
 import { PROVIDERS } from "../state/defaults.ts";
 import type { Block, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -88,15 +90,22 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	let costTotal = 0;
 	let costTurn = 0;
 	let lastTps = 0;
-	let lastCtxPct = 0;
+	let lastPromptTokens = 0;
 	// Cached share of the last request's input prompt, ONLY from the server-reported cache count: a number (incl.
 	let lastCachePct: number | undefined;
+	let lastUsage: Usage | undefined;
 	let haveStats = false;
 
 	function fmtCost(c: number): string {
 		if (c >= 1) return `$${c.toFixed(2)}`;
 		if (c >= 0.01) return `$${c.toFixed(3)}`;
 		return `$${c.toFixed(4)}`;
+	}
+	function fmtTokens(n: number): string {
+		if (n < 1000) return String(n);
+		if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
+		if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+		return `${(n / 1_000_000).toFixed(2)}M`;
 	}
 	function renderStats(): void {
 		if (!haveStats) {
@@ -105,8 +114,14 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		}
 		const sep = (): HTMLElement => el("span", { class: "cs-sep" }, "·");
 		const item = (label: string, title: string): HTMLElement => el("span", { class: "cs-item", title }, label);
-		const ctxLabel = `${lastCtxPct < 10 ? lastCtxPct.toFixed(1) : lastCtxPct.toFixed(0)}% ctx`;
-		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), item(ctxLabel, "Share of the model's context window used (last request)")];
+		const window = modelContextWindow(store.settings.chat.model);
+		const fill = window ? Math.min(1, lastPromptTokens / window) : 0;
+		const ctxTitle = window
+			? `${lastPromptTokens.toLocaleString()} of ${window.toLocaleString()} context tokens (${(fill * 100).toFixed(0)}%). Click to compact (/compact)`
+			: `${lastPromptTokens.toLocaleString()} context tokens; this model's context window is unknown, so it never compacts on its own. Click to compact (/compact)`;
+		const bar = el("span", { class: "cs-ctx-bar" }, el("span", { class: "cs-ctx-fill", style: `width:${(fill * 100).toFixed(1)}%` }));
+		const ctxItem = el("button", { class: "cs-item cs-action cs-ctx", type: "button", title: ctxTitle, on: { click: () => void compact(measuredContext()) } }, bar, fmtTokens(lastPromptTokens));
+		const parts: HTMLElement[] = [item(`${lastTps.toFixed(0)} tok/s`, "Output tokens per second (last response)"), sep(), ctxItem];
 		// Tri-state: undefined => the endpoint reported no cache count, so we hide
 		// the indicator entirely (never a guessed value). A real number — including
 		// an explicit the first server-reported — is shown verbatim.
@@ -114,13 +129,30 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			const cacheLabel = `${lastCachePct < 10 ? lastCachePct.toFixed(1) : lastCachePct.toFixed(0)}% cached`;
 			parts.push(sep(), item(cacheLabel, "Share of the input prompt served from the prompt cache (last request)"));
 		}
-		if (hasPricing(store.settings.chat.model)) {
+		if (hasPricing(store.settings.chat.model, lastUsage)) {
 			parts.push(sep(), item(`${fmtCost(costTurn)} turn`, "Cost of the current / last turn"), sep(), item(`${fmtCost(costTotal)} total`, "Total cost this session"));
 		}
 		clear(statsBar);
 		append(statsBar, parts);
 		statsBar.hidden = false;
 	}
+
+	// What the active model accepts and costs: the endpoint's /models listing plus the shared catalogue, read once per endpoint and model.
+	let loadedModelKey = "";
+	function loadModelInfo(): void {
+		const chat = store.settings.chat;
+		const modelKey = `${chat.provider}|${chat.baseUrl}|${chat.model}`;
+		if (modelKey === loadedModelKey || !chat.model.trim()) return;
+		loadedModelKey = modelKey;
+		for (const [what, load] of [
+			["the endpoint's model listing", listModels(store.settings)],
+			["the modelinfo.pazer.ai catalogue", fetchCatalogueEntry(chat.model)],
+		] as const) {
+			load.then(renderStats, (e: unknown) => console.warn(`Couldn't read ${what} for ${chat.model}:`, e));
+		}
+	}
+	loadModelInfo();
+	store.on("settings", loadModelInfo);
 
 	// A refused write (quota, a closed database) is shown where the user is
 	// looking; the edit is on screen but would not survive a reload.
@@ -241,7 +273,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	// Every hosted provider needs a key; only the generic OpenAI-compatible one
 	// may be keyless (e.g. a local Ollama server), so don't block that.
 	function ensureReady(): boolean {
-		if (PROVIDERS[store.settings.chat.provider].needsKey && !store.settings.chat.apiKey) {
+		if (PROVIDERS[store.settings.chat.provider].needsKey && !store.settings.chat.apiKeys[store.settings.chat.provider]) {
 			alert("Add your API key in Settings first.");
 			deps.openSettings();
 			return false;
@@ -327,6 +359,17 @@ export function createChat(deps: ChatDeps): HTMLElement {
 
 	// ---- sending -----------------------------------------------------------
 
+	/** The live project state that rides with every request. */
+	const projectState = (): string =>
+		buildProjectState({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined });
+
+	/** Measured prompt size for the context meter and the compaction gate. */
+	function measuredContext(): ContextUsage | undefined {
+		if (!lastUsage) return undefined;
+		const promptTokens = lastUsage.inputTokens + (lastUsage.cacheReadTokens ?? 0) + (lastUsage.cacheWriteTokens ?? 0) + estimateTokens(projectState());
+		return { promptTokens, window: modelContextWindow(store.settings.chat.model) };
+	}
+
 	async function send(): Promise<void> {
 		const value = input.value.trim();
 		if (!value) return;
@@ -359,6 +402,8 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			return;
 		}
 
+		const usage = measuredContext();
+		if (shouldAutoCompact(usage)) await compact(usage);
 		store.project.messages.push(userMsg);
 		if (store.project.messages.length === 1) clear(list);
 		list.appendChild(renderMessage(userMsg));
@@ -380,7 +425,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 			await runAgent(
 				store.settings,
 				() => buildSystemPrompt(),
-				() => buildProjectState({ project: store.project, assetNames: store.assets.map((a) => a.name), imageGen: store.settings.imageGen.enabled, lastError: store.lastCompile && !store.lastCompile.ok ? store.lastCompile.log : undefined }),
+				() => projectState(),
 				store.project.messages,
 				() => toolDefs({ imageGen: store.settings.imageGen.enabled }),
 				(name, inp) => store.applyTool(name, inp),
@@ -392,6 +437,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 					takeSteering,
 					onUsage: (usage, durationMs) => {
 						const model = store.settings.chat.model;
+						lastUsage = usage;
 						const c = messageCost(model, usage);
 						if (c != null) {
 							costTurn += c;
@@ -399,8 +445,7 @@ export function createChat(deps: ChatDeps): HTMLElement {
 						}
 						// Cache counts are tri-state: undefined => server didn't report.
 						const totalIn = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
-						const ctx = modelContextWindow(model);
-						if (ctx > 0) lastCtxPct = (totalIn / ctx) * 100;
+						lastPromptTokens = totalIn;
 						lastCachePct = cachePct(usage);
 						if (usage.outputTokens > 0 && durationMs > 0) lastTps = (usage.outputTokens / durationMs) * 1000;
 						haveStats = true;
@@ -478,9 +523,9 @@ export function createChat(deps: ChatDeps): HTMLElement {
 	// The /compact command: ask the model to summarize everything so far, then
 	// replace the history with that summary. Busy/abort are managed here exactly
 	// like an agent turn, so Stop cancels it and undo/redo stay disabled meanwhile.
-	async function compact(): Promise<void> {
+	async function compact(usage?: ContextUsage): Promise<void> {
 		if (store.busy) return;
-		if (!shouldCompact(store.project.messages)) {
+		if (!shouldCompact(store.project.messages, usage)) {
 			list.appendChild(el("div", { class: "msg muted small" }, "Nothing to compact yet — send a few messages first."));
 			scroll();
 			return;
@@ -492,10 +537,11 @@ export function createChat(deps: ChatDeps): HTMLElement {
 		list.appendChild(status);
 		scroll();
 		try {
-			const res = await store.compactConversation(abort.signal);
+			const res = await store.compactConversation(abort.signal, usage);
 			if (!res.ok) {
 				status.replaceWith(el("div", { class: "msg error" }, el("strong", {}, "Compact: "), res.error ?? "could not compact."));
 			} else {
+				lastUsage = undefined;
 				renderAll(); // drops the old bubbles + status, shows the summary card
 			}
 		} catch (e) {
