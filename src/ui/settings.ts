@@ -25,6 +25,10 @@ export function createSettings(store: Store): SettingsModal {
 	const apiKey = el("input", { type: "text", placeholder: "sk-... / your API key", attrs: { autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" } });
 	const signInBtn = el("button", { class: "btn", type: "button" }, "Sign in with OpenRouter");
 	const signInStatus = el("span", { class: "hint" });
+	const signInRow = el("div", { class: "test-row" }, signInBtn, signInStatus);
+	const applySignInVisibility = () => {
+		signInRow.hidden = provider.value !== "openrouter";
+	};
 	const baseUrl = el("input", { type: "text", placeholder: "(optional) override base URL" });
 	const maxTokens = el("input", { type: "number", attrs: { min: "256", max: "128000", step: "256" } });
 	const temperature = el("input", { type: "number", attrs: { min: "0", max: "2", step: "0.05" } });
@@ -112,6 +116,7 @@ export function createSettings(store: Store): SettingsModal {
 
 	const refreshModelList = () => {
 		const p = provider.value as ProviderId;
+		applySignInVisibility();
 		fetchedModels = []; // provider changed; the previous list no longer applies
 		applyModelOptions();
 		// The provider's model id is left in the box and would fail on the new one.
@@ -171,7 +176,7 @@ export function createSettings(store: Store): SettingsModal {
 		field("Provider", provider),
 		modelField,
 		secretField("API key", apiKey, "Stored only in your browser (localStorage)."),
-		el("div", { class: "test-row" }, signInBtn, signInStatus),
+		signInRow,
 		field("Base URL", baseUrl, "For OpenAI-compatible gateways (OpenRouter, local, etc.)."),
 		field("Tool calling", toolMode, "Text tags = forgiving XML in the reply, for models/endpoints without function calling."),
 		el("div", { class: "row2" }, field("Max tokens", maxTokens), field("Temperature", temperature)),

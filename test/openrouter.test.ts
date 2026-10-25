@@ -39,6 +39,7 @@ eq(auth.origin + auth.pathname, "https://openrouter.ai/auth", "the authorize end
 eq(auth.searchParams.get("callback_url"), "https://example.com/app/", "the callback drops the query and hash");
 eq(auth.searchParams.get("code_challenge"), "chal", "the challenge is passed");
 eq(auth.searchParams.get("code_challenge_method"), "S256", "the challenge method is S256");
+eq(auth.searchParams.get("key_label"), "AI Shadertoy", "the key label names the app");
 let threw = false;
 try {
 	openRouterAuthUrl("file:///tmp/app.html", "chal");

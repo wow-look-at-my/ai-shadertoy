@@ -42,6 +42,7 @@ export function openRouterAuthUrl(pageUrl: string, challenge: string): string {
 	url.searchParams.set("callback_url", callback.toString());
 	url.searchParams.set("code_challenge", challenge);
 	url.searchParams.set("code_challenge_method", "S256");
+	url.searchParams.set("key_label", "AI Shadertoy");
 	return url.toString();
 }
 
