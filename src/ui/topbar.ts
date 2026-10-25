@@ -3,6 +3,7 @@
 import { el, render } from "../util/dom.ts";
 import { icon } from "../util/icons.ts";
 import { downloadFile, pickFile } from "../util/misc.ts";
+import { transcriptJson } from "../util/conversation.ts";
 import { buildExport } from "../state/persist.ts";
 import type { ExportBundle } from "../state/types.ts";
 import type { Store } from "../state/store.ts";
@@ -87,6 +88,7 @@ export function createTopbar(deps: TopbarDeps): HTMLElement {
 		}, "Delete"),
 		el("span", { class: "spacer" }),
 		el("button", { class: "btn", title: "Export all projects + assets to a JSON file", on: { click: () => void doExport() } }, "Export"),
+		el("button", { class: "btn", title: "Download this chat as JSON, with images embedded", on: { click: () => downloadTranscript(store) } }, "Transcript"),
 		el("button", { class: "btn", title: "Import from a JSON file", on: { click: () => void doImport(store) } }, "Import"),
 		el("button", { class: "btn primary", title: "Settings (API key, model, proxy)", on: { click: deps.openSettings } }, "Settings"),
 	);
@@ -100,6 +102,13 @@ async function doExport(): Promise<void> {
 	const bundle = await buildExport({ includeSettings: true, includeKeys });
 	const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 	downloadFile(`ai-shadertoy-${stamp}.json`, JSON.stringify(bundle, null, 2));
+}
+
+function downloadTranscript(store: Store): void {
+	const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+	const base = (store.project.name || "shader").replace(/\s+/g, "_");
+	const json = transcriptJson(store.project.messages, { project: store.project.name, model: store.settings.chat.model });
+	downloadFile(`${base}-transcript-${stamp}.json`, json, "application/json");
 }
 
 async function doImport(store: Store): Promise<void> {

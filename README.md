@@ -142,7 +142,7 @@ These extra fields are sent only to non-hosted endpoints, since hosted OpenAI/Az
 
 Projects, conversations, and media assets (images and videos) are stored in **IndexedDB**. Settings in `localStorage`. Videos are kept inline like images, so prefer short, low-resolution loops (uploads are capped at 32 MB). Webcam channels store only the *binding* — the camera is re-requested on load. The app requests persistent storage so the browser will not evict it. The top bar manages projects: create a **New** one, **Duplicate** the current one (a full independent copy of its passes, uniforms, and conversation — handy for forking an experiment), switch between them, or **Delete**.
 
-Use **Export** / **Import** to move everything as a single JSON file (API keys excluded by default).
+Use **Export** / **Import** to move everything as a single JSON file (API keys excluded by default). **Transcript** downloads the current chat as JSON, with every image embedded.
 
 ## Develop
 
